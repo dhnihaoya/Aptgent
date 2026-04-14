@@ -1,0 +1,38 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# pytest
+.pytest_cache/
+
+# Runtime data / local runs
+runs/
+
+# Environment variables
+.env
+
+# Claude Code export / local notes
+CLAUDE.md
+kimi-export-*.md
+plan
+plan.md

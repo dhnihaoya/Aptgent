@@ -1,0 +1,57 @@
+Screen {
+    align: center middle;
+}
+
+#main-container {
+    width: 100%;
+    height: 100%;
+    padding: 1 2;
+}
+
+#progress-bar {
+    height: 3;
+    color: $text;
+    background: $surface-darken-1;
+    content-align: center middle;
+}
+
+#status-panel {
+    height: auto;
+    background: $surface-darken-1;
+    padding: 0 1;
+}
+
+#content-area {
+    height: 1fr;
+    border: solid $primary;
+    padding: 1 2;
+}
+
+#action-bar {
+    height: auto;
+    padding: 1 0;
+}
+
+.title {
+    text-style: bold;
+    color: $primary-lighten-2;
+    margin: 1 0;
+}
+
+.info-text {
+    color: $text-muted;
+}
+
+.error-text {
+    color: $error;
+}
+
+.success-text {
+    color: $success;
+}
+
+.warning-text {
+    color: $warning;
+}
+
+/* Chat-specific: bubble styles are in ChatScreen.CSS */

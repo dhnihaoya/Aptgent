@@ -1,0 +1,9 @@
+[provider.openai]
+base_url = "https://api.moonshot.cn/v1"
+model = "kimi-k2.5"
+# Fallback API key (used when KIMI_API_KEY env var is not set).
+# For public deployments, remove this line and set the environment variable instead.
+api_key = "sk-3PfdAWe9dEjoNBqGtoo9MgImNyBfQC0IkKBdS5V5unk6u6WZ"
+api_key_env = "KIMI_API_KEY"
+temperature = 1
+max_tokens = 4096

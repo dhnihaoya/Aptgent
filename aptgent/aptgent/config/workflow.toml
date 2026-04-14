@@ -1,0 +1,15 @@
+[enumeration]
+max_candidates = 5000
+default_edit_ratio_threshold = 0.3
+
+[docking]
+enabled = false
+top_k_strategy = "auto"
+
+[llm]
+default_provider = "openai"
+timeout_seconds = 60
+max_retries = 2
+
+[paths]
+runs_dir = "./runs"

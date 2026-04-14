@@ -1,0 +1,15 @@
+[rna_fold]
+command = "/home/dh/.conda/envs/aptgent-tools/bin/RNAfold"
+args = ["--noPS", "-d2"]
+
+[docking]
+engine = "vina"
+command = "/home/dh/.conda/envs/aptgent-tools/bin/vina"
+exhaustiveness = 8
+num_modes = 9
+energy_range = 3.0
+
+[predictor]
+model_dir = "/home/dh/Aptgent/aptamer_predictor/models"
+conda_env = "aptamer-predictor"
+conda_python = "/home/dh/.conda/envs/aptamer-predictor/bin/python"
