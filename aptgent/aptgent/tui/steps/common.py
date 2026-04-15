@@ -108,11 +108,12 @@ def run_llm_interaction(
     display_error: Exception | None = None
 
     if display_stream is not None:
-        def make_bubble() -> None:
-            nonlocal bubble
-            bubble = screen.add_streaming_message(markdown=True)
+        def make_thinking_bubble() -> None:
+            nonlocal thinking_bubble
+            thinking_bubble = screen.add_thinking_message()
 
-        screen.app.call_from_thread(make_bubble)
+        screen.app.call_from_thread(screen.clear_activity)
+        screen.app.call_from_thread(make_thinking_bubble)
         try:
             for chunk in display_stream():
                 if worker.is_cancelled:
@@ -126,20 +127,23 @@ def run_llm_interaction(
                 if not text:
                     continue
                 if chunk_type == "reasoning":
-                    if thinking_bubble is None:
-                        def make_thinking_bubble() -> None:
-                            nonlocal thinking_bubble
-                            thinking_bubble = screen.add_thinking_message()
-
-                        screen.app.call_from_thread(make_thinking_bubble)
                     screen.app.call_from_thread(thinking_bubble.append_text, text)
                     continue
+                if bubble is None:
+                    def make_bubble() -> None:
+                        nonlocal bubble
+                        bubble = screen.add_streaming_message(markdown=True)
+
+                    screen.app.call_from_thread(make_bubble)
                 screen.app.call_from_thread(bubble.append_text, text)
         except Exception as exc:
             display_error = exc
         finally:
             if thinking_bubble:
-                screen.app.call_from_thread(thinking_bubble.finalize)
+                if thinking_bubble.has_content:
+                    screen.app.call_from_thread(thinking_bubble.finalize)
+                else:
+                    screen.app.call_from_thread(thinking_bubble.remove)
             if bubble:
                 screen.app.call_from_thread(bubble.finalize)
 

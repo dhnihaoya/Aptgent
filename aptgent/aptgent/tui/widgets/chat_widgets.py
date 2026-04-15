@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from rich.markdown import Markdown
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -92,6 +94,13 @@ class StreamingBubble(Static):
 class ThinkingBubble(Static):
     """A collapsible bubble for model reasoning content."""
 
+    _FRAMES = [
+        ("#6b7280", False),
+        ("#9ca3af", False),
+        ("#facc15", True),
+        ("#9ca3af", False),
+    ]
+
     DEFAULT_CSS = """
     ThinkingBubble {
         background: $surface-darken-2;
@@ -108,6 +117,8 @@ class ThinkingBubble(Static):
         self._buffer = ""
         self._expanded = False
         self._streaming = True
+        self._frame_idx = 0
+        self._timer = None
         self._refresh_display()
 
     @property
@@ -117,6 +128,20 @@ class ThinkingBubble(Static):
     @property
     def expanded(self) -> bool:
         return self._expanded
+
+    @property
+    def estimated_tokens(self) -> int:
+        parts = re.findall(r"[A-Za-z0-9_]+|[^\x00-\x7F]|\S", self._buffer)
+        return len(parts)
+
+    def on_mount(self) -> None:
+        self._tick()
+        self._timer = self.set_interval(0.3, self._tick)
+
+    def on_unmount(self) -> None:
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
 
     def append_text(self, text: str) -> None:
         self._buffer += text
@@ -134,18 +159,34 @@ class ThinkingBubble(Static):
 
     def finalize(self) -> None:
         self._streaming = False
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
         self._refresh_display()
 
-    def _refresh_display(self) -> None:
-        if not self.has_content:
-            self.update("[dim]Thinking...[/dim]")
-            return
+    def _tick(self) -> None:
+        self._refresh_display()
+        self._frame_idx += 1
+        try:
+            self.scroll_visible(animate=False)
+        except Exception:
+            pass
 
-        status = "collapse" if self._expanded else "expand"
-        header = f"[bold #facc15]Thinking[/] [dim](Ctrl+O to {status})[/dim]"
+    def _header_style(self) -> str:
+        if not self._streaming:
+            return "#facc15"
+        color, bold = self._FRAMES[self._frame_idx % len(self._FRAMES)]
+        return f"bold {color}" if bold else color
+
+    def _refresh_display(self) -> None:
+        arrow = "▲" if self._expanded else "▼"
+        style = self._header_style()
+        header = (
+            f"[{style}]Thinking[/] "
+            f"[dim]{self.estimated_tokens} tokens {arrow} Ctrl+O[/dim]"
+        )
         if not self._expanded:
-            suffix = " [dim]...[/dim]" if self._streaming else ""
-            self.update(f"{header}\n[dim]Thought process hidden{suffix}[/dim]")
+            self.update(header)
             return
 
         body = self._buffer + ("▌" if self._streaming else "")

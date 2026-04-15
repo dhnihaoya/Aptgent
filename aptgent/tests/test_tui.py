@@ -386,6 +386,28 @@ def test_thinking_bubble_toggles_expansion():
     assert bubble.expanded is False
 
 
+def test_thinking_bubble_collapsed_header_shows_token_count_and_arrow():
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    bubble = ThinkingBubble()
+    seen = []
+
+    def capture(renderable):
+        seen.append(renderable)
+
+    bubble.update = capture  # type: ignore[method-assign]
+    bubble.append_text("Reasoning in progress.")
+
+    latest = seen[-1]
+    assert "Thinking" in latest
+    assert "tokens" in latest
+    assert "▼" in latest
+    assert "Thought process hidden" not in latest
+
+
 @pytest.mark.anyio
 async def test_ctrl_o_toggles_latest_thinking_bubble(tmp_path):
     app = make_app(tmp_path)
