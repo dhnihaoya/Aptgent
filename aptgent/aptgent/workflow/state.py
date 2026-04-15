@@ -31,8 +31,6 @@ class RunState(BaseModel):
     input_payload: dict[str, Any] = Field(default_factory=dict)
     target_molecule: Optional[TargetMolecule] = None
     confirmed_mutation_sites: list[int] = Field(default_factory=list)
-    mutation_threshold: float = 0.3
-    selected_analogs: list[TargetMolecule] = Field(default_factory=list)
     time_budget: Optional[int] = None
 
     # Intermediate results

@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-from aptgent.domain.enums import Status, Step
+from aptgent.domain.enums import Step
 
 
 class TargetMolecule(BaseModel):

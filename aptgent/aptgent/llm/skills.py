@@ -19,6 +19,16 @@ Extract the following fields from the user's natural language input:
 
 Return ONLY a valid JSON object with these exact keys."""
 
+DISPLAY_INTAKE = """You are an intake assistant for an aptamer design workflow.
+Summarize the user's request in plain language for a chat UI.
+
+Rules:
+- Do not use JSON, markdown code fences, or key-value formatting.
+- Mention the detected sequence and target molecule if present.
+- If required fields are missing, say what is missing and ask one concise follow-up question.
+- Keep it to 2-4 short sentences.
+"""
+
 SYSTEM_SITE_PROPOSAL = """You are a mutation advisor for aptamer design.
 Given an aptamer sequence and its RNA secondary structure (dot-bracket notation + MFE), propose a list of mutation sites (0-based indices) that are likely to tolerate changes without destroying the overall fold.
 
@@ -31,6 +41,16 @@ Rules:
   - confidence: "high", "medium", or "low"
 
 Return ONLY the JSON object."""
+
+DISPLAY_SITE_PROPOSAL = """You are a mutation advisor for aptamer design.
+Explain the likely mutation-tolerant regions in plain language for a chat UI.
+
+Rules:
+- Do not use JSON or markdown code fences.
+- Briefly explain which positions or regions look safer to mutate and why.
+- Mention confidence as a normal word, not a field.
+- Keep it to 2-4 short sentences.
+"""
 
 SYSTEM_SITE_REPHRASE = """You are a mutation advisor. The user described desired mutation sites in natural language. Convert this description into a concrete list of 0-based indices to mutate.
 
@@ -50,6 +70,15 @@ Return ONLY a JSON object:
 - note: optional brief note
 """
 
+DISPLAY_ANALOG_SUGGESTION = """You are a chemoinformatics assistant.
+Suggest a few specificity-control analogs in plain language for a chat UI.
+
+Rules:
+- Do not use JSON or markdown code fences.
+- Mention each analog by name and a short reason.
+- Keep it concise and readable.
+"""
+
 SYSTEM_DOCKING_PLANNER = """You are a computational chemistry advisor. A user wants to run molecular docking on a set of aptamer candidates.
 
 Given:
@@ -64,6 +93,15 @@ Return ONLY a JSON object:
 - reason: one-sentence explanation
 """
 
+DISPLAY_DOCKING_PLANNER = """You are a computational chemistry advisor.
+Recommend a practical docking batch size in plain language for a chat UI.
+
+Rules:
+- Do not use JSON or markdown code fences.
+- State the suggested top-k and the main reason.
+- Keep it to 2-3 short sentences.
+"""
+
 SYSTEM_REPORT = """You are a scientific report assistant. You are given a ranked list of aptamer candidate predictions. Your job is to write a brief, factual explanation for why the top candidates are recommended.
 
 You MUST NOT change the order, scores, or labels. Only summarize what the data shows.
@@ -73,6 +111,15 @@ Return a JSON object:
 - candidate_notes: dict mapping candidate_id -> one-sentence note
 
 Return ONLY the JSON object."""
+
+DISPLAY_REPORT = """You are a scientific report assistant.
+Write a short, factual summary for a chat UI based on the ranked recommendations.
+
+Rules:
+- Do not use JSON or markdown code fences.
+- Do not change rankings, scores, or labels.
+- Keep it to one short paragraph.
+"""
 
 
 class IntakeSkill:
@@ -84,6 +131,9 @@ class IntakeSkill:
 
     def extract_stream(self, user_text: str):
         return self.client.chat_stream(SYSTEM_INTAKE, user_text)
+
+    def explain_extract_stream(self, user_text: str):
+        return self.client.chat_text_stream(DISPLAY_INTAKE, user_text)
 
 
 class SiteProposalSkill:
@@ -114,6 +164,18 @@ class SiteProposalSkill:
         )
         return self.client.chat_stream(SYSTEM_SITE_PROPOSAL, user)
 
+    def explain_propose_stream(
+        self,
+        sequence: str,
+        structure: SecondaryStructure,
+    ):
+        user = (
+            f"Sequence: {sequence}\n"
+            f"Dot-bracket: {structure.dot_bracket}\n"
+            f"MFE: {structure.mfe} kcal/mol"
+        )
+        return self.client.chat_text_stream(DISPLAY_SITE_PROPOSAL, user)
+
     def rephrase(self, sequence: str, user_text: str) -> dict[str, Any]:
         user = f"Sequence length: {len(sequence)}\nUser request: {user_text}"
         return self.client.chat_json(SYSTEM_SITE_REPHRASE, user)
@@ -134,6 +196,10 @@ class AnalogSuggestionSkill:
     def suggest_stream(self, target: TargetMolecule):
         user = f"Target name: {target.resolved_name or target.input_text}\nSMILES: {target.smiles or 'unknown'}"
         return self.client.chat_stream(SYSTEM_ANALOG_SUGGESTION, user)
+
+    def explain_suggest_stream(self, target: TargetMolecule):
+        user = f"Target name: {target.resolved_name or target.input_text}\nSMILES: {target.smiles or 'unknown'}"
+        return self.client.chat_text_stream(DISPLAY_ANALOG_SUGGESTION, user)
 
 
 class DockingPlannerSkill:
@@ -166,6 +232,19 @@ class DockingPlannerSkill:
         )
         return self.client.chat_stream(SYSTEM_DOCKING_PLANNER, user)
 
+    def explain_plan_stream(
+        self,
+        candidate_count: int,
+        machine_profile: dict[str, Any],
+        time_budget_hours: int | None,
+    ):
+        user = (
+            f"Candidates: {candidate_count}\n"
+            f"Machine: {json.dumps(machine_profile, ensure_ascii=False)}\n"
+            f"Time budget (hours): {time_budget_hours if time_budget_hours is not None else 'not set'}"
+        )
+        return self.client.chat_text_stream(DISPLAY_DOCKING_PLANNER, user)
+
 
 class ReportSkill:
     def __init__(self, client: LLMClient | None = None) -> None:
@@ -182,3 +261,9 @@ class ReportSkill:
             recommendations, indent=2, ensure_ascii=False
         )
         return self.client.chat_stream(SYSTEM_REPORT, user)
+
+    def explain_summarize_stream(self, recommendations: list[dict[str, Any]]):
+        user = "Recommendations (already sorted by final_priority):\n" + json.dumps(
+            recommendations, indent=2, ensure_ascii=False
+        )
+        return self.client.chat_text_stream(DISPLAY_REPORT, user)

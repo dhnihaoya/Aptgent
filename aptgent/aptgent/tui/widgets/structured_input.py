@@ -92,6 +92,8 @@ class SpecificityPanel(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static("Specificity Filter", classes="title")
+        if self.target_name:
+            yield Static(f"Target molecule: {self.target_name}", classes="info-text")
         yield Static(
             "Enter analog molecules (comma-separated names or SMILES), "
             "or let the LLM suggest them.",

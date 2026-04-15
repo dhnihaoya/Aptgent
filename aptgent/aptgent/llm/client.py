@@ -29,6 +29,7 @@ class LLMClient:
         self.base_url = self.config["base_url"]
         self.model = self.config["model"]
         self.temperature = self.config.get("temperature", 0.2)
+        self.json_temperature = self.config.get("json_temperature", 0.2)
         self.max_tokens = self.config.get("max_tokens", 4096)
         self.timeout = self.config.get("timeout_seconds", 60)
         self.max_retries = self.config.get("max_retries", 2)
@@ -40,37 +41,73 @@ class LLMClient:
             data = tomli.load(f)
         return data.get("provider", {}).get("openai", {})
 
-    def chat_json(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-    ) -> dict[str, Any]:
-        headers = {
+    @staticmethod
+    def _extract_content(message: Any) -> str:
+        if isinstance(message, str):
+            return message
+        if isinstance(message, list):
+            parts: list[str] = []
+            for item in message:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+            return "".join(parts)
+        return ""
+
+    def _headers(self) -> dict[str, str]:
+        return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        payload = {
+
+    def _payload(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        temperature: float,
+        stream: bool = False,
+        response_format: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": self.temperature,
+            "temperature": temperature,
             "max_tokens": self.max_tokens,
-            "response_format": {"type": "json_object"},
         }
+        if stream:
+            payload["stream"] = True
+        if response_format is not None:
+            payload["response_format"] = response_format
+        return payload
 
+    def chat_json(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict[str, Any]:
         for attempt in range(self.max_retries + 1):
             try:
                 resp = httpx.post(
                     f"{self.base_url}/chat/completions",
-                    headers=headers,
-                    json=payload,
+                    headers=self._headers(),
+                    json=self._payload(
+                        system_prompt,
+                        user_prompt,
+                        temperature=self.json_temperature,
+                        response_format={"type": "json_object"},
+                    ),
                     timeout=self.timeout,
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                content = data["choices"][0]["message"]["content"]
+                content = self._extract_content(data["choices"][0]["message"]["content"])
                 return json.loads(content)
             except Exception as e:
                 if attempt == self.max_retries:
@@ -83,29 +120,19 @@ class LLMClient:
         user_prompt: str,
     ):
         """Stream LLM response as text chunks (generator)."""
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
-            "stream": True,
-            "response_format": {"type": "json_object"},
-        }
-
         for attempt in range(self.max_retries + 1):
             try:
                 with httpx.stream(
                     "POST",
                     f"{self.base_url}/chat/completions",
-                    headers=headers,
-                    json=payload,
+                    headers=self._headers(),
+                    json=self._payload(
+                        system_prompt,
+                        user_prompt,
+                        temperature=self.json_temperature,
+                        stream=True,
+                        response_format={"type": "json_object"},
+                    ),
                     timeout=self.timeout,
                 ) as resp:
                     resp.raise_for_status()
@@ -127,3 +154,45 @@ class LLMClient:
             except Exception as e:
                 if attempt == self.max_retries:
                     raise RuntimeError(f"LLM streaming request failed after {self.max_retries} retries: {e}")
+
+    def chat_text_stream(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ):
+        """Stream plain-language text for direct user display."""
+        for attempt in range(self.max_retries + 1):
+            try:
+                with httpx.stream(
+                    "POST",
+                    f"{self.base_url}/chat/completions",
+                    headers=self._headers(),
+                    json=self._payload(
+                        system_prompt,
+                        user_prompt,
+                        temperature=self.temperature,
+                        stream=True,
+                    ),
+                    timeout=self.timeout,
+                ) as resp:
+                    resp.raise_for_status()
+                    for line in resp.iter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if data.strip() == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                            delta = chunk["choices"][0].get("delta", {})
+                            content = self._extract_content(delta.get("content", ""))
+                            if content:
+                                yield content
+                        except Exception:
+                            continue
+                return
+            except Exception as e:
+                if attempt == self.max_retries:
+                    raise RuntimeError(
+                        f"LLM text streaming request failed after {self.max_retries} retries: {e}"
+                    )

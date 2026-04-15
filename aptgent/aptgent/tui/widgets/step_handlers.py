@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import itertools
-import json
 from pathlib import Path
-from typing import Any
-
-from textual.widgets import DataTable
+from typing import Any, Callable
 
 from aptgent.adapters.docking import HardwareProbeAdapter
 from aptgent.domain.enums import Step
@@ -64,16 +61,217 @@ def _next_step(step: Step) -> Step | None:
     return targets[0] if targets else None
 
 
-def _strip_markdown_fences(text: str) -> str:
-    """Remove ```json ... ``` fences that LLMs sometimes wrap around JSON."""
-    text = text.strip()
-    if text.startswith("```json"):
-        text = text[7:]
-    elif text.startswith("```"):
-        text = text[3:]
-    if text.endswith("```"):
-        text = text[:-3]
-    return text.strip()
+def _clean_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _normalize_sequence(value: Any) -> str | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    sequence = "".join(ch for ch in text.upper() if not ch.isspace())
+    allowed = {"A", "C", "G", "T", "U"}
+    if not sequence or any(ch not in allowed for ch in sequence):
+        return None
+    return sequence
+
+
+def _coerce_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return int(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _coerce_int_list(
+    values: Any,
+    *,
+    min_value: int | None = None,
+    max_value: int | None = None,
+) -> list[int]:
+    if not isinstance(values, list):
+        return []
+    result: list[int] = []
+    seen: set[int] = set()
+    for item in values:
+        value = _coerce_int(item)
+        if value is None:
+            continue
+        if min_value is not None and value < min_value:
+            continue
+        if max_value is not None and value > max_value:
+            continue
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def _run_llm_interaction(
+    screen: Any,
+    *,
+    display_stream: Callable[[], Any] | None,
+    structured_call: Callable[[], Any],
+) -> dict[str, Any]:
+    from textual.worker import get_current_worker
+
+    worker = get_current_worker()
+    if worker.is_cancelled:
+        return {}
+
+    bubble = None
+    display_error: Exception | None = None
+
+    if display_stream is not None:
+        def _make_bubble() -> None:
+            nonlocal bubble
+            bubble = screen.add_streaming_message()
+
+        screen.app.call_from_thread(_make_bubble)
+        try:
+            for chunk in display_stream():
+                if worker.is_cancelled:
+                    return {}
+                screen.app.call_from_thread(bubble.append_text, chunk)
+        except Exception as exc:
+            display_error = exc
+        finally:
+            if bubble:
+                screen.app.call_from_thread(bubble.finalize)
+
+    if worker.is_cancelled:
+        return {}
+
+    result = structured_call()
+    if not isinstance(result, dict):
+        raise RuntimeError("LLM returned a non-object response.")
+
+    if display_error is not None:
+        screen.app.call_from_thread(
+            screen.add_system_message,
+            f"LLM explanation unavailable; using structured fallback. {display_error}",
+            "warning-text",
+        )
+
+    return result
+
+
+def _validate_intake_result(result: Any) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Invalid intake response.")
+    missing_fields = []
+    for item in result.get("missing_fields", []):
+        text = _clean_text(item)
+        if text:
+            missing_fields.append(text)
+    return {
+        "initial_sequence": _normalize_sequence(result.get("initial_sequence")),
+        "target_molecule": _clean_text(result.get("target_molecule")),
+        "modification_region": _clean_text(result.get("modification_region")),
+        "analogs": [
+            text for text in (_clean_text(item) for item in result.get("analogs", []))
+            if text
+        ] if isinstance(result.get("analogs"), list) else [],
+        "time_budget_hours": _coerce_int(result.get("time_budget_hours")),
+        "missing_fields": missing_fields,
+        "follow_up_question": _clean_text(result.get("follow_up_question")),
+    }
+
+
+def _validate_site_proposal_result(result: Any, sequence_length: int) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Invalid site proposal response.")
+    return {
+        "proposed_sites": _coerce_int_list(
+            result.get("proposed_sites"),
+            min_value=0,
+            max_value=max(sequence_length - 1, 0),
+        ),
+        "reasoning": _clean_text(result.get("reasoning")) or "Suggested from the current secondary-structure context.",
+        "confidence": (_clean_text(result.get("confidence")) or "unknown").lower(),
+    }
+
+
+def _validate_analog_suggestion_result(result: Any) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Invalid analog suggestion response.")
+    analogs: list[dict[str, str | None]] = []
+    raw_analogs = result.get("analogs", [])
+    if isinstance(raw_analogs, list):
+        for raw in raw_analogs:
+            if not isinstance(raw, dict):
+                continue
+            name = _clean_text(raw.get("name"))
+            if not name:
+                continue
+            analogs.append(
+                {
+                    "name": name,
+                    "smiles": _clean_text(raw.get("smiles")),
+                    "reason": _clean_text(raw.get("reason")),
+                }
+            )
+    return {
+        "analogs": analogs,
+        "note": _clean_text(result.get("note")),
+    }
+
+
+def _default_top_k(
+    candidate_count: int,
+    machine_profile: dict[str, Any],
+    time_budget_hours: int | None,
+) -> int:
+    if candidate_count <= 0:
+        return 0
+    cpu_count = _coerce_int(machine_profile.get("cpu_count")) or 1
+    budget_hours = max(time_budget_hours or 1, 1)
+    rough_capacity = cpu_count * budget_hours * 4
+    return max(1, min(candidate_count, rough_capacity))
+
+
+def _validate_docking_recommendation_result(
+    result: Any,
+    *,
+    candidate_count: int,
+    machine_profile: dict[str, Any],
+    time_budget_hours: int | None,
+) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Invalid docking recommendation response.")
+    top_k = _coerce_int(result.get("recommended_top_k"))
+    if top_k is None or top_k <= 0:
+        top_k = _default_top_k(candidate_count, machine_profile, time_budget_hours)
+    top_k = min(top_k, candidate_count)
+    reason = _clean_text(result.get("reason")) or "Using a conservative docking batch size based on available resources."
+    return {
+        "recommended_top_k": top_k,
+        "reason": reason,
+    }
+
+
+def _validate_report_summary(result: Any) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Invalid report summary response.")
+    candidate_notes = result.get("candidate_notes")
+    if not isinstance(candidate_notes, dict):
+        candidate_notes = {}
+    return {
+        "summary": _clean_text(result.get("summary")) or "",
+        "candidate_notes": candidate_notes,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -97,33 +295,17 @@ class IntakeHandler(StepHandler):
         self.screen.run_worker(self._extract, exclusive=True, thread=True)
 
     def _extract(self) -> None:
-        from textual.worker import get_current_worker
-        worker = get_current_worker()
-        if worker.is_cancelled:
-            return
-
         state = self.screen.app.current_state
         text = state.input_payload.get("user_text", "")
 
-        bubble = None
-        def _make_bubble():
-            nonlocal bubble
-            bubble = self.screen.add_streaming_message()
-        self.screen.app.call_from_thread(_make_bubble)
-
         try:
             skill = IntakeSkill()
-            chunks: list[str] = []
-            for chunk in skill.extract_stream(text):
-                if worker.is_cancelled:
-                    break
-                chunks.append(chunk)
-                self.screen.app.call_from_thread(bubble.append_text, chunk)
-            self.screen.app.call_from_thread(bubble.finalize)
-            result = json.loads(_strip_markdown_fences("".join(chunks)))
+            result = _run_llm_interaction(
+                self.screen,
+                display_stream=lambda: skill.explain_extract_stream(text),
+                structured_call=lambda: _validate_intake_result(skill.extract(text)),
+            )
         except Exception as e:
-            if bubble:
-                self.screen.app.call_from_thread(bubble.finalize)
             self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"LLM error: {e}", "error-text"
             )
@@ -134,11 +316,17 @@ class IntakeHandler(StepHandler):
         state.input_payload["llm_extracted"] = result
 
         seq = result.get("initial_sequence")
-        if not seq:
-            follow_up = result.get("follow_up_question", "Please provide the aptamer sequence.")
+        target_text = result.get("target_molecule")
+        if not seq or not target_text:
+            follow_up = result.get("follow_up_question") or "Please provide the aptamer sequence and target molecule."
+            missing_parts: list[str] = []
+            if not seq:
+                missing_parts.append("sequence")
+            if not target_text:
+                missing_parts.append("target molecule")
             self.screen.app.call_from_thread(
                 self.screen.add_system_message,
-                f"Missing sequence. {follow_up}\nPlease describe your task again with a sequence.",
+                f"Missing {', '.join(missing_parts)}. {follow_up}",
                 "warning-text",
             )
             self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
@@ -148,54 +336,49 @@ class IntakeHandler(StepHandler):
         state.input_payload["initial_sequence"] = seq
         msg_parts = [f"Sequence: {seq}"]
 
-        target_text = result.get("target_molecule")
-        if target_text:
-            resolved = self.screen.app.molecule_resolver.resolve(target_text)
-            # Fallback: if resolution fails and name looks like CJK, translate via LLM
-            if resolved.resolution_status != "resolved" and any(
-                "\u4e00" <= ch <= "\u9fff" for ch in target_text
-            ):
-                try:
-                    translate_prompt = (
-                        "Translate the following molecule name to its standard English common name. "
-                        'Return ONLY a JSON object: {"english_name": "<english name>"}.'
+        resolved = self.screen.app.molecule_resolver.resolve(target_text)
+        # Fallback: if resolution fails and name looks like CJK, translate via LLM
+        if resolved.resolution_status != "resolved" and any(
+            "\u4e00" <= ch <= "\u9fff" for ch in target_text
+        ):
+            try:
+                translate_prompt = (
+                    "Translate the following molecule name to its standard English common name. "
+                    'Return ONLY a JSON object: {"english_name": "<english name>"}.'
+                )
+                translated = skill.client.chat_json(
+                    translate_prompt, target_text
+                )
+                english_name = None
+                if isinstance(translated, dict):
+                    english_name = _clean_text(
+                        translated.get("english_name")
+                        or translated.get("name")
+                        or translated.get("translation")
                     )
-                    translated = skill.client.chat_json(
-                        translate_prompt, target_text
-                    )
-                    if isinstance(translated, str):
-                        english_name = translated.strip()
-                    elif isinstance(translated, dict):
-                        english_name = (
-                            translated.get("english_name")
-                            or translated.get("name")
-                            or translated.get("translation")
-                            or list(translated.values())[0]
-                        )
-                        if isinstance(english_name, str):
-                            english_name = english_name.strip()
-                        else:
-                            english_name = None
-                    else:
-                        english_name = None
-                    if english_name:
-                        resolved = self.screen.app.molecule_resolver.resolve(english_name)
-                        if resolved.resolution_status == "resolved":
-                            target_text = english_name
-                except Exception:
-                    pass
-            if resolved.resolution_status == "resolved":
-                state.target_molecule = resolved
-                msg_parts.append(f"Target: {resolved.resolved_name or target_text} ({resolved.smiles})")
-            else:
-                state.target_molecule = TargetMolecule(input_text=target_text)
-                msg_parts.append(f"Target: {target_text} (resolution failed)")
+                    if english_name is None and translated:
+                        english_name = _clean_text(next(iter(translated.values())))
+                elif isinstance(translated, str):
+                    english_name = _clean_text(translated)
+                if english_name:
+                    resolved = self.screen.app.molecule_resolver.resolve(english_name)
+                    if resolved.resolution_status == "resolved":
+                        target_text = english_name
+            except Exception:
+                pass
+        if resolved.resolution_status == "resolved":
+            state.target_molecule = resolved
+            msg_parts.append(f"Target: {resolved.resolved_name or target_text} ({resolved.smiles})")
         else:
-            msg_parts.append("No target molecule specified.")
+            state.target_molecule = TargetMolecule(input_text=target_text)
+            msg_parts.append(f"Target: {target_text} (resolution failed)")
 
         mod = result.get("modification_region")
         if mod:
             state.input_payload["modification_region"] = mod
+        time_budget = result.get("time_budget_hours")
+        if time_budget is not None:
+            state.time_budget = time_budget
 
         self.screen.app.save_state()
         self.screen.app.call_from_thread(
@@ -267,34 +450,21 @@ class SiteProposalHandler(StepHandler):
         self.screen.run_worker(self._propose, exclusive=True, thread=True)
 
     def _propose(self) -> None:
-        from textual.worker import get_current_worker
-        worker = get_current_worker()
-        if worker.is_cancelled:
-            return
-
         state = self.screen.app.current_state
         seq = state.input_payload.get("initial_sequence", "")
         struct = state.secondary_structure
 
-        bubble = None
-        def _make_bubble():
-            nonlocal bubble
-            bubble = self.screen.add_streaming_message()
-        self.screen.app.call_from_thread(_make_bubble)
-
         try:
             skill = SiteProposalSkill()
-            chunks: list[str] = []
-            for chunk in skill.propose_stream(seq, struct):
-                if worker.is_cancelled:
-                    break
-                chunks.append(chunk)
-                self.screen.app.call_from_thread(bubble.append_text, chunk)
-            self.screen.app.call_from_thread(bubble.finalize)
-            result = json.loads(_strip_markdown_fences("".join(chunks)))
+            result = _run_llm_interaction(
+                self.screen,
+                display_stream=lambda: skill.explain_propose_stream(seq, struct),
+                structured_call=lambda: _validate_site_proposal_result(
+                    skill.propose(seq, struct),
+                    len(seq),
+                ),
+            )
         except Exception as e:
-            if bubble:
-                self.screen.app.call_from_thread(bubble.finalize)
             self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"LLM error: {e}", "error-text"
             )
@@ -305,7 +475,7 @@ class SiteProposalHandler(StepHandler):
         reasoning = result.get("reasoning", "")
         self._proposed_sites = sites
 
-        msg = f"Proposed sites: {sites}\nReasoning: {reasoning}"
+        msg = f"Suggested sites: {sites}\nReasoning: {reasoning}"
         self.screen.app.call_from_thread(self.screen.add_system_message, msg)
 
         # Mount checkbox panel
@@ -500,7 +670,7 @@ class SpecificityHandler(StepHandler):
             self._suggest()
         else:
             # Treat as analog input
-            self._run_filter(text)
+            self._run_filter(text, echo_user=False)
 
     def handle_structured_input(self, data: dict) -> None:
         action = data.get("action", "run")
@@ -510,7 +680,7 @@ class SpecificityHandler(StepHandler):
             self._suggest()
         else:
             analogs_text = data.get("analogs_text", "")
-            self._run_filter(analogs_text)
+            self._run_filter(analogs_text, echo_user=bool(analogs_text.strip()))
 
     def handle_action(self, action: str) -> None:
         if action == "suggest":
@@ -521,40 +691,25 @@ class SpecificityHandler(StepHandler):
         self.screen.run_worker(self._suggest_worker, exclusive=True, thread=True)
 
     def _suggest_worker(self) -> None:
-        from textual.worker import get_current_worker
-        worker = get_current_worker()
-        if worker.is_cancelled:
-            return
-
         target = self.screen.app.current_state.target_molecule
-
-        bubble = None
-        def _make_bubble():
-            nonlocal bubble
-            bubble = self.screen.add_streaming_message()
-        self.screen.app.call_from_thread(_make_bubble)
 
         try:
             skill = AnalogSuggestionSkill()
-            chunks: list[str] = []
-            for chunk in skill.suggest_stream(target):
-                if worker.is_cancelled:
-                    break
-                chunks.append(chunk)
-                self.screen.app.call_from_thread(bubble.append_text, chunk)
-            self.screen.app.call_from_thread(bubble.finalize)
-            result = json.loads(_strip_markdown_fences("".join(chunks)))
+            result = _run_llm_interaction(
+                self.screen,
+                display_stream=lambda: skill.explain_suggest_stream(target),
+                structured_call=lambda: _validate_analog_suggestion_result(skill.suggest(target)),
+            )
             analogs = result.get("analogs", [])
             names = ", ".join(a.get("name", "") for a in analogs if a.get("name"))
             self.screen.app.call_from_thread(
-                self.screen.add_system_message, f"Suggested analogs: {names}"
+                self.screen.add_system_message,
+                f"Loaded suggested analogs into the input field: {names}" if names else "No analog suggestions were returned.",
             )
             # Update the panel input
             self.screen.app.call_from_thread(self._update_analog_input, names)
             self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
         except Exception as e:
-            if bubble:
-                self.screen.app.call_from_thread(bubble.finalize)
             self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"Suggestion failed: {e}", "error-text"
             )
@@ -567,8 +722,9 @@ class SpecificityHandler(StepHandler):
         except Exception:
             pass
 
-    def _run_filter(self, analogs_text: str) -> None:
-        self.screen.add_user_message(f"Filter with: {analogs_text}")
+    def _run_filter(self, analogs_text: str, *, echo_user: bool) -> None:
+        if echo_user:
+            self.screen.add_user_message(f"Filter with: {analogs_text}")
         self.screen.set_input_enabled(False)
 
         state = self.screen.app.current_state
@@ -701,10 +857,13 @@ class DockingSelectionHandler(StepHandler):
     def handle_structured_input(self, data: dict) -> None:
         state = self.screen.app.current_state
         top_k = data.get("top_k", 0)
+        candidate_count = len(state.candidates)
 
         if top_k <= 0:
             self.screen.add_system_message("Please enter a valid top-k > 0.", "warning-text")
             return
+        if candidate_count and top_k > candidate_count:
+            top_k = candidate_count
 
         profile = HardwareProbeAdapter().probe()
         state.docking_plan = DockingPlan(
@@ -728,6 +887,7 @@ class DockingSelectionHandler(StepHandler):
         if action.startswith("recommend:"):
             budget_str = action.split(":", 1)[1]
             time_budget = int(budget_str) if budget_str.isdigit() else None
+            self.screen.set_input_enabled(False)
             self.screen.run_worker(
                 lambda: self._recommend_worker(time_budget),
                 exclusive=True,
@@ -735,47 +895,42 @@ class DockingSelectionHandler(StepHandler):
             )
 
     def _recommend_worker(self, time_budget: int | None) -> None:
-        from textual.worker import get_current_worker
-        worker = get_current_worker()
-        if worker.is_cancelled:
-            return
-
         state = self.screen.app.current_state
         profile = HardwareProbeAdapter().probe()
 
-        bubble = None
-        def _make_bubble():
-            nonlocal bubble
-            bubble = self.screen.add_streaming_message()
-        self.screen.app.call_from_thread(_make_bubble)
-
         try:
             skill = DockingPlannerSkill()
-            chunks: list[str] = []
-            for chunk in skill.plan_stream(
-                candidate_count=len(state.candidates),
-                machine_profile=profile,
-                time_budget_hours=time_budget,
-            ):
-                if worker.is_cancelled:
-                    break
-                chunks.append(chunk)
-                self.screen.app.call_from_thread(bubble.append_text, chunk)
-            self.screen.app.call_from_thread(bubble.finalize)
-            result = json.loads(_strip_markdown_fences("".join(chunks)))
+            result = _run_llm_interaction(
+                self.screen,
+                display_stream=lambda: skill.explain_plan_stream(
+                    candidate_count=len(state.candidates),
+                    machine_profile=profile,
+                    time_budget_hours=time_budget,
+                ),
+                structured_call=lambda: _validate_docking_recommendation_result(
+                    skill.plan(
+                        candidate_count=len(state.candidates),
+                        machine_profile=profile,
+                        time_budget_hours=time_budget,
+                    ),
+                    candidate_count=len(state.candidates),
+                    machine_profile=profile,
+                    time_budget_hours=time_budget,
+                ),
+            )
             top_k = result.get("recommended_top_k", 0)
             reason = result.get("reason", "")
             self.screen.app.call_from_thread(
                 self.screen.add_system_message,
-                f"LLM recommends top {top_k}. {reason}",
+                f"Recommended docking batch size set to top {top_k}. {reason}",
             )
             self.screen.app.call_from_thread(self._update_panel, top_k, reason)
         except Exception as e:
-            if bubble:
-                self.screen.app.call_from_thread(bubble.finalize)
             self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"Recommendation failed: {e}", "error-text"
             )
+        finally:
+            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
 
     def _update_panel(self, top_k: int, reason: str) -> None:
         try:
@@ -939,11 +1094,6 @@ class ReportHandler(StepHandler):
         self.screen.run_worker(self._build_report, exclusive=True, thread=True)
 
     def _build_report(self) -> None:
-        from textual.worker import get_current_worker
-        worker = get_current_worker()
-        if worker.is_cancelled:
-            return
-
         state = self.screen.app.current_state
 
         # Build lookup maps
@@ -1007,21 +1157,11 @@ class ReportHandler(StepHandler):
         try:
             skill = ReportSkill()
             rec_dicts = [r.model_dump() for r in recommendations[:10]]
-
-            bubble = None
-            def _make_bubble():
-                nonlocal bubble
-                bubble = self.screen.add_streaming_message()
-            self.screen.app.call_from_thread(_make_bubble)
-
-            chunks: list[str] = []
-            for chunk in skill.summarize_stream(rec_dicts):
-                if worker.is_cancelled:
-                    break
-                chunks.append(chunk)
-                self.screen.app.call_from_thread(bubble.append_text, chunk)
-            self.screen.app.call_from_thread(bubble.finalize)
-            summary_result = json.loads(_strip_markdown_fences("".join(chunks)))
+            summary_result = _run_llm_interaction(
+                self.screen,
+                display_stream=lambda: skill.explain_summarize_stream(rec_dicts),
+                structured_call=lambda: _validate_report_summary(skill.summarize(rec_dicts)),
+            )
             summary = summary_result.get("summary", "")
             if summary:
                 lines.append(f"\nSummary: {summary}")
@@ -1069,7 +1209,7 @@ _HANDLER_MAP: dict[Step, type[StepHandler]] = {
     Step.CANDIDATE_ENUMERATION: EnumerationHandler,
     Step.PRIMARY_SCORING: ScoringHandler,
     Step.SPECIFICITY_FILTER: SpecificityHandler,
-    Step.DOCKING_PREP: DockingSelectionHandler,  # docking_prep not used in flow, alias
+    Step.DOCKING_PREP: DockingSelectionHandler,  # backward-compat for persisted runs
     Step.DOCKING_SELECTION: DockingSelectionHandler,
     Step.DOCKING_RUN: DockingRunHandler,
     Step.SPATIAL_RANK: SpatialRankHandler,
