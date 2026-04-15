@@ -277,12 +277,19 @@ class DockingSelectionHandler(StepHandler):
 
     def _skip(self) -> None:
         state = self.screen.app.current_state
-        state.docking_plan = DockingPlan(recommended_top_k=0)
+        state.docking_plan = None
+        state.docking_results = []
         recommendation = state.context.docking_recommendation
         recommendation.display_markdown = ""
-        recommendation.phase = "initial"
-        recommendation.strategy = ""
+        recommendation.reason = ""
+        recommendation.phase = "skipped"
+        recommendation.strategy = "skipped"
         recommendation.accepted = False
+        recommendation.recommended_top_k = 0
+        recommendation.recommended_grid_size = []
+        recommendation.recommended_time_budget_hours = None
+        recommendation.receptor_path_note = ""
+        recommendation.grid_center_note = ""
         self.screen.app.save_state()
         self.screen.add_system_message("Docking skipped.")
         ns = next_step(Step.DOCKING_SELECTION)

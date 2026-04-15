@@ -14,6 +14,8 @@ class DockingRunHandler(StepHandler):
         target = state.target_molecule
 
         if not plan or plan.recommended_top_k <= 0:
+            state.docking_results = []
+            self.screen.app.save_state()
             self.screen.add_system_message("Docking skipped (no plan or top-k = 0).")
             ns = next_step(Step.DOCKING_RUN)
             if ns:

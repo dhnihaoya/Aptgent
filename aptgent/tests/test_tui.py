@@ -737,3 +737,41 @@ async def test_manual_docking_path_opens_editable_form_directly(tmp_path):
         assert panel.mode == "manual"
         assert panel.query_one("#dock-time-budget", Input).value == "6"
         assert panel.query_one("#dock-top-k", Input).value == ""
+
+
+@pytest.mark.anyio
+async def test_skipping_docking_clears_plan_and_reaches_final_report(tmp_path):
+    app = make_app(tmp_path)
+    state = app.engine.create_run("dock_skip_case")
+    state.current_step = Step.DOCKING_SELECTION
+    state.target_molecule = TargetMolecule(
+        input_text="caffeine",
+        resolved_name="Caffeine",
+        smiles="Cn1cnc2n(C)c(=O)n(C)c(=O)c12",
+        resolution_status="resolved",
+    )
+    state.candidates = [
+        CandidateSequence(sequence=f"ACGT{i:02d}", candidate_id=f"cand-{i}")
+        for i in range(1, 4)
+    ]
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.set_run_id("dock_skip_case")
+        app.push_screen("chat")
+        await pilot.pause()
+        await pilot.pause()
+
+        strategy_panel = app.screen.query_one(DockingStrategyPanel)
+        strategy_panel.query_one("#btn-dock-plan-skip", Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.current_state.docking_plan is None
+        assert app.current_state.docking_results == []
+        assert app.current_state.context.docking_recommendation.strategy == "skipped"
+        assert app.current_state.context.docking_recommendation.phase == "skipped"
+        assert app.current_state.current_step == Step.FINAL_REPORT
