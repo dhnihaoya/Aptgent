@@ -359,12 +359,12 @@ def test_activity_bubble_animates_text_and_icon_together():
 
     bubble.update = capture  # type: ignore[method-assign]
     bubble._update_render()
-    bubble._frame_idx = 2
+    bubble._frame_idx = 3
     bubble._update_render()
     bubble.finalize()
 
-    assert seen[0] == "[#6b7280]✳ Testing activity[/]"
-    assert seen[1] == "[bold #facc15]✳ Testing activity[/]"
+    assert seen[0] == "[#6b7280]· Testing activity[/]"
+    assert seen[1] == "[bold #facc15]✦ Testing activity[/]"
     assert seen[2] == "[bold #facc15]•[/] Testing activity"
 
 
@@ -405,6 +405,8 @@ def test_thinking_bubble_collapsed_header_shows_token_count_and_arrow():
     assert "Thinking" in latest
     assert "tokens" in latest
     assert "▼" in latest
+    assert "(ctrl+o to expand)" in latest
+    assert "✦" in latest or "•" in latest or "·" in latest
     assert "Thought process hidden" not in latest
 
 

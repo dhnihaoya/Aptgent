@@ -12,6 +12,16 @@ from textual.widgets.option_list import Option
 from aptgent.domain.enums import Step
 from aptgent.tui.commands import DEFAULT_SLASH_COMMANDS, SlashCommand
 
+_BREATH_INTERVAL_SECONDS = 0.42
+_BREATHING_HEADER_FRAMES = [
+    ("#6b7280", False, "·"),
+    ("#9ca3af", False, "•"),
+    ("#d1d5db", False, "•"),
+    ("#facc15", True, "✦"),
+    ("#d1d5db", False, "•"),
+    ("#9ca3af", False, "•"),
+]
+
 
 class _BaseBubble(Static):
     """Shared styling for chat bubbles."""
@@ -94,12 +104,7 @@ class StreamingBubble(Static):
 class ThinkingBubble(Static):
     """A collapsible bubble for model reasoning content."""
 
-    _FRAMES = [
-        ("#6b7280", False),
-        ("#9ca3af", False),
-        ("#facc15", True),
-        ("#9ca3af", False),
-    ]
+    _FRAMES = _BREATHING_HEADER_FRAMES
 
     DEFAULT_CSS = """
     ThinkingBubble {
@@ -136,7 +141,7 @@ class ThinkingBubble(Static):
 
     def on_mount(self) -> None:
         self._tick()
-        self._timer = self.set_interval(0.3, self._tick)
+        self._timer = self.set_interval(_BREATH_INTERVAL_SECONDS, self._tick)
 
     def on_unmount(self) -> None:
         if self._timer is not None:
@@ -174,16 +179,17 @@ class ThinkingBubble(Static):
 
     def _header_style(self) -> str:
         if not self._streaming:
-            return "#facc15"
-        color, bold = self._FRAMES[self._frame_idx % len(self._FRAMES)]
-        return f"bold {color}" if bold else color
+            return "bold #facc15", "✦"
+        color, bold, icon = self._FRAMES[self._frame_idx % len(self._FRAMES)]
+        return (f"bold {color}" if bold else color), icon
 
     def _refresh_display(self) -> None:
         arrow = "▲" if self._expanded else "▼"
-        style = self._header_style()
+        style, icon = self._header_style()
+        action_label = "collapse" if self._expanded else "expand"
         header = (
-            f"[{style}]Thinking[/] "
-            f"[dim]{self.estimated_tokens} tokens {arrow} Ctrl+O[/dim]"
+            f"[{style}]{icon} Thinking[/] "
+            f"[dim]{self.estimated_tokens} tokens {arrow} (ctrl+o to {action_label})[/dim]"
         )
         if not self._expanded:
             self.update(header)
@@ -286,10 +292,12 @@ class ActivityBubble(Static):
     """A breathing status bubble that stays at the end of the chat log."""
 
     _FRAMES = [
-        ("#6b7280", False),
-        ("#9ca3af", False),
-        ("#facc15", True),
-        ("#9ca3af", False),
+        ("#6b7280", False, "·"),
+        ("#9ca3af", False, "•"),
+        ("#d1d5db", False, "•"),
+        ("#facc15", True, "✦"),
+        ("#d1d5db", False, "•"),
+        ("#9ca3af", False, "•"),
     ]
 
     DEFAULT_CSS = """
@@ -311,7 +319,7 @@ class ActivityBubble(Static):
 
     def on_mount(self) -> None:
         self._tick()
-        self._timer = self.set_interval(0.3, self._tick)
+        self._timer = self.set_interval(_BREATH_INTERVAL_SECONDS, self._tick)
 
     def on_unmount(self) -> None:
         if self._timer is not None:
@@ -339,9 +347,9 @@ class ActivityBubble(Static):
             pass
 
     def _update_render(self) -> None:
-        color, bold = self._FRAMES[self._frame_idx % len(self._FRAMES)]
+        color, bold, icon = self._FRAMES[self._frame_idx % len(self._FRAMES)]
         style = f"bold {color}" if bold else color
-        self.update(f"[{style}]✳ {self._text}[/]")
+        self.update(f"[{style}]{icon} {self._text}[/]")
 
 
 class InputBar(Vertical):
