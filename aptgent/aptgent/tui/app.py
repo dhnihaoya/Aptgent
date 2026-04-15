@@ -9,6 +9,7 @@ from textual.binding import Binding
 
 from aptgent.domain.enums import Step
 from aptgent.tui.screens.chat import ChatScreen
+from aptgent.tui.screens.quit_confirm import QuitConfirmScreen
 from aptgent.tui.screens.welcome import WelcomeScreen
 from aptgent.tui.widgets import StatusPanel, StepProgressBar
 from aptgent.workflow.engine import WorkflowEngine
@@ -69,6 +70,7 @@ class AptgentApp(App):
         self.spatial_rank_adapter = spatial_rank_adapter or self._create_spatial_rank_adapter()
 
         self._state: RunState | None = None
+        self._pending_start_message: str | None = None
 
         self.progress_bar = StepProgressBar(Step.INTAKE, id="progress-bar")
         self.status_panel = StatusPanel("", "", id="status-panel")
@@ -83,8 +85,22 @@ class AptgentApp(App):
         self._state = self.engine.load_run(run_id)
         if self._state is None:
             self._state = self.engine.create_run(run_id)
+        self._pending_start_message = None
         self.progress_bar.set_step(self._state.current_step)
         self.status_panel.set_status(run_id, self._state.status.value)
+
+    def start_new_run(self, *, initial_message: str | None = None) -> RunState:
+        state = self.engine.create_run()
+        self._state = state
+        self._pending_start_message = initial_message
+        self.progress_bar.set_step(state.current_step)
+        self.status_panel.set_status(state.run_id, state.status.value)
+        return state
+
+    def consume_pending_start_message(self) -> str | None:
+        message = self._pending_start_message
+        self._pending_start_message = None
+        return message
 
     def save_state(self) -> None:
         if self._state:
@@ -93,6 +109,20 @@ class AptgentApp(App):
 
     def on_mount(self) -> None:
         self.push_screen("welcome")
+
+    def action_quit(self) -> None:
+        self.open_quit_dialog()
+
+    def open_quit_dialog(self) -> None:
+        if isinstance(self.screen, QuitConfirmScreen):
+            return
+        self.push_screen(QuitConfirmScreen(), self._handle_quit_confirmation)
+
+    def _handle_quit_confirmation(self, should_quit: bool | None) -> None:
+        if not should_quit:
+            return
+        self.save_state()
+        self.exit()
 
     def _create_rna_fold_adapter(self) -> Any:
         from aptgent.adapters.rna_fold import RNAfoldAdapter

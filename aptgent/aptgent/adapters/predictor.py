@@ -70,36 +70,6 @@ class EnsembleAdapter:
             timeout=timeout, env=env,
         )
 
-    def _predict_single(self, seq: str, smiles: str) -> dict[str, Any]:
-        """Run a single prediction pair and return parsed JSON.
-
-        The JSON contains ``individual`` (per-model label + probability) and
-        ``ensemble_label``, which is exactly what the old in-process adapter
-        produced.
-        """
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False, prefix="pred_",
-        ) as tmp:
-            tmp_path = tmp.name
-
-        try:
-            proc = self._run([
-                "--model-dir", self.model_dir,
-                "predict",
-                "--aptamer", seq,
-                "--smiles", smiles,
-                "--output", tmp_path,
-            ], timeout=300)
-            if proc.returncode != 0:
-                raise RuntimeError(
-                    f"Predictor failed (exit {proc.returncode}): "
-                    f"{proc.stderr[:500]}"
-                )
-            with open(tmp_path) as f:
-                return json.load(f)
-        finally:
-            os.unlink(tmp_path)
-
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------

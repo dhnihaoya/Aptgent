@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, OptionList, Static
+from textual.widgets.option_list import Option
 
 from aptgent.domain.enums import Step
+from aptgent.tui.commands import DEFAULT_SLASH_COMMANDS, SlashCommand
 
 
 class _BaseBubble(Static):
@@ -218,7 +220,7 @@ class ActivityBubble(Static):
         self.update(f"{frame} {self._text}")
 
 
-class InputBar(Horizontal):
+class InputBar(Vertical):
     """Bottom input bar with text field and send button."""
 
     class Submitted(Message):
@@ -230,16 +232,30 @@ class InputBar(Horizontal):
 
     DEFAULT_CSS = """
     InputBar {
-        height: 3;
+        height: auto;
         dock: bottom;
-        padding: 0 1;
+        padding: 0 1 1 1;
         background: $surface-darken-2;
         border-top: tall $surface-lighten-1;
     }
-    InputBar > Input {
+    #command-list {
+        height: auto;
+        max-height: 7;
+        margin: 0 0 1 0;
+        border: tall $surface-lighten-1;
+        background: $surface-darken-1;
+        display: none;
+    }
+    InputBar.-commands-visible #command-list {
+        display: block;
+    }
+    #input-row {
+        height: 3;
+    }
+    #input-row > Input {
         width: 1fr;
     }
-    InputBar > Button {
+    #input-row > Button {
         margin-left: 1;
     }
     InputBar.-disabled {
@@ -247,16 +263,27 @@ class InputBar(Horizontal):
     }
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(
+        self,
+        *,
+        commands: tuple[SlashCommand, ...] = DEFAULT_SLASH_COMMANDS,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self._enabled = True
+        self._commands = commands
+        self._filtered_commands: tuple[SlashCommand, ...] = ()
 
     def compose(self) -> ComposeResult:
-        yield Input(placeholder="Type a message...", id="chat-input")
-        yield Button("Send", id="btn-send", variant="primary")
+        yield OptionList(id="command-list")
+        with Horizontal(id="input-row"):
+            yield Input(placeholder="Type a message...", id="chat-input")
+            yield Button("Send", id="btn-send", variant="primary")
 
     def set_enabled(self, enabled: bool) -> None:
         self._enabled = enabled
+        if not enabled:
+            self.close_command_palette()
         try:
             inp = self.query_one("#chat-input", Input)
             btn = self.query_one("#btn-send", Button)
@@ -278,6 +305,18 @@ class InputBar(Horizontal):
         except Exception:
             pass
 
+    def command_palette_open(self) -> bool:
+        return self.has_class("-commands-visible")
+
+    def close_command_palette(self) -> None:
+        self._filtered_commands = ()
+        self.set_class(False, "-commands-visible")
+        try:
+            option_list = self.query_one("#command-list", OptionList)
+            option_list.clear_options()
+        except Exception:
+            pass
+
     def _submit(self) -> None:
         if not self._enabled:
             return
@@ -286,9 +325,53 @@ class InputBar(Horizontal):
         except Exception:
             return
         text = inp.value.strip()
+        if not text:
+            return
+        if self.command_palette_open() and text.startswith("/") and self._filtered_commands:
+            self._submit_command(self._filtered_commands[0].name)
+            return
+        self.close_command_palette()
         if text:
             self.post_message(self.Submitted(text))
             self.clear_input()
+
+    def _submit_command(self, command_name: str) -> None:
+        self.close_command_palette()
+        self.post_message(self.Submitted(command_name))
+        self.clear_input()
+
+    def _update_command_palette(self, text: str) -> None:
+        command_token, sep, _rest = text.partition(" ")
+        if not command_token.startswith("/") or sep:
+            self.close_command_palette()
+            return
+
+        query = command_token[1:].strip().lower()
+        matches = tuple(
+            command
+            for command in self._commands
+            if not query or command.name[1:].startswith(query)
+        )
+        self._filtered_commands = matches
+        if not matches:
+            self.close_command_palette()
+            return
+
+        options = [
+            Option(
+                f"[bold]{command.name}[/bold]\n[dim]{command.description}[/dim]",
+                id=command.name,
+            )
+            for command in matches
+        ]
+        option_list = self.query_one("#command-list", OptionList)
+        option_list.clear_options()
+        option_list.add_options(options)
+        option_list.highlighted = 0
+        self.set_class(True, "-commands-visible")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        self._update_command_palette(event.value)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
@@ -298,3 +381,33 @@ class InputBar(Horizontal):
         if event.button.id == "btn-send":
             event.stop()
             self._submit()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_list.id != "command-list":
+            return
+        event.stop()
+        command_name = event.option.id
+        if command_name:
+            self._submit_command(command_name)
+
+    def on_key(self, event) -> None:
+        if not self.command_palette_open():
+            return
+        try:
+            option_list = self.query_one("#command-list", OptionList)
+        except Exception:
+            return
+
+        if event.key == "down":
+            event.stop()
+            option_list.action_cursor_down()
+        elif event.key == "up":
+            event.stop()
+            option_list.action_cursor_up()
+        elif event.key == "enter":
+            event.stop()
+            if option_list.highlighted is not None:
+                option_list.action_select()
+        elif event.key == "escape":
+            event.stop()
+            self.close_command_palette()

@@ -232,20 +232,6 @@ class VinaAdapter:
                 "num_modes": self.num_modes,
             },
         )
-
-
-class DockingPrepAdapter:
-    """Placeholder adapter for 3D structure / docking preparation.
-
-    Users should provide receptor PDBQT files manually, or this adapter
-    can be replaced with a real implementation (e.g. RNAComposer crawler)
-    later.
-    """
-
-    def prepare(self, candidate: CandidateSequence, target: TargetMolecule) -> dict:
-        return {"status": "not_implemented", "candidate_id": candidate.candidate_id}
-
-
 class HardwareProbeAdapter:
     """Simple runtime hardware probe for docking planning."""
 

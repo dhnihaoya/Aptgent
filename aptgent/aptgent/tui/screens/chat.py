@@ -17,7 +17,7 @@ class ChatScreen(Screen):
     """Single screen that hosts the entire workflow as a chat conversation."""
 
     BINDINGS = [
-        Binding("escape", "focus_input", "Focus Input", show=False),
+        Binding("escape", "request_quit", "Quit", show=False),
     ]
 
     CSS = """
@@ -45,6 +45,9 @@ class ChatScreen(Screen):
         step = state.current_step
         self._start_step(step)
         self.set_timer(0.1, self._focus_input)
+        pending_text = self.app.consume_pending_start_message()
+        if pending_text:
+            self.call_after_refresh(lambda: self._submit_pending_message(pending_text))
 
     # -- Public API for step handlers --
 
@@ -199,6 +202,13 @@ class ChatScreen(Screen):
     def action_focus_input(self) -> None:
         self._focus_input()
 
+    def action_request_quit(self) -> None:
+        input_bar = self.query_one("#input-bar", InputBar)
+        if input_bar.command_palette_open():
+            input_bar.close_command_palette()
+            return
+        self.app.open_quit_dialog()
+
     def _open_resume_picker(self) -> None:
         if not self.app.persistence.list_runs():
             self.add_system_message("No saved runs available yet.")
@@ -207,8 +217,16 @@ class ChatScreen(Screen):
 
     def _handle_resume_selection(self, run_id: str | None) -> None:
         if not run_id:
+            self._focus_input()
             return
         self.resume_run(run_id)
+
+    def _submit_pending_message(self, text: str) -> None:
+        if not self._handler:
+            return
+        self.add_user_message(text)
+        self.app.current_state.input_payload["user_text"] = text
+        self._handler.handle_user_input(text)
 
     # -- Event handlers --
 
@@ -230,6 +248,9 @@ class ChatScreen(Screen):
                 self.resume_run(state.run_id)
                 return
             self._open_resume_picker()
+            return
+        if command.startswith("/"):
+            self.add_system_message(f"Unknown command: {command}")
             return
         self.add_user_message(text)
         self.app.current_state.input_payload["user_text"] = text

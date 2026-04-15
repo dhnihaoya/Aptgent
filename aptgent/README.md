@@ -1,6 +1,11 @@
 # Aptgent — Aptamer Design Assistant
 
-An interactive TUI workflow tool that guides you through the full aptamer design pipeline: from natural language input to ranked candidate recommendations, combining RNA structure prediction, ensemble ML scoring, specificity filtering, molecular docking, and spatial interaction ranking.
+This repository contains two related Python projects:
+
+- `aptgent/`: the Textual-based TUI workflow application.
+- `aptamer_predictor/`: a separate CLI package that provides the aptamer-small molecule predictor used by `aptgent` via subprocess.
+
+`aptgent` drives a chat-first workflow from natural-language intake to ranked candidate recommendations, combining RNA structure prediction, deterministic scoring, specificity filtering, molecular docking, and spatial interaction ranking.
 
 ## Pipeline
 
@@ -52,18 +57,16 @@ Natural language input
 
 ## Setup
 
-### 1. Clone the repository alongside aptamer_predictor
+### 1. Use the monorepo layout as-is
 
 ```
-your-project-dir/
-  ├── aptamer_predictor/    # The 9-model ensemble predictor (sibling repo)
-  └── aptgent/              # This repo
+/path/to/Aptgent/
+  ├── aptgent/              # TUI app package
+  └── aptamer_predictor/    # Predictor CLI package
 ```
 
 ```bash
-cd your-project-dir
-git clone https://github.com/YOUR_USER/aptamer_predictor.git
-git clone https://github.com/YOUR_USER/aptgent.git
+cd /path/to/Aptgent
 ```
 
 ### 2. Create a conda environment
@@ -125,28 +128,45 @@ cd aptgent
 pip install -e .
 ```
 
-This installs all Python dependencies listed in `pyproject.toml` (textual, pydantic, httpx, numpy, pandas, scikit-learn, xgboost, torch, psutil).
+This installs the `aptgent` app dependencies listed in `pyproject.toml` (Textual, Pydantic, httpx, numpy, psutil, meeko). The heavier predictor stack stays isolated in `aptamer_predictor/`.
 
-### 7. Configure LLM API key
+### 7. Install the predictor environment
 
-Aptgent uses an OpenAI-compatible LLM API for several workflow steps. Two ways to configure:
+```bash
+cd ../aptamer_predictor
+pip install -r requirements.txt
+```
 
-**Option A: Environment variable (recommended for shared/public deployments)**
+`aptgent` calls `aptamer_predictor` through a subprocess adapter. Keep that environment separate if you want to avoid installing the full ML stack into the TUI environment.
+
+### 8. Configure LLM API key
+
+Aptgent uses an OpenAI-compatible LLM API for several workflow steps.
+
+Preferred setup:
 ```bash
 export KIMI_API_KEY="your-api-key-here"
 ```
 
-**Option B: Config file (convenient for local use)**
+`aptgent/aptgent/config/llm.toml` keeps provider settings and an empty fallback field. Do not commit real keys there.
 
-Edit `aptgent/config/llm.toml` and set the `api_key` field directly.
+> The default configuration points to Moonshot (Kimi) API. You can edit `aptgent/aptgent/config/llm.toml` to use any OpenAI-compatible endpoint.
 
-Environment variable takes priority over config file.
+### 9. Configure tool paths
 
-> The default configuration points to Moonshot (Kimi) API. You can edit `aptgent/config/llm.toml` to use any OpenAI-compatible endpoint.
+Review `aptgent/aptgent/config/tools.toml` before running the full workflow. The committed paths are machine-specific examples and are not portable defaults.
 
-### 8. Verify installation
+At minimum, verify:
+
+- `rna_fold.command`
+- `docking.command`
+- `predictor.model_dir`
+- `predictor.conda_python` or `predictor.conda_env`
+
+### 10. Verify installation
 
 ```bash
+cd ../aptgent
 python -m aptgent
 ```
 
@@ -173,7 +193,7 @@ aptgent
 3. **Structure** — RNAfold predicts the secondary structure (dot-bracket + MFE).
 4. **Site Proposal** — The LLM suggests mutation sites based on loop/stem analysis. You confirm or manually specify sites.
 5. **Enumeration** — All possible single-base mutations at confirmed sites are enumerated. Capped at 5,000 candidates.
-6. **Scoring** — Each candidate is scored by the 9-model ensemble predictor (soft-vote averaging).
+6. **Scoring** — Each candidate is scored by the 9-model ensemble predictor. The reported probability is averaged across model outputs, but the ensemble label is `1` only when every model predicts `1`.
 7. **Specificity Filter** — LLM suggests structural analogs of the target. Candidates that bind analogs are removed.
 8. **Docking Selection** — Hardware profile is detected. LLM recommends how many top candidates to dock.
 9. **Docking Run** — AutoDock Vina scores the top-k candidates.
@@ -199,66 +219,48 @@ You can close the TUI and resume later from the Welcome screen.
 ## Project Structure
 
 ```
-aptgent/
+.
 ├── aptgent/
-│   ├── __init__.py
-│   ├── __main__.py                  # python -m aptgent entry point
-│   ├── adapters/                    # External tool interfaces
-│   │   ├── base.py                  # Adapter protocol definitions
-│   │   ├── molecule.py              # SMILES validation + PubChem lookup
-│   │   ├── rna_fold.py              # ViennaRNA RNAfold wrapper
-│   │   ├── predictor.py             # 9-model ensemble predictor adapter
-│   │   ├── docking.py               # AutoDock Vina adapter (mock) + hardware probe
-│   │   └── spatial_rank.py          # Base-group interaction matrix ranker
-│   ├── config/
-│   │   ├── workflow.toml            # Workflow parameters
-│   │   ├── tools.toml               # External tool paths
-│   │   ├── llm.toml                 # LLM API configuration
-│   │   └── spatial_interaction_matrix.csv  # 4x24 interaction matrix
-│   ├── domain/
-│   │   ├── enums.py                 # Step and Status enums
-│   │   └── models.py                # Pydantic v2 data models
-│   ├── llm/
-│   │   ├── client.py                # OpenAI-compatible API client
-│   │   └── skills.py                # Structured LLM prompts (6 skills)
-│   ├── tui/
-│   │   ├── app.py                   # Textual App, screen registry, step wiring
-│   │   ├── styles/
-│   │   │   └── main.tcss            # TUI stylesheet
-│   │   ├── screens/
-│   │   │   ├── welcome.py           # Welcome / run selection
-│   │   │   ├── intake.py            # Step 1: Natural language intake
-│   │   │   ├── structure.py         # Step 2: RNA secondary structure
-│   │   │   ├── site_proposal.py     # Step 3: Mutation site proposal
-│   │   │   ├── enumeration.py       # Step 4: Candidate enumeration
-│   │   │   ├── scoring.py           # Step 5: Ensemble scoring
-│   │   │   ├── specificity_filter.py # Step 6: Specificity filter
-│   │   │   ├── docking_selection.py # Step 7: Docking parameter planning
-│   │   │   ├── docking_run.py       # Step 8: Docking execution
-│   │   │   ├── spatial_rank.py      # Step 9: Spatial interaction ranking
-│   │   │   └── report.py            # Step 10: Final report
-│   │   └── widgets/
-│   │       └── common.py            # StepProgressBar, StatusPanel
-│   └── workflow/
-│       ├── engine.py                # DAG transition engine
-│       ├── persistence.py           # JSON file persistence
-│       └── state.py                 # RunState model
-├── tests/
-│   ├── test_tui.py                  # TUI screen navigation tests
-│   ├── test_workflow.py             # Workflow engine tests
-│   └── test_spatial_rank.py         # Spatial rank adapter tests
-├── pyproject.toml
-└── README.md
+│   ├── aptgent/
+│   │   ├── tui/
+│   │   │   ├── app.py
+│   │   │   ├── screens/
+│   │   │   │   ├── welcome.py
+│   │   │   │   ├── chat.py
+│   │   │   │   ├── resume.py
+│   │   │   │   └── quit_confirm.py
+│   │   │   └── widgets/
+│   │   │       ├── step_handlers.py
+│   │   │       ├── chat_widgets.py
+│   │   │       ├── structured_input.py
+│   │   │       └── common.py
+│   │   ├── workflow/
+│   │   ├── adapters/
+│   │   ├── llm/
+│   │   ├── domain/
+│   │   └── config/
+│   ├── tests/
+│   ├── pyproject.toml
+│   └── README.md
+└── aptamer_predictor/
+    ├── aptamer_predictor/
+    ├── models/
+    ├── data/
+    ├── requirements.txt
+    └── README.md
 ```
+
+The current UI is chat-first: `AptgentApp` registers `welcome` and `chat`, and the per-step workflow logic lives in `aptgent/aptgent/tui/widgets/step_handlers.py`.
 
 ## Configuration
 
-### LLM provider (`aptgent/config/llm.toml`)
+### LLM provider (`aptgent/aptgent/config/llm.toml`)
 
 ```toml
 [provider.openai]
 base_url = "https://api.moonshot.cn/v1"
-model = "kimi-k2-5"
+model = "kimi-k2.5"
+api_key = ""
 api_key_env = "KIMI_API_KEY"
 temperature = 1
 max_tokens = 4096
@@ -266,7 +268,9 @@ max_tokens = 4096
 
 Change `base_url` and `model` to use any OpenAI-compatible API.
 
-### Workflow parameters (`aptgent/config/workflow.toml`)
+Keep secrets in environment variables instead of committing them into this file.
+
+### Workflow parameters (`aptgent/aptgent/config/workflow.toml`)
 
 ```toml
 [enumeration]
@@ -280,6 +284,8 @@ top_k_strategy = "auto"
 
 ## Tested Dependency Versions
 
+These are the app-side dependencies for `aptgent`. Predictor-specific ML stack versions are documented in `aptamer_predictor/README.md`.
+
 | Package      | Version    |
 |--------------|------------|
 | Python       | 3.9        |
@@ -287,9 +293,6 @@ top_k_strategy = "auto"
 | Pydantic     | 2.13.0     |
 | RDKit        | 2023.09.5  |
 | NumPy        | 1.24.x     |
-| scikit-learn | 1.3+       |
-| XGBoost      | 2.0+       |
-| PyTorch      | 1.12+      |
 | ViennaRNA    | 2.6+       |
 
 ## License

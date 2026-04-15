@@ -5,8 +5,9 @@ import pytest
 from aptgent.domain.enums import Step
 from aptgent.domain.models import SecondaryStructure, TargetMolecule
 from aptgent.tui.app import AptgentApp
+from aptgent.tui.screens.quit_confirm import QuitConfirmScreen
 from aptgent.tui.screens.resume import _overview, _timestamp_label
-from aptgent.tui.widgets.chat_widgets import ActivityBubble
+from aptgent.tui.widgets.chat_widgets import ActivityBubble, InputBar
 from aptgent.tui.widgets.structured_input import ActionMenuPanel, MutationSitePanel
 from textual.css.query import NoMatches
 from textual.widgets import OptionList
@@ -95,33 +96,64 @@ async def test_welcome_screen_is_default(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_create_new_run_enters_chat_screen(tmp_path):
+async def test_welcome_screen_starts_without_active_run(tmp_path):
     app = make_app(tmp_path)
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        await pilot.click("#btn-new-run")
+        assert app._state is None
+        assert app.persistence.list_runs() == []
+        assert app.status_panel.run_id == ""
+
+
+@pytest.mark.anyio
+async def test_welcome_screen_has_chat_input_not_name_prompt(tmp_path):
+    app = make_app(tmp_path)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        chat_input = app.screen.query_one("#chat-input")
+        assert app.screen.focused is chat_input
+        with pytest.raises(NoMatches):
+            app.screen.query_one("#new-run-input")
+        with pytest.raises(NoMatches):
+            app.screen.query_one("#btn-new-run")
+
+
+@pytest.mark.anyio
+async def test_first_message_creates_run_and_enters_chat_screen(tmp_path):
+    app = make_app(tmp_path)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        chat_input = app.screen.query_one("#chat-input")
+        chat_input.value = "Design an aptamer for caffeine."
+
+        await pilot.press("enter")
         await pilot.pause()
 
         assert type(app.screen).__name__ == "ChatScreen"
         assert app.current_state.current_step == Step.INTAKE
         assert app.screen._handler.__class__.__name__ == "IntakeHandler"
+        assert len(app.persistence.list_runs()) == 1
 
 
 @pytest.mark.anyio
-async def test_welcome_screen_defaults_to_new_run_even_with_saved_runs(tmp_path):
+async def test_slash_shows_command_palette_in_welcome(tmp_path):
     app = make_app(tmp_path)
-    state = app.engine.create_run("resume_me")
-    state.current_step = Step.PRIMARY_SCORING
-    app.persistence.save(state)
 
     async with app.run_test() as pilot:
         await pilot.pause()
+        chat_input = app.screen.query_one("#chat-input")
+        chat_input.value = "/"
+        await pilot.pause()
 
-        new_run_input = app.screen.query_one("#new-run-input")
-        assert app.screen.focused is new_run_input
-        with pytest.raises(NoMatches):
-            app.screen.query_one("#run-list")
+        input_bar = app.screen.query_one(InputBar)
+        assert input_bar.command_palette_open()
+        command_list = app.screen.query_one("#command-list", OptionList)
+        assert len(command_list.options) == 1
+        assert command_list.get_option_at_index(0).id == "/resume"
 
 
 def test_resume_option_text_includes_overview_step_and_timestamp(tmp_path):
@@ -148,10 +180,6 @@ def test_resume_option_text_includes_overview_step_and_timestamp(tmp_path):
 async def test_resume_command_opens_picker_and_switches_run(tmp_path):
     app = make_app(tmp_path)
 
-    active = app.engine.create_run("active_run")
-    active.current_step = Step.INTAKE
-    app.persistence.save(active)
-
     resume_target = app.engine.create_run("resume_me")
     resume_target.current_step = Step.PRIMARY_SCORING
     resume_target.input_payload["initial_sequence"] = "ACGTACGT"
@@ -160,10 +188,6 @@ async def test_resume_command_opens_picker_and_switches_run(tmp_path):
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.set_run_id("active_run")
-        app.push_screen("chat")
-        await pilot.pause()
-
         chat_input = app.screen.query_one("#chat-input")
         chat_input.value = "/resume"
         chat_input.focus()
@@ -181,6 +205,43 @@ async def test_resume_command_opens_picker_and_switches_run(tmp_path):
         assert type(app.screen).__name__ == "ChatScreen"
         assert app.current_state.run_id == "resume_me"
         assert app.current_state.current_step == Step.PRIMARY_SCORING
+
+
+@pytest.mark.anyio
+async def test_escape_closes_palette_before_opening_quit_modal(tmp_path):
+    app = make_app(tmp_path)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        chat_input = app.screen.query_one("#chat-input")
+        chat_input.value = "/"
+        await pilot.pause()
+
+        input_bar = app.screen.query_one(InputBar)
+        assert input_bar.command_palette_open()
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert type(app.screen).__name__ == "WelcomeScreen"
+        assert not input_bar.command_palette_open()
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert isinstance(app.screen, QuitConfirmScreen)
+
+
+@pytest.mark.anyio
+async def test_ctrl_q_opens_quit_modal(tmp_path):
+    app = make_app(tmp_path)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("ctrl+q")
+        await pilot.pause()
+
+        assert isinstance(app.screen, QuitConfirmScreen)
 
 
 @pytest.mark.anyio
