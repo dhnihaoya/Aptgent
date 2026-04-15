@@ -20,6 +20,47 @@ from aptgent.domain.models import (
 )
 
 
+class IntakeContext(BaseModel):
+    user_brief: Optional[str] = None
+    sequence: Optional[str] = None
+    target_input: Optional[str] = None
+    target_label: Optional[str] = None
+    modification_region: Optional[str] = None
+    analogs: list[str] = Field(default_factory=list)
+    time_budget_hours: Optional[int] = None
+
+
+class SiteProposalContext(BaseModel):
+    proposed_sites: list[int] = Field(default_factory=list)
+    reasoning: Optional[str] = None
+    confidence: Optional[str] = None
+    confirmed_sites: list[int] = Field(default_factory=list)
+
+
+class DockingRecommendationContext(BaseModel):
+    candidate_count: int = 0
+    machine_profile: dict[str, Any] = Field(default_factory=dict)
+    time_budget_hours: Optional[int] = None
+    recommended_time_budget_hours: Optional[int] = None
+    recommended_top_k: int = 0
+    recommended_grid_size: list[float] = Field(default_factory=list)
+    receptor_path_note: str = ""
+    grid_center_note: str = ""
+    reason: str = ""
+    display_markdown: str = ""
+    strategy: str = ""
+    phase: str = "initial"
+    accepted: bool = False
+
+
+class WorkflowContext(BaseModel):
+    intake: IntakeContext = Field(default_factory=IntakeContext)
+    site_proposal: SiteProposalContext = Field(default_factory=SiteProposalContext)
+    docking_recommendation: DockingRecommendationContext = Field(
+        default_factory=DockingRecommendationContext
+    )
+
+
 class RunState(BaseModel):
     run_id: str
     current_step: Step = Step.INTAKE
@@ -51,6 +92,7 @@ class RunState(BaseModel):
     # Pause/resume bookkeeping
     pending_input: Optional[dict[str, Any]] = None
     error_info: Optional[dict[str, Any]] = None
+    context: WorkflowContext = Field(default_factory=WorkflowContext)
 
     def touch(self) -> None:
         self.updated_at = datetime.now(timezone.utc).isoformat()

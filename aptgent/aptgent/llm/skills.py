@@ -86,20 +86,41 @@ Given:
 - machine_profile: {cpu_count, memory_gb}
 - time_budget_hours: user-provided time budget (may be null)
 
-Recommend how many top candidates should enter docking. Consider CPU count and rough estimate that 1 candidate ~ 5-15 minutes depending on system size.
+Recommend a practical docking draft using only parameters that can reasonably be inferred from this context.
+
+You may recommend:
+- recommended_time_budget_hours
+- recommended_top_k
+- recommended_grid_size: [x, y, z] in Angstroms
+
+You must NOT invent:
+- receptor_path
+- grid_center
+
+For receptor_path and grid_center, provide short notes telling the user what still needs manual confirmation.
 
 Return ONLY a JSON object:
+- recommended_time_budget_hours: integer or null
 - recommended_top_k: integer
-- reason: one-sentence explanation
+- recommended_grid_size: list of 3 numbers
+- receptor_path_note: short string
+- grid_center_note: short string
+- reason: short explanation
 """
 
 DISPLAY_DOCKING_PLANNER = """You are a computational chemistry advisor.
-Recommend a practical docking batch size in plain language for a chat UI.
+Recommend a practical docking draft for a chat UI.
 
 Rules:
+- Respond in Markdown bullet-list format.
 - Do not use JSON or markdown code fences.
-- State the suggested top-k and the main reason.
-- Keep it to 2-3 short sentences.
+- Include every parameter below as a list item:
+  - time budget
+  - top-k
+  - grid box size
+  - receptor path status
+  - grid center status
+  - brief rationale
 """
 
 SYSTEM_REPORT = """You are a scientific report assistant. You are given a ranked list of aptamer candidate predictions. Your job is to write a brief, factual explanation for why the top candidates are recommended.

@@ -32,7 +32,7 @@ class AptgentApp(App):
     TITLE = "Aptgent"
     SUB_TITLE = "Aptamer Design Assistant"
     CSS_PATH = "styles/main.tcss"
-    DEFAULT_THEME = "tokyo-night"
+    DEFAULT_THEME = "textual-dark"
 
     SCREENS = {
         "welcome": WelcomeScreen,

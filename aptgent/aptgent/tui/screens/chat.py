@@ -46,17 +46,22 @@ class ChatScreen(Screen):
         state = self.app.current_state
         step = state.current_step
         self._start_step(step)
-        self.set_timer(0.1, self._focus_input)
+        self.set_timer(0.1, self._focus_initial_target)
         pending_text = self.app.consume_pending_start_message()
         if pending_text:
             self.call_after_refresh(lambda: self._submit_pending_message(pending_text))
 
     # -- Public API for step handlers --
 
-    def add_system_message(self, text: str, extra_class: str = "") -> SystemBubble:
+    def add_system_message(
+        self,
+        text: str,
+        extra_class: str = "",
+        markdown: bool = False,
+    ) -> SystemBubble:
         """Append a system bubble to the chat log."""
         chat_log = self.query_one("#chat-log", VerticalScroll)
-        bubble = SystemBubble(text)
+        bubble = SystemBubble(text, markdown=markdown)
         if extra_class:
             bubble.add_class(extra_class)
         if self._activity_bubble is not None and self._activity_bubble.is_mounted:
@@ -66,10 +71,10 @@ class ChatScreen(Screen):
         chat_log.scroll_end(animate=False)
         return bubble
 
-    def add_streaming_message(self) -> StreamingBubble:
+    def add_streaming_message(self, *, markdown: bool = False) -> StreamingBubble:
         """Append a streaming bubble to the chat log and return it."""
         chat_log = self.query_one("#chat-log", VerticalScroll)
-        bubble = StreamingBubble()
+        bubble = StreamingBubble(markdown=markdown)
         if self._activity_bubble is not None and self._activity_bubble.is_mounted:
             chat_log.mount(bubble, before=self._activity_bubble)
         else:
@@ -186,6 +191,12 @@ class ChatScreen(Screen):
             self.query_one("#chat-input").focus()
         except Exception:
             pass
+
+    def _focus_initial_target(self) -> None:
+        if self._active_structured_widget is not None:
+            self._focus_widget(self._active_structured_widget)
+            return
+        self._focus_input()
 
     def _focus_widget(self, widget: Widget) -> None:
         try:

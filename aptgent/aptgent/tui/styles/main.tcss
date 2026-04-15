@@ -1,26 +1,26 @@
 Screen {
     layout: vertical;
-    background: $background;
+    background: #090b0f;
 }
 
 /* ── Progress Bar ── */
 
 #progress-bar {
     height: 1;
-    color: $text-muted;
-    background: $panel;
+    color: #8f9aa3;
+    background: #0d1117;
     padding: 0 1;
-    border-bottom: tall $primary;
+    border-bottom: tall #556a63;
 }
 
 /* ── Status Panel ── */
 
 #status-panel {
     height: 1;
-    background: $surface;
-    color: $text-muted;
+    background: #10151c;
+    color: #8f9aa3;
     padding: 0 1;
-    border-bottom: tall $surface-lighten-1;
+    border-bottom: tall #222a35;
 }
 
 /* ── Utility classes ── */

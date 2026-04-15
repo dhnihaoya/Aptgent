@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from aptgent.domain.enums import Step
-from aptgent.domain.models import SecondaryStructure, TargetMolecule
+from aptgent.domain.models import CandidateSequence, SecondaryStructure, TargetMolecule
 from aptgent.tui.app import AptgentApp
 from aptgent.tui.screens.quit_confirm import QuitConfirmScreen
 from aptgent.tui.screens.resume import _overview, _timestamp_label
 from aptgent.tui.screens.theme_picker import ThemePickerScreen
 from aptgent.tui.widgets.chat_widgets import ActivityBubble, InputBar
-from aptgent.tui.widgets.structured_input import ActionMenuPanel, MutationSitePanel
+from aptgent.tui.widgets.structured_input import (
+    ActionMenuPanel,
+    DockingParamPanel,
+    DockingStrategyPanel,
+    MutationSitePanel,
+)
 from textual.css.query import NoMatches
-from textual.widgets import OptionList
+from textual.widgets import Button, Input, OptionList
 
 
 class FakeRNAFoldAdapter:
@@ -52,6 +59,10 @@ class FakeSpatialRankAdapter:
 
 
 def make_app(tmp_path) -> AptgentApp:
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
     return AptgentApp(
         config={
             "paths": {"runs_dir": str(tmp_path / "runs")},
@@ -105,6 +116,7 @@ async def test_welcome_screen_starts_without_active_run(tmp_path):
         assert app._state is None
         assert app.persistence.list_runs() == []
         assert app.status_panel.run_id == ""
+        assert app.theme == "textual-dark"
 
 
 @pytest.mark.anyio
@@ -116,10 +128,14 @@ async def test_welcome_screen_has_chat_input_not_name_prompt(tmp_path):
 
         chat_input = app.screen.query_one("#chat-input")
         assert app.screen.focused is chat_input
+        assert app.screen.query_one("#welcome-wordmark") is not None
+        assert app.screen.query_one("#welcome-logo") is not None
         with pytest.raises(NoMatches):
             app.screen.query_one("#new-run-input")
         with pytest.raises(NoMatches):
             app.screen.query_one("#btn-new-run")
+        with pytest.raises(NoMatches):
+            app.screen.query_one("#welcome-kicker")
 
 
 @pytest.mark.anyio
@@ -287,7 +303,9 @@ async def test_site_proposal_uses_choice_panel_before_custom_selector(tmp_path, 
         await pilot.press("down", "enter")
         await pilot.pause()
 
-        assert app.screen.query_one(MutationSitePanel) is not None
+        panel = app.screen.query_one(MutationSitePanel)
+        assert panel is not None
+        assert panel.query_one("#btn-confirm-sites", Button) is not None
 
 
 @pytest.mark.anyio
@@ -359,3 +377,164 @@ async def test_theme_command_opens_picker_from_welcome(tmp_path):
         await pilot.pause()
 
         assert isinstance(app.screen, ThemePickerScreen)
+
+
+@pytest.mark.anyio
+async def test_docking_recommendation_requires_accept_or_customize_before_form(tmp_path, monkeypatch):
+    class FakeDockingPlannerSkill:
+        def explain_plan_stream(self, **kwargs):
+            yield "### Recommended Docking Setup\n"
+            yield "- Time budget: **4 hour(s)**\n"
+            yield "- Suggested batch: **top 12**\n"
+            yield "- Suggested grid box size: **22.0, 24.0, 20.0**\n"
+
+        def plan(self, **kwargs):
+            return {
+                "recommended_time_budget_hours": 4,
+                "recommended_top_k": 12,
+                "recommended_grid_size": [22.0, 24.0, 20.0],
+                "receptor_path_note": "Provide the receptor path manually.",
+                "grid_center_note": "Confirm the grid center from the binding site.",
+                "reason": "Fits the available CPU budget.",
+            }
+
+    class FakeHardwareProbeAdapter:
+        def probe(self):
+            return {"cpu_count": 8, "memory_gb": 32}
+
+    monkeypatch.setattr(
+        "aptgent.tui.widgets.step_handlers.DockingPlannerSkill",
+        FakeDockingPlannerSkill,
+    )
+    monkeypatch.setattr(
+        "aptgent.tui.widgets.step_handlers.HardwareProbeAdapter",
+        FakeHardwareProbeAdapter,
+    )
+
+    app = make_app(tmp_path)
+    state = app.engine.create_run("dock_reco_case")
+    state.current_step = Step.DOCKING_SELECTION
+    state.candidates = [
+        CandidateSequence(sequence=f"ACGT{i:02d}", candidate_id=f"cand-{i}")
+        for i in range(1, 21)
+    ]
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.set_run_id("dock_reco_case")
+        app.push_screen("chat")
+        await pilot.pause()
+        await pilot.pause()
+
+        strategy_panel = app.screen.query_one(DockingStrategyPanel)
+        strategy_panel.query_one("#dock-plan-budget", Input).value = "4"
+        strategy_panel.query_one("#btn-dock-plan-llm", Button).focus()
+
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        recommendation_menu = app.screen.query_one("#action-menu", OptionList)
+        assert recommendation_menu.get_option_at_index(0).id == "accept-docking-recommendation"
+        assert app.current_state.context.docking_recommendation.recommended_time_budget_hours == 4
+        assert app.current_state.context.docking_recommendation.recommended_top_k == 12
+        assert app.current_state.context.docking_recommendation.recommended_grid_size == [22.0, 24.0, 20.0]
+        assert "Suggested grid box size" in app.current_state.context.docking_recommendation.display_markdown
+        with pytest.raises(NoMatches):
+            app.screen.query_one(DockingParamPanel)
+
+
+@pytest.mark.anyio
+async def test_accepting_docking_recommendation_prefills_compact_form(tmp_path, monkeypatch):
+    class FakeDockingPlannerSkill:
+        def explain_plan_stream(self, **kwargs):
+            yield "Recommendation"
+
+        def plan(self, **kwargs):
+            return {
+                "recommended_time_budget_hours": 4,
+                "recommended_top_k": 12,
+                "recommended_grid_size": [22.0, 24.0, 20.0],
+                "receptor_path_note": "Provide the receptor path manually.",
+                "grid_center_note": "Confirm the grid center from the binding site.",
+                "reason": "Fits the available CPU budget.",
+            }
+
+    class FakeHardwareProbeAdapter:
+        def probe(self):
+            return {"cpu_count": 8, "memory_gb": 32}
+
+    monkeypatch.setattr(
+        "aptgent.tui.widgets.step_handlers.DockingPlannerSkill",
+        FakeDockingPlannerSkill,
+    )
+    monkeypatch.setattr(
+        "aptgent.tui.widgets.step_handlers.HardwareProbeAdapter",
+        FakeHardwareProbeAdapter,
+    )
+
+    app = make_app(tmp_path)
+    state = app.engine.create_run("dock_accept_case")
+    state.current_step = Step.DOCKING_SELECTION
+    state.time_budget = 4
+    state.candidates = [
+        CandidateSequence(sequence=f"ACGT{i:02d}", candidate_id=f"cand-{i}")
+        for i in range(1, 16)
+    ]
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.set_run_id("dock_accept_case")
+        app.push_screen("chat")
+        await pilot.pause()
+        await pilot.pause()
+
+        strategy_panel = app.screen.query_one(DockingStrategyPanel)
+        strategy_panel.query_one("#btn-dock-plan-llm", Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        app.screen.query_one("#action-menu", OptionList).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        panel = app.screen.query_one(DockingParamPanel)
+        assert panel.mode == "llm"
+        assert panel.accepted_recommendation is True
+        assert panel.recommended_top_k == 12
+        assert panel.query_one("#dock-time-budget", Input).value == "4"
+        assert panel.query_one("#dock-top-k", Input).value == "12"
+        assert panel.query_one("#dock-sx", Input).value == "22.0"
+        assert panel.query_one("#dock-receptor") is not None
+
+
+@pytest.mark.anyio
+async def test_manual_docking_path_opens_editable_form_directly(tmp_path):
+    app = make_app(tmp_path)
+    state = app.engine.create_run("dock_manual_case")
+    state.current_step = Step.DOCKING_SELECTION
+    state.time_budget = 6
+    state.candidates = [
+        CandidateSequence(sequence=f"ACGT{i:02d}", candidate_id=f"cand-{i}")
+        for i in range(1, 8)
+    ]
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.set_run_id("dock_manual_case")
+        app.push_screen("chat")
+        await pilot.pause()
+        await pilot.pause()
+
+        strategy_panel = app.screen.query_one(DockingStrategyPanel)
+        strategy_panel.query_one("#btn-dock-plan-manual", Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        panel = app.screen.query_one(DockingParamPanel)
+        assert panel.mode == "manual"
+        assert panel.query_one("#dock-time-budget", Input).value == "6"
+        assert panel.query_one("#dock-top-k", Input).value == ""

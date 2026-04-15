@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Static
 
@@ -15,6 +15,26 @@ from aptgent.tui.widgets.chat_widgets import InputBar, StepDivider, SystemBubble
 class WelcomeScreen(Screen):
     """Chat-first landing screen before a run exists."""
 
+    LOGO = "\n".join(
+        [
+            "╭────╮",
+            "│╲╱╲│",
+            "│╱╲╱│",
+            "│╲╱╲│",
+            "╰────╯",
+        ]
+    )
+
+    WORDMARK = "\n".join(
+        [
+            " ███   ████   █████   ████  █████  █   █  █████",
+            "█   █  █   █    █    █      █      ██  █    █  ",
+            "█████  ████     █    █  ██  ███    █ █ █    █  ",
+            "█   █  █        █    █   █  █      █  ██    █  ",
+            "█   █  █        █     ███   █████  █   █    █  ",
+        ]
+    )
+
     BINDINGS = [
         Binding("escape", "request_quit", "Quit", show=False),
     ]
@@ -26,32 +46,42 @@ class WelcomeScreen(Screen):
         scrollbar-size: 1 1;
     }
     #welcome-hero {
-        background: $surface-darken-2;
-        border: round $primary;
-        padding: 2 3;
+        background: #0a0d12;
+        border: round #495a57;
+        padding: 2 3 1 3;
         margin: 1 1 0 1;
         height: auto;
     }
-    #welcome-kicker {
-        color: $text-muted;
-        margin-bottom: 1;
+    #welcome-brand {
+        height: auto;
     }
-    #welcome-title {
+    #welcome-logo {
+        width: 8;
+        color: #c4d45d;
+        margin-right: 3;
+    }
+    #welcome-wordmark {
+        color: #f1efe4;
         text-style: bold;
-        color: $primary-lighten-2;
+    }
+    #welcome-tagline {
+        color: #9aa5ab;
+        margin-top: 1;
     }
     #welcome-subtitle {
-        color: $text-muted;
+        color: #7c878d;
         margin-top: 1;
     }
     """
 
     def compose(self) -> ComposeResult:
         with Vertical(id="welcome-hero"):
-            yield Static("APTAMER WORKFLOW", id="welcome-kicker")
-            yield Static("Aptgent", id="welcome-title")
+            with Horizontal(id="welcome-brand"):
+                yield Static(self.LOGO, id="welcome-logo")
+                yield Static(self.WORDMARK, id="welcome-wordmark")
+            yield Static("Aptamer design workflow, kept fast and terminal-native.", id="welcome-tagline")
             yield Static(
-                "Describe your design task to start a new run. Type / to open commands.",
+                "Describe the task to start a new run. Type / to open commands.",
                 id="welcome-subtitle",
             )
         yield VerticalScroll(id="welcome-log")

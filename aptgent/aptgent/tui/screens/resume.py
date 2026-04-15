@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Optional
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -9,6 +10,7 @@ from textual.screen import ModalScreen
 from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
+from aptgent.workflow.context import build_run_overview
 from aptgent.workflow.state import RunState
 
 
@@ -24,24 +26,12 @@ def _shorten(text: str, limit: int) -> str:
 
 
 def _overview(state: RunState) -> str:
-    target = None
-    if state.target_molecule is not None:
-        target = state.target_molecule.resolved_name or state.target_molecule.input_text
-    if not target:
-        target = state.input_payload.get("target_molecule")
-
-    sequence = state.input_payload.get("initial_sequence")
-    user_text = state.input_payload.get("user_text")
-
-    parts: list[str] = []
-    if isinstance(target, str) and target.strip():
-        parts.append(_shorten(target.strip(), 28))
-    if isinstance(sequence, str) and sequence.strip():
-        parts.append(_shorten(sequence.strip(), 18))
-    elif isinstance(user_text, str) and user_text.strip():
-        parts.append(_shorten(user_text.strip(), 36))
-
-    summary = " | ".join(parts) if parts else "Untitled run"
+    parts = build_run_overview(state).split(" | ")
+    shortened: list[str] = []
+    for index, part in enumerate(parts):
+        limit = 28 if index == 0 else 18 if index == 1 else 36
+        shortened.append(_shorten(part, limit))
+    summary = " | ".join(shortened) if shortened else "Untitled run"
     return f"{summary} - {_step_label(state)}"
 
 
@@ -64,7 +54,7 @@ def list_resume_candidates(app) -> list[RunState]:
     return states
 
 
-class ResumePickerScreen(ModalScreen[str | None]):
+class ResumePickerScreen(ModalScreen[Optional[str]]):
     """Modal selector for switching to a saved run."""
 
     BINDINGS = [

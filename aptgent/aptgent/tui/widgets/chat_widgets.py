@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from rich.markdown import Markdown
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
@@ -23,6 +24,19 @@ class _BaseBubble(Static):
     }
     """
 
+    def __init__(self, text: str = "", *, markdown: bool = False, **kwargs) -> None:
+        super().__init__("", **kwargs)
+        self._markdown = markdown
+        self._text = ""
+        self.set_content(text)
+
+    def set_content(self, text: str) -> None:
+        self._text = text
+        if self._markdown:
+            super().update(Markdown(text or " "))
+        else:
+            super().update(text)
+
 
 class SystemBubble(_BaseBubble):
     """A system message bubble in the chat log."""
@@ -37,8 +51,8 @@ class SystemBubble(_BaseBubble):
     }
     """
 
-    def __init__(self, text: str, **kwargs) -> None:
-        super().__init__(text, **kwargs)
+    def __init__(self, text: str, *, markdown: bool = False, **kwargs) -> None:
+        super().__init__(text, markdown=markdown, **kwargs)
 
 
 class StreamingBubble(Static):
@@ -54,9 +68,11 @@ class StreamingBubble(Static):
     }
     """
 
-    def __init__(self, **kwargs) -> None:
-        super().__init__("▌", **kwargs)
+    def __init__(self, *, markdown: bool = False, **kwargs) -> None:
+        super().__init__("", **kwargs)
         self._buffer = ""
+        self._markdown = markdown
+        self.update("▌")
 
     def append_text(self, text: str) -> None:
         self._buffer += text
@@ -67,7 +83,10 @@ class StreamingBubble(Static):
             pass
 
     def finalize(self) -> None:
-        self.update(self._buffer)
+        if self._markdown:
+            self.update(Markdown(self._buffer or " "))
+        else:
+            self.update(self._buffer)
 
 
 class UserBubble(Static):

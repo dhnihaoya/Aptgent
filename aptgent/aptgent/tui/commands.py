@@ -45,6 +45,11 @@ THEME_COMMAND = SlashCommand(
 
 THEME_PRESETS = (
     ThemePreset(
+        label="Textual Dark",
+        theme_name="textual-dark",
+        description="Near-black default theme with restrained contrast.",
+    ),
+    ThemePreset(
         label="Tokyo Night",
         theme_name="tokyo-night",
         description="Deep blue-black panels with higher contrast accents.",

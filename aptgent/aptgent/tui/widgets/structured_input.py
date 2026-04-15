@@ -104,7 +104,7 @@ class MutationSitePanel(Vertical):
         padding: 1 2;
         margin: 1 0;
         width: 95%;
-        height: auto;
+        height: 22;
         max-height: 24;
     }
     MutationSitePanel > .panel-title {
@@ -116,12 +116,13 @@ class MutationSitePanel(Vertical):
         margin-bottom: 1;
     }
     MutationSitePanel > SelectionList {
-        height: auto;
-        max-height: 14;
+        height: 1fr;
+        min-height: 8;
         border: tall $surface-lighten-1;
     }
     MutationSitePanel > Button {
         margin-top: 1;
+        width: 100%;
     }
     """
 
@@ -254,6 +255,105 @@ class SpecificityPanel(Vertical):
             )
 
 
+class DockingStrategyPanel(Vertical):
+    """Initial planner for docking strategy and optional time budget."""
+
+    DEFAULT_CSS = """
+    DockingStrategyPanel {
+        background: $surface-darken-2;
+        border: round $primary;
+        padding: 1 2;
+        margin: 1 0;
+        width: 95%;
+        height: auto;
+    }
+    DockingStrategyPanel > .panel-title {
+        text-style: bold;
+    }
+    DockingStrategyPanel > .panel-help {
+        color: $text-muted;
+        margin: 1 0;
+    }
+    DockingStrategyPanel > Input {
+        margin: 1 0;
+    }
+    DockingStrategyPanel Horizontal {
+        height: auto;
+    }
+    DockingStrategyPanel Horizontal > Button {
+        margin-right: 1;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        machine_profile: dict | None = None,
+        time_budget: int | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.machine_profile = machine_profile or {}
+        self.time_budget = time_budget
+
+    def compose(self) -> ComposeResult:
+        yield Static("Docking Planning", classes="panel-title")
+        yield Static(
+            "If you already know your parameter plan, open the manual form. "
+            "If not, you can optionally enter a time budget first and let the LLM draft the docking settings.",
+            classes="panel-help",
+        )
+        yield Static(f"[dim]{self._machine_info()}[/]")
+        yield Static("Optional time budget (hours):")
+        budget_input = Input(id="dock-plan-budget", placeholder="e.g. 4")
+        if self.time_budget is not None:
+            budget_input.value = str(self.time_budget)
+        yield budget_input
+        with Horizontal():
+            yield Button("Get LLM Draft", id="btn-dock-plan-llm", variant="primary")
+            yield Button("Use My Own Parameters", id="btn-dock-plan-manual", variant="warning")
+            yield Button("Skip Docking", id="btn-dock-plan-skip")
+
+    def _machine_info(self) -> str:
+        if self.machine_profile:
+            cpu_count = self.machine_profile.get("cpu_count", "?")
+            memory_gb = self.machine_profile.get("memory_gb")
+            if memory_gb is not None:
+                return f"CPUs: {cpu_count}  |  Memory: {memory_gb} GB"
+            return f"CPUs: {cpu_count}"
+        return "Machine profile unavailable"
+
+    def on_mount(self) -> None:
+        try:
+            self.query_one("#dock-plan-budget", Input).focus()
+        except Exception:
+            pass
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        budget = self.query_one("#dock-plan-budget", Input).value.strip()
+        if event.button.id == "btn-dock-plan-llm":
+            self.post_message(
+                StructuredActionRequested(
+                    Step.DOCKING_SELECTION,
+                    f"strategy:llm:{budget}",
+                )
+            )
+        elif event.button.id == "btn-dock-plan-manual":
+            self.post_message(
+                StructuredActionRequested(
+                    Step.DOCKING_SELECTION,
+                    f"strategy:manual:{budget}",
+                )
+            )
+        elif event.button.id == "btn-dock-plan-skip":
+            self.post_message(
+                StructuredActionRequested(
+                    Step.DOCKING_SELECTION,
+                    "strategy:skip",
+                )
+            )
+
+
 class DockingParamPanel(Vertical):
     """Inline widget for docking configuration parameters."""
 
@@ -273,6 +373,10 @@ class DockingParamPanel(Vertical):
         color: $text-muted;
         margin: 1 0;
     }
+    DockingParamPanel > .panel-note {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
     DockingParamPanel > Input {
         margin-bottom: 1;
     }
@@ -288,46 +392,111 @@ class DockingParamPanel(Vertical):
     }
     """
 
-    def __init__(self, *, recommendation_pending: bool = False, **kwargs) -> None:
+    def __init__(
+        self,
+        *,
+        mode: str = "manual",
+        machine_profile: dict | None = None,
+        time_budget: int | None = None,
+        recommended_top_k: int = 0,
+        recommended_grid_size: list[float] | None = None,
+        recommendation_reason: str = "",
+        receptor_path_note: str = "",
+        grid_center_note: str = "",
+        accepted_recommendation: bool = False,
+        receptor_path: str | None = None,
+        grid_center: list[float] | None = None,
+        grid_size: list[float] | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
-        self.recommendation_pending = recommendation_pending
+        self.mode = mode
+        self.machine_profile = machine_profile or {}
+        self.time_budget = time_budget
+        self.recommended_top_k = recommended_top_k
+        self.recommended_grid_size = recommended_grid_size or []
+        self.recommendation_reason = recommendation_reason
+        self.receptor_path_note = receptor_path_note
+        self.grid_center_note = grid_center_note
+        self.accepted_recommendation = accepted_recommendation
+        self.receptor_path = receptor_path or ""
+        self.grid_center = grid_center or []
+        self.grid_size = grid_size or []
 
     def compose(self) -> ComposeResult:
         yield Static("Docking Configuration", classes="panel-title")
-        if self.recommendation_pending:
+        if self.mode == "llm":
             yield Static(
-                "Recommendation mode selected. A suggested top-k will be loaded automatically.",
+                "An LLM draft has been loaded. Review the suggested values, then confirm the receptor path and grid center before continuing.",
                 classes="panel-help",
+            )
+            yield Static(
+                (
+                    f"Draft source: [bold]{'accepted recommendation' if self.accepted_recommendation else 'editable recommendation'}[/bold]\n"
+                    f"Reason: {self.recommendation_reason or 'Resource-balanced docking draft.'}"
+                ),
+                classes="panel-note",
             )
         else:
             yield Static(
-                "Fill in docking parameters manually, or request a top-k recommendation.",
+                "Set the docking time budget, batch size, and receptor/grid parameters manually.",
                 classes="panel-help",
             )
         yield Static(f"[dim]{self._machine_info()}[/]")
         yield Static("Time budget (hours):")
-        yield Input(id="dock-time-budget", placeholder="e.g. 4")
-        yield Button("Get LLM Recommendation", id="btn-dock-recommend", variant="primary")
-        yield Static("", id="dock-recommendation-text")
+        budget_input = Input(id="dock-time-budget", placeholder="e.g. 4")
+        if self.time_budget is not None:
+            budget_input.value = str(self.time_budget)
+        yield budget_input
         yield Static("Top-k candidates to dock:")
-        yield Input(id="dock-top-k", placeholder="e.g. 10")
+        top_k_input = Input(id="dock-top-k", placeholder="e.g. 10")
+        if self.recommended_top_k > 0:
+            top_k_input.value = str(self.recommended_top_k)
+        yield top_k_input
         yield Static("Receptor PDBQT file path:")
-        yield Input(id="dock-receptor", placeholder="/path/to/receptor.pdbqt")
+        if self.mode == "llm" and self.receptor_path_note:
+            yield Static(f"[dim]{self.receptor_path_note}[/]", classes="panel-note")
+        receptor_input = Input(id="dock-receptor", placeholder="/path/to/receptor.pdbqt")
+        receptor_input.value = self.receptor_path
+        yield receptor_input
         yield Static("Grid box center (x, y, z):")
+        if self.mode == "llm" and self.grid_center_note:
+            yield Static(f"[dim]{self.grid_center_note}[/]", classes="panel-note")
         with Horizontal():
-            yield Input(id="dock-cx", placeholder="0.0")
-            yield Input(id="dock-cy", placeholder="0.0")
-            yield Input(id="dock-cz", placeholder="0.0")
+            cx_input = Input(id="dock-cx", placeholder="0.0")
+            cy_input = Input(id="dock-cy", placeholder="0.0")
+            cz_input = Input(id="dock-cz", placeholder="0.0")
+            if len(self.grid_center) == 3:
+                cx_input.value = str(self.grid_center[0])
+                cy_input.value = str(self.grid_center[1])
+                cz_input.value = str(self.grid_center[2])
+            yield cx_input
+            yield cy_input
+            yield cz_input
         yield Static("Grid box size (x, y, z):")
         with Horizontal():
-            yield Input(id="dock-sx", placeholder="20.0")
-            yield Input(id="dock-sy", placeholder="20.0")
-            yield Input(id="dock-sz", placeholder="20.0")
+            sx_input = Input(id="dock-sx", placeholder="20.0")
+            sy_input = Input(id="dock-sy", placeholder="20.0")
+            sz_input = Input(id="dock-sz", placeholder="20.0")
+            size_values = self.grid_size or self.recommended_grid_size
+            if len(size_values) == 3:
+                sx_input.value = str(size_values[0])
+                sy_input.value = str(size_values[1])
+                sz_input.value = str(size_values[2])
+            yield sx_input
+            yield sy_input
+            yield sz_input
         yield Button("Submit & Continue", id="btn-submit-dock", variant="success")
 
-    @staticmethod
-    def _machine_info() -> str:
+    def _machine_info(self) -> str:
         import os
+
+        if self.machine_profile:
+            cpu_count = self.machine_profile.get("cpu_count", "?")
+            memory_gb = self.machine_profile.get("memory_gb")
+            if memory_gb is not None:
+                return f"CPUs: {cpu_count}  |  Memory: {memory_gb} GB"
+            return f"CPUs: {cpu_count}"
 
         try:
             import psutil
@@ -339,20 +508,13 @@ class DockingParamPanel(Vertical):
 
     def on_mount(self) -> None:
         try:
-            self.query_one("#dock-time-budget", Input).focus()
+            focus_id = "#dock-receptor" if self.mode == "llm" else "#dock-time-budget"
+            self.query_one(focus_id, Input).focus()
         except Exception:
             pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-dock-recommend":
-            budget = self.query_one("#dock-time-budget", Input).value.strip()
-            self.post_message(
-                StructuredActionRequested(
-                    Step.DOCKING_SELECTION,
-                    f"recommend:{budget}",
-                )
-            )
-        elif event.button.id == "btn-submit-dock":
+        if event.button.id == "btn-submit-dock":
             data = self._collect_data()
             self.post_message(
                 StructuredInputSubmitted(Step.DOCKING_SELECTION, data)
@@ -368,20 +530,19 @@ class DockingParamPanel(Vertical):
         cx, cy, cz = fv("dock-cx"), fv("dock-cy"), fv("dock-cz")
         sx, sy, sz = fv("dock-sx"), fv("dock-sy"), fv("dock-sz")
 
+        budget_str = ""
+        top_k_str = ""
         budget_str = self.query_one("#dock-time-budget", Input).value.strip()
         top_k_str = self.query_one("#dock-top-k", Input).value.strip()
         receptor = self.query_one("#dock-receptor", Input).value.strip()
 
         return {
-            "time_budget": int(budget_str) if budget_str.isdigit() else None,
-            "top_k": int(top_k_str) if top_k_str.isdigit() else 0,
+            "time_budget": int(budget_str) if budget_str.isdigit() else self.time_budget,
+            "top_k": int(top_k_str) if top_k_str.isdigit() else self.recommended_top_k,
             "receptor_path": receptor or None,
             "grid_center": [cx, cy, cz] if all(v is not None for v in (cx, cy, cz)) else None,
             "grid_size": [sx, sy, sz] if all(v is not None for v in (sx, sy, sz)) else None,
+            "recommendation_reason": self.recommendation_reason,
+            "uses_recommendation": self.mode == "llm",
+            "accepted_recommendation": self.accepted_recommendation,
         }
-
-    def set_recommendation(self, top_k: int, reason: str) -> None:
-        self.query_one("#dock-top-k", Input).value = str(top_k)
-        self.query_one("#dock-recommendation-text", Static).update(
-            f"[green]Recommended top-k:[/] {top_k}. {reason}"
-        )

@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from aptgent.workflow.context import (
+    build_run_overview,
+    get_sequence,
+    record_docking_recommendation_context,
+    record_intake_context,
+)
+from aptgent.workflow.state import RunState
 from aptgent.llm.client import LLMClient
 from aptgent.tui.widgets.step_handlers import (
     _format_intake_confirmation,
@@ -55,6 +62,8 @@ def test_validate_docking_recommendation_result_uses_fallback_for_invalid_top_k(
     )
 
     assert result["recommended_top_k"] == 12
+    assert result["recommended_time_budget_hours"] == 2
+    assert result["recommended_grid_size"] == [20.0, 20.0, 20.0]
     assert "resources" in result["reason"].lower()
 
 
@@ -105,3 +114,58 @@ def test_format_intake_confirmation_includes_structured_details():
     assert "Requested modification region: loop region" in message
     assert "Specificity analogs: caffeine, theobromine" in message
     assert "Time budget: 6 hour(s)" in message
+
+
+def test_context_helpers_prefer_confirmed_facts():
+    state = RunState(run_id="ctx_case")
+    state.input_payload["initial_sequence"] = "AAAA"
+    state.input_payload["user_text"] = "old note"
+
+    record_intake_context(
+        state,
+        user_brief="Design a tighter caffeine binder",
+        sequence="ACGU",
+        target_text="caffeine",
+        resolved_target=TargetMolecule(
+            input_text="caffeine",
+            resolved_name="Caffeine",
+            smiles="Cn1cnc2n(C)c(=O)n(C)c(=O)c12",
+            resolution_status="resolved",
+        ),
+        analogs=["theobromine"],
+        time_budget_hours=4,
+    )
+
+    assert get_sequence(state) == "ACGU"
+    assert build_run_overview(state) == "Caffeine | ACGU"
+
+
+def test_record_docking_recommendation_context_persists_reason():
+    state = RunState(run_id="dock_ctx_case")
+
+    record_docking_recommendation_context(
+        state,
+        candidate_count=48,
+        machine_profile={"cpu_count": 8, "memory_gb": 32},
+        time_budget_hours=4,
+        recommended_time_budget_hours=4,
+        recommended_top_k=12,
+        recommended_grid_size=[22.0, 24.0, 20.0],
+        receptor_path_note="Provide the receptor path manually.",
+        grid_center_note="Confirm the grid center from the binding site.",
+        reason="Fits the available CPU budget.",
+        display_markdown="- Time budget: 4",
+        strategy="llm",
+        phase="awaiting_decision",
+        accepted=True,
+    )
+
+    context = state.context.docking_recommendation
+    assert context.recommended_time_budget_hours == 4
+    assert context.recommended_top_k == 12
+    assert context.recommended_grid_size == [22.0, 24.0, 20.0]
+    assert context.display_markdown == "- Time budget: 4"
+    assert context.strategy == "llm"
+    assert context.phase == "awaiting_decision"
+    assert context.reason == "Fits the available CPU budget."
+    assert context.accepted is True
