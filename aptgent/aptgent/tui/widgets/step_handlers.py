@@ -190,6 +190,32 @@ def _validate_intake_result(result: Any) -> dict[str, Any]:
     }
 
 
+def _format_intake_confirmation(
+    *,
+    sequence: str,
+    target_text: str,
+    resolved: TargetMolecule,
+    modification_region: str | None,
+    analogs: list[str],
+    time_budget_hours: int | None,
+) -> str:
+    lines = [
+        "Captured intake details.",
+        f"Sequence: {sequence}",
+    ]
+    if resolved.resolution_status == "resolved":
+        lines.append(f"Target: {resolved.resolved_name or target_text} ({resolved.smiles})")
+    else:
+        lines.append(f"Target: {target_text} (resolution failed)")
+    if modification_region:
+        lines.append(f"Requested modification region: {modification_region}")
+    if analogs:
+        lines.append(f"Specificity analogs: {', '.join(analogs)}")
+    if time_budget_hours is not None:
+        lines.append(f"Time budget: {time_budget_hours} hour(s)")
+    return "\n".join(lines)
+
+
 def _validate_site_proposal_result(result: Any, sequence_length: int) -> dict[str, Any]:
     if not isinstance(result, dict):
         raise RuntimeError("Invalid site proposal response.")
@@ -302,7 +328,7 @@ class IntakeHandler(StepHandler):
             skill = IntakeSkill()
             result = _run_llm_interaction(
                 self.screen,
-                display_stream=lambda: skill.explain_extract_stream(text),
+                display_stream=None,
                 structured_call=lambda: _validate_intake_result(skill.extract(text)),
             )
         except Exception as e:
@@ -334,7 +360,7 @@ class IntakeHandler(StepHandler):
             return
 
         state.input_payload["initial_sequence"] = seq
-        msg_parts = [f"Sequence: {seq}"]
+        analogs = result.get("analogs", [])
 
         resolved = self.screen.app.molecule_resolver.resolve(target_text)
         # Fallback: if resolution fails and name looks like CJK, translate via LLM
@@ -368,21 +394,29 @@ class IntakeHandler(StepHandler):
                 pass
         if resolved.resolution_status == "resolved":
             state.target_molecule = resolved
-            msg_parts.append(f"Target: {resolved.resolved_name or target_text} ({resolved.smiles})")
         else:
             state.target_molecule = TargetMolecule(input_text=target_text)
-            msg_parts.append(f"Target: {target_text} (resolution failed)")
 
         mod = result.get("modification_region")
         if mod:
             state.input_payload["modification_region"] = mod
+        if analogs:
+            state.input_payload["analogs"] = analogs
         time_budget = result.get("time_budget_hours")
         if time_budget is not None:
             state.time_budget = time_budget
 
+        confirmation = _format_intake_confirmation(
+            sequence=seq,
+            target_text=target_text,
+            resolved=state.target_molecule,
+            modification_region=mod,
+            analogs=analogs,
+            time_budget_hours=time_budget,
+        )
         self.screen.app.save_state()
         self.screen.app.call_from_thread(
-            self.screen.add_system_message, "\n".join(msg_parts)
+            self.screen.add_system_message, confirmation
         )
         ns = _next_step(Step.INTAKE)
         if ns:

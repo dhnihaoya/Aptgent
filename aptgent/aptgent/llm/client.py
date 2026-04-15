@@ -34,6 +34,9 @@ class LLMClient:
         self.timeout = self.config.get("timeout_seconds", 60)
         self.max_retries = self.config.get("max_retries", 2)
 
+    def _uses_kimi_k25(self) -> bool:
+        return self.model.startswith("kimi-k2.5")
+
     def _load_config(self, path: Path) -> dict[str, Any]:
         import tomli
 
@@ -68,7 +71,7 @@ class LLMClient:
         system_prompt: str,
         user_prompt: str,
         *,
-        temperature: float,
+        temperature: float | None,
         stream: bool = False,
         response_format: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -78,9 +81,12 @@ class LLMClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": temperature,
             "max_tokens": self.max_tokens,
         }
+        # Kimi K2.5 rejects arbitrary temperature values; omit the field and use
+        # the provider default instead of sending a value that triggers HTTP 400.
+        if temperature is not None and not self._uses_kimi_k25():
+            payload["temperature"] = temperature
         if stream:
             payload["stream"] = True
         if response_format is not None:

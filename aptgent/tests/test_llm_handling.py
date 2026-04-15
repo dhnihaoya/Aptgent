@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from aptgent.llm.client import LLMClient
 from aptgent.tui.widgets.step_handlers import (
+    _format_intake_confirmation,
     _validate_docking_recommendation_result,
     _validate_intake_result,
     _validate_site_proposal_result,
 )
+from aptgent.domain.models import TargetMolecule
 
 
 def test_validate_intake_result_normalizes_fields():
@@ -53,3 +56,52 @@ def test_validate_docking_recommendation_result_uses_fallback_for_invalid_top_k(
 
     assert result["recommended_top_k"] == 12
     assert "resources" in result["reason"].lower()
+
+
+def test_kimi_k25_payload_omits_temperature(tmp_path):
+    config_path = tmp_path / "llm.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[provider.openai]",
+                'base_url = "https://api.moonshot.cn/v1"',
+                'model = "kimi-k2.5"',
+                'api_key = "test-key"',
+                "temperature = 1",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    client = LLMClient(config_path=config_path)
+    payload = client._payload(
+        "system",
+        "user",
+        temperature=0.2,
+        response_format={"type": "json_object"},
+    )
+
+    assert "temperature" not in payload
+
+
+def test_format_intake_confirmation_includes_structured_details():
+    message = _format_intake_confirmation(
+        sequence="ACGU",
+        target_text="theophylline",
+        resolved=TargetMolecule(
+            input_text="theophylline",
+            resolved_name="theophylline",
+            smiles="CN1C=NC2=C1C(=O)N(C)C(=O)N2C",
+            resolution_status="resolved",
+        ),
+        modification_region="loop region",
+        analogs=["caffeine", "theobromine"],
+        time_budget_hours=6,
+    )
+
+    assert "Captured intake details." in message
+    assert "Sequence: ACGU" in message
+    assert "Target: theophylline" in message
+    assert "Requested modification region: loop region" in message
+    assert "Specificity analogs: caffeine, theobromine" in message
+    assert "Time budget: 6 hour(s)" in message
