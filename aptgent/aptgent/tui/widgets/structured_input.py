@@ -3,7 +3,8 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.widgets import Button, Checkbox, Input, Static
+from textual.widgets import Button, Input, OptionList, SelectionList, Static
+from textual.widgets.option_list import Option
 
 from aptgent.domain.enums import Step
 
@@ -18,7 +19,7 @@ class StructuredInputSubmitted(Message):
 
 
 class StructuredActionRequested(Message):
-    """Posted by structured input panels for button actions."""
+    """Posted by structured input panels for button or option actions."""
 
     def __init__(self, step: Step, action: str) -> None:
         super().__init__()
@@ -26,24 +27,100 @@ class StructuredActionRequested(Message):
         self.action = action
 
 
-class CheckboxPanel(Vertical):
-    """Inline widget for selecting mutation sites via checkboxes."""
+class ActionMenuPanel(Vertical):
+    """Keyboard-first action chooser for a workflow step."""
 
     DEFAULT_CSS = """
-    CheckboxPanel {
+    ActionMenuPanel {
         background: $surface-darken-2;
-        border: tall $primary;
+        border: round $primary;
         padding: 1 2;
         margin: 1 0;
         width: 95%;
         height: auto;
-        max-height: 20;
-        overflow-y: auto;
     }
-    CheckboxPanel > .checkbox-grid {
+    ActionMenuPanel > .panel-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    ActionMenuPanel > .panel-help {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    ActionMenuPanel > OptionList {
         height: auto;
+        max-height: 10;
+        border: tall $surface-lighten-1;
     }
-    CheckboxPanel > Button {
+    """
+
+    def __init__(
+        self,
+        step: Step,
+        title: str,
+        choices: list[tuple[str, str, str]],
+        *,
+        help_text: str = "Use Up/Down to choose and Enter to confirm.",
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.step = step
+        self.title = title
+        self.choices = choices
+        self.help_text = help_text
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.title, classes="panel-title")
+        yield Static(self.help_text, classes="panel-help")
+        options = [
+            Option(
+                f"[bold]{label}[/bold]\n[dim]{description}[/dim]",
+                id=action,
+            )
+            for action, label, description in self.choices
+        ]
+        yield OptionList(*options, id="action-menu")
+
+    def on_mount(self) -> None:
+        try:
+            self.query_one("#action-menu", OptionList).focus()
+        except Exception:
+            pass
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        option_id = event.option.id
+        if option_id:
+            self.post_message(StructuredActionRequested(self.step, option_id))
+
+
+class MutationSitePanel(Vertical):
+    """Keyboard-friendly mutation-site selector."""
+
+    DEFAULT_CSS = """
+    MutationSitePanel {
+        background: $surface-darken-2;
+        border: round $primary;
+        padding: 1 2;
+        margin: 1 0;
+        width: 95%;
+        height: auto;
+        max-height: 24;
+    }
+    MutationSitePanel > .panel-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    MutationSitePanel > .panel-help {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    MutationSitePanel > SelectionList {
+        height: auto;
+        max-height: 14;
+        border: tall $surface-lighten-1;
+    }
+    MutationSitePanel > Button {
         margin-top: 1;
     }
     """
@@ -52,23 +129,34 @@ class CheckboxPanel(Vertical):
         super().__init__(**kwargs)
         self.sequence = sequence
         self.proposed_sites = proposed_sites
-        self.checkboxes: list[Checkbox] = []
+        self.selection_list: SelectionList[int] | None = None
 
     def compose(self) -> ComposeResult:
-        yield Static("[bold]Select mutation sites:[/]")
-        with Vertical(classes="checkbox-grid"):
-            for pos in range(len(self.sequence)):
-                label = f"[bold]{pos}[/] ({self.sequence[pos]})"
-                cb = Checkbox(
-                    label,
-                    value=(pos in self.proposed_sites),
-                )
-                self.checkboxes.append(cb)
-                yield cb
+        yield Static("Select mutation sites", classes="panel-title")
+        yield Static(
+            "Use Up/Down to move, Space to toggle, Enter to confirm.",
+            classes="panel-help",
+        )
+        selections = [
+            (
+                f"[bold]{pos}[/bold] ({base}){' [green]recommended[/green]' if pos in self.proposed_sites else ''}",
+                pos,
+                pos in self.proposed_sites,
+            )
+            for pos, base in enumerate(self.sequence)
+        ]
+        self.selection_list = SelectionList(*selections, id="site-selection-list")
+        yield self.selection_list
         yield Button("Confirm Selection", id="btn-confirm-sites", variant="success")
 
+    def on_mount(self) -> None:
+        if self.selection_list is not None:
+            self.selection_list.focus()
+
     def get_selected(self) -> list[int]:
-        return [i for i, cb in enumerate(self.checkboxes) if cb.value]
+        if self.selection_list is None:
+            return []
+        return sorted(int(value) for value in self.selection_list.selected)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-confirm-sites":
@@ -79,6 +167,9 @@ class CheckboxPanel(Vertical):
                 )
             )
 
+    def on_selection_list_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
+        event.stop()
+
 
 class SpecificityPanel(Vertical):
     """Inline widget for specificity filter: analog input + skip/run buttons."""
@@ -86,11 +177,18 @@ class SpecificityPanel(Vertical):
     DEFAULT_CSS = """
     SpecificityPanel {
         background: $surface-darken-2;
-        border: tall $primary;
+        border: round $primary;
         padding: 1 2;
         margin: 1 0;
         width: 95%;
         height: auto;
+    }
+    SpecificityPanel > .panel-title {
+        text-style: bold;
+    }
+    SpecificityPanel > .panel-help {
+        color: $text-muted;
+        margin: 1 0;
     }
     SpecificityPanel > Input {
         margin: 1 0;
@@ -103,26 +201,35 @@ class SpecificityPanel(Vertical):
     }
     """
 
-    def __init__(self, target_name: str = "", **kwargs) -> None:
+    def __init__(self, target_name: str = "", analogs_text: str = "", **kwargs) -> None:
         super().__init__(**kwargs)
         self.target_name = target_name
+        self.analogs_text = analogs_text
 
     def compose(self) -> ComposeResult:
-        yield Static("[bold]Specificity Filter[/]")
+        yield Static("Specificity Filter", classes="panel-title")
         if self.target_name:
             yield Static(f"Target: [bold]{self.target_name}[/]")
         yield Static(
-            "[dim]Enter analog molecules (comma-separated names or SMILES), "
-            "or let the LLM suggest them.[/]",
+            "Enter analog molecules for cross-screening. Use commas between names or SMILES.",
+            classes="panel-help",
         )
-        yield Input(
+        analog_input = Input(
             id="analog-input",
             placeholder="e.g. adenine, hypoxanthine",
         )
+        analog_input.value = self.analogs_text
+        yield analog_input
         with Horizontal():
             yield Button("Suggest Analogs", id="btn-suggest-analogs", variant="primary")
             yield Button("Run Filter", id="btn-run-filter", variant="warning")
             yield Button("Skip", id="btn-skip-filter")
+
+    def on_mount(self) -> None:
+        try:
+            self.query_one("#analog-input", Input).focus()
+        except Exception:
+            pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         btn_id = event.button.id
@@ -153,11 +260,18 @@ class DockingParamPanel(Vertical):
     DEFAULT_CSS = """
     DockingParamPanel {
         background: $surface-darken-2;
-        border: tall $primary;
+        border: round $primary;
         padding: 1 2;
         margin: 1 0;
         width: 95%;
         height: auto;
+    }
+    DockingParamPanel > .panel-title {
+        text-style: bold;
+    }
+    DockingParamPanel > .panel-help {
+        color: $text-muted;
+        margin: 1 0;
     }
     DockingParamPanel > Input {
         margin-bottom: 1;
@@ -174,8 +288,22 @@ class DockingParamPanel(Vertical):
     }
     """
 
+    def __init__(self, *, recommendation_pending: bool = False, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.recommendation_pending = recommendation_pending
+
     def compose(self) -> ComposeResult:
-        yield Static("[bold]Docking Configuration[/]")
+        yield Static("Docking Configuration", classes="panel-title")
+        if self.recommendation_pending:
+            yield Static(
+                "Recommendation mode selected. A suggested top-k will be loaded automatically.",
+                classes="panel-help",
+            )
+        else:
+            yield Static(
+                "Fill in docking parameters manually, or request a top-k recommendation.",
+                classes="panel-help",
+            )
         yield Static(f"[dim]{self._machine_info()}[/]")
         yield Static("Time budget (hours):")
         yield Input(id="dock-time-budget", placeholder="e.g. 4")
@@ -200,12 +328,20 @@ class DockingParamPanel(Vertical):
     @staticmethod
     def _machine_info() -> str:
         import os
+
         try:
             import psutil
+
             mem = round(psutil.virtual_memory().total / (1024 ** 3), 2)
             return f"CPUs: {os.cpu_count() or '?'}  |  Memory: {mem} GB"
         except Exception:
             return f"CPUs: {os.cpu_count() or '?'}"
+
+    def on_mount(self) -> None:
+        try:
+            self.query_one("#dock-time-budget", Input).focus()
+        except Exception:
+            pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-dock-recommend":
@@ -247,5 +383,5 @@ class DockingParamPanel(Vertical):
     def set_recommendation(self, top_k: int, reason: str) -> None:
         self.query_one("#dock-top-k", Input).value = str(top_k)
         self.query_one("#dock-recommendation-text", Static).update(
-            f"[green]LLM recommends top {top_k}.[/] {reason}"
+            f"[green]Recommended top-k:[/] {top_k}. {reason}"
         )

@@ -26,8 +26,9 @@ from aptgent.llm.skills import (
 from aptgent.workflow.engine import TRANSITIONS
 from aptgent.tui.widgets.chat_widgets import ProgressBubble
 from aptgent.tui.widgets.structured_input import (
-    CheckboxPanel,
+    ActionMenuPanel,
     DockingParamPanel,
+    MutationSitePanel,
     SpecificityPanel,
 )
 
@@ -53,6 +54,12 @@ class StepHandler:
     def handle_action(self, action: str) -> None:
         """Called when a structured panel requests an action."""
         ...
+
+    def run_worker(self, work: Callable[[], Any], *, activity: str) -> None:
+        """Run a step worker with a visible activity status."""
+        self.screen.show_activity(activity)
+        self.screen.set_input_enabled(False)
+        self.screen.run_worker(work, exclusive=True, thread=True)
 
 
 # ---------------------------------------------------------------------------
@@ -157,10 +164,7 @@ def _run_llm_interaction(
     if worker.is_cancelled:
         return {}
 
-    screen.app.call_from_thread(
-        screen.add_system_message,
-        "Processing structured result...",
-    )
+    screen.app.call_from_thread(screen.update_activity, "Processing structured result...")
     result = structured_call()
     if not isinstance(result, dict):
         raise RuntimeError("LLM returned a non-object response.")
@@ -328,15 +332,12 @@ class IntakeHandler(StepHandler):
         seq = state.input_payload.get("initial_sequence", "")
         target = state.target_molecule
         if seq and target and target.resolution_status != "resolved":
-            self.screen.set_input_enabled(False)
-            self.screen.run_worker(
+            self.run_worker(
                 lambda: self._resolve_molecule_direct(text.strip()),
-                exclusive=True,
-                thread=True,
+                activity="Resolving target molecule...",
             )
             return
-        self.screen.set_input_enabled(False)
-        self.screen.run_worker(self._extract, exclusive=True, thread=True)
+        self.run_worker(self._extract, activity="Extracting intake details...")
 
     def _resolve_molecule_direct(self, text: str) -> None:
         """Try to resolve user input directly as SMILES or molecule name."""
@@ -497,8 +498,7 @@ class StructureHandler(StepHandler):
             self.screen.set_input_enabled(True)
             return
         self.screen.add_system_message(f"Running RNAfold on: {seq}")
-        self.screen.set_input_enabled(False)
-        self.screen.run_worker(self._run_fold, exclusive=True, thread=True)
+        self.run_worker(self._run_fold, activity="Folding secondary structure...")
 
     def _run_fold(self) -> None:
         state = self.screen.app.current_state
@@ -530,7 +530,6 @@ class StructureHandler(StepHandler):
 class SiteProposalHandler(StepHandler):
     def enter(self) -> None:
         state = self.screen.app.current_state
-        seq = state.input_payload.get("initial_sequence", "")
         struct = state.secondary_structure
 
         if struct is None:
@@ -543,18 +542,12 @@ class SiteProposalHandler(StepHandler):
                 self.screen.advance_to_step(ns)
             return
 
-        self.screen.set_input_enabled(False)
-        self.screen.run_worker(self._propose, exclusive=True, thread=True)
+        self.run_worker(self._propose, activity="Analyzing mutation-tolerant sites...")
 
     def _propose(self) -> None:
         state = self.screen.app.current_state
         seq = state.input_payload.get("initial_sequence", "")
         struct = state.secondary_structure
-
-        self.screen.app.call_from_thread(
-            self.screen.add_system_message,
-            "Analyzing secondary structure for mutation-tolerant sites...",
-        )
 
         try:
             skill = SiteProposalSkill()
@@ -581,12 +574,10 @@ class SiteProposalHandler(StepHandler):
             msg += f"\nConfidence: {confidence}"
         self.screen.app.call_from_thread(self.screen.add_system_message, msg)
 
-        # Mount checkbox panel
-        panel = CheckboxPanel(seq, sites)
-        self.screen.app.call_from_thread(self.screen.add_structured_widget, panel)
+        self.screen.app.call_from_thread(self._show_choice_panel, sites)
         self.screen.app.call_from_thread(
             self.screen.set_input_placeholder,
-            "Type positions (e.g. 3,7,12) or 'use suggestions'",
+            "Type positions (e.g. 3,7,12) or 'use suggestions'.",
         )
         self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
 
@@ -616,6 +607,19 @@ class SiteProposalHandler(StepHandler):
         sites = data.get("selected_sites", [])
         self._confirm_sites(sites)
 
+    def handle_action(self, action: str) -> None:
+        if action == "use-recommended-sites":
+            self._confirm_sites(getattr(self, "_proposed_sites", []))
+            return
+        if action == "custom-sites":
+            state = self.screen.app.current_state
+            seq = state.input_payload.get("initial_sequence", "")
+            panel = MutationSitePanel(seq, getattr(self, "_proposed_sites", []))
+            self.screen.add_structured_widget(panel)
+            self.screen.set_input_placeholder(
+                "Select sites in the panel, or type comma-separated positions."
+            )
+
     def _confirm_sites(self, sites: list[int]) -> None:
         state = self.screen.app.current_state
         state.confirmed_mutation_sites = sites
@@ -624,6 +628,25 @@ class SiteProposalHandler(StepHandler):
         ns = _next_step(Step.SITE_PROPOSAL)
         if ns:
             self.screen.advance_to_step(ns)
+
+    def _show_choice_panel(self, sites: list[int]) -> None:
+        panel = ActionMenuPanel(
+            Step.SITE_PROPOSAL,
+            "Choose how to select mutable sites",
+            [
+                (
+                    "use-recommended-sites",
+                    "Use Recommended Sites",
+                    f"Accept the suggested positions immediately: {sites}" if sites else "No sites were suggested; continue with an empty selection.",
+                ),
+                (
+                    "custom-sites",
+                    "Customize Sites",
+                    "Review the full sequence and choose positions yourself.",
+                ),
+            ],
+        )
+        self.screen.add_structured_widget(panel)
 
 
 # ---------------------------------------------------------------------------
@@ -659,13 +682,11 @@ class EnumerationHandler(StepHandler):
             f"Top-K kept: {top_k_keep:,}\n"
             f"Each batch: enumerate → predict → save to JSONL"
         )
-        self.screen.set_input_enabled(False)
-        self.screen.run_worker(
+        self.run_worker(
             lambda: self._pipeline(
                 seq, sites, total_space, batch_size, top_k_keep
             ),
-            exclusive=True,
-            thread=True,
+            activity="Enumerating and scoring candidates...",
         )
 
     def _pipeline(
@@ -689,13 +710,9 @@ class EnumerationHandler(StepHandler):
         artifact_dir.mkdir(parents=True, exist_ok=True)
         results_path = artifact_dir / "scored_candidates.jsonl"
 
-        progress = ProgressBubble(total_space, label="Enumerating & Scoring")
-        self.screen.app.call_from_thread(
-            self.screen.add_structured_widget, progress
-        )
-        self.screen.app.call_from_thread(
-            self.screen.add_system_message,
-            "Starting candidate enumeration and scoring...",
+        progress = self.screen.app.call_from_thread(
+            self._create_progress_bubble,
+            total_space,
         )
 
         top_heap: list[tuple[float, int, CandidateSequence, Any]] = []
@@ -830,6 +847,11 @@ class EnumerationHandler(StepHandler):
         if ns:
             self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
 
+    def _create_progress_bubble(self, total_space: int) -> ProgressBubble:
+        progress = ProgressBubble(total_space, label="Enumerating & Scoring")
+        self.screen.add_structured_widget(progress)
+        return progress
+
     @staticmethod
     def _build_candidate(
         seq: str,
@@ -883,8 +905,7 @@ class ScoringHandler(StepHandler):
         self.screen.add_system_message(
             f"Running ensemble prediction on {len(candidates)} candidates..."
         )
-        self.screen.set_input_enabled(False)
-        self.screen.run_worker(self._score, exclusive=True, thread=True)
+        self.run_worker(self._score, activity="Running ensemble prediction...")
 
     def _show_existing(self, state: Any) -> None:
         ens_preds = [p for p in state.predictions if p.model_name == "ensemble"]
@@ -948,18 +969,16 @@ class SpecificityHandler(StepHandler):
             "Step 6: Specificity Filter\n"
             "You can provide analog molecules, ask the LLM to suggest them, or skip this step."
         )
-        panel = SpecificityPanel(
-            target_name=self.screen.app.current_state.target_molecule.input_text if self.screen.app.current_state.target_molecule else ""
-        )
-        self.screen.add_structured_widget(panel)
+        self.screen.add_structured_widget(self._build_choice_panel())
         self.screen.set_input_enabled(True)
-        self.screen.set_input_placeholder("Type 'skip', 'suggest', or analog names (comma-separated)")
+        self.screen.set_input_placeholder("Type 'skip', 'suggest', or analog names (comma-separated).")
 
     def handle_user_input(self, text: str) -> None:
         text_lower = text.strip().lower()
         if text_lower == "skip":
             self._skip()
         elif text_lower == "suggest":
+            self._show_specificity_panel()
             self._suggest()
         else:
             # Treat as analog input
@@ -976,12 +995,17 @@ class SpecificityHandler(StepHandler):
             self._run_filter(analogs_text, echo_user=bool(analogs_text.strip()))
 
     def handle_action(self, action: str) -> None:
-        if action == "suggest":
+        if action in {"suggest", "suggest-analogs"}:
+            self._show_specificity_panel()
             self._suggest()
+        elif action == "custom-analogs":
+            self._show_specificity_panel()
+            self.screen.set_input_enabled(True)
+        elif action == "skip-specificity":
+            self._skip()
 
     def _suggest(self) -> None:
-        self.screen.set_input_enabled(False)
-        self.screen.run_worker(self._suggest_worker, exclusive=True, thread=True)
+        self.run_worker(self._suggest_worker, activity="Suggesting analog molecules...")
 
     def _suggest_worker(self) -> None:
         target = self.screen.app.current_state.target_molecule
@@ -999,7 +1023,6 @@ class SpecificityHandler(StepHandler):
                 self.screen.add_system_message,
                 f"Loaded suggested analogs into the input field: {names}" if names else "No analog suggestions were returned.",
             )
-            # Update the panel input
             self.screen.app.call_from_thread(self._update_analog_input, names)
             self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
         except Exception as e:
@@ -1018,7 +1041,6 @@ class SpecificityHandler(StepHandler):
     def _run_filter(self, analogs_text: str, *, echo_user: bool) -> None:
         if echo_user:
             self.screen.add_user_message(f"Filter with: {analogs_text}")
-        self.screen.set_input_enabled(False)
 
         state = self.screen.app.current_state
         target = state.target_molecule
@@ -1047,10 +1069,9 @@ class SpecificityHandler(StepHandler):
         self.screen.add_system_message(
             f"Running cross-prediction on {len(candidates)} candidates x {len(analogs)} analogs..."
         )
-        self.screen.run_worker(
+        self.run_worker(
             lambda: self._filter_worker(candidates, target, analogs),
-            exclusive=True,
-            thread=True,
+            activity="Running specificity cross-prediction...",
         )
 
     def _filter_worker(self, candidates, target, analogs) -> None:
@@ -1115,6 +1136,37 @@ class SpecificityHandler(StepHandler):
         if ns:
             self.screen.advance_to_step(ns)
 
+    def _build_choice_panel(self) -> ActionMenuPanel:
+        return ActionMenuPanel(
+            Step.SPECIFICITY_FILTER,
+            "Choose how to provide analog molecules",
+            [
+                (
+                    "suggest-analogs",
+                    "Use Recommended Analogs",
+                    "Ask the LLM for likely confounding analog molecules, then review them.",
+                ),
+                (
+                    "custom-analogs",
+                    "Enter My Own Analogs",
+                    "Open a focused input panel and provide comma-separated names or SMILES.",
+                ),
+                (
+                    "skip-specificity",
+                    "Skip This Step",
+                    "Continue without specificity filtering.",
+                ),
+            ],
+        )
+
+    def _show_specificity_panel(self, analogs_text: str = "") -> None:
+        target = self.screen.app.current_state.target_molecule
+        panel = SpecificityPanel(
+            target_name=target.input_text if target else "",
+            analogs_text=analogs_text,
+        )
+        self.screen.add_structured_widget(panel)
+
 
 # ---------------------------------------------------------------------------
 # Step 7: Docking Selection
@@ -1128,11 +1180,10 @@ class DockingSelectionHandler(StepHandler):
             f"Step 7: Docking Selection\n"
             f"{len(state.candidates)} candidates available for docking."
         )
-        panel = DockingParamPanel()
-        self.screen.add_structured_widget(panel)
+        self.screen.add_structured_widget(self._build_choice_panel())
         self.screen.set_input_enabled(True)
         self.screen.set_input_placeholder(
-            "Configure docking params above, or type 'skip docking'"
+            "Choose a docking path above, or type 'skip docking'."
         )
 
     def handle_user_input(self, text: str) -> None:
@@ -1177,14 +1228,32 @@ class DockingSelectionHandler(StepHandler):
             self.screen.advance_to_step(ns)
 
     def handle_action(self, action: str) -> None:
+        if action == "choose-docking-recommendation":
+            self._show_docking_panel(recommendation_pending=True)
+            self.run_worker(
+                lambda: self._recommend_worker(None),
+                activity="Planning a recommended docking batch...",
+            )
+            return
+        if action == "configure-docking":
+            self._show_docking_panel(recommendation_pending=False)
+            self.screen.set_input_enabled(True)
+            return
+        if action == "skip-docking":
+            state = self.screen.app.current_state
+            state.docking_plan = DockingPlan(recommended_top_k=0)
+            self.screen.app.save_state()
+            self.screen.add_system_message("Docking skipped.")
+            ns = _next_step(Step.DOCKING_SELECTION)
+            if ns:
+                self.screen.advance_to_step(ns)
+            return
         if action.startswith("recommend:"):
             budget_str = action.split(":", 1)[1]
             time_budget = int(budget_str) if budget_str.isdigit() else None
-            self.screen.set_input_enabled(False)
-            self.screen.run_worker(
+            self.run_worker(
                 lambda: self._recommend_worker(time_budget),
-                exclusive=True,
-                thread=True,
+                activity="Refreshing docking recommendation...",
             )
 
     def _recommend_worker(self, time_budget: int | None) -> None:
@@ -1232,6 +1301,35 @@ class DockingSelectionHandler(StepHandler):
         except Exception:
             pass
 
+    @staticmethod
+    def _build_choice_panel() -> ActionMenuPanel:
+        return ActionMenuPanel(
+            Step.DOCKING_SELECTION,
+            "Choose how to prepare docking",
+            [
+                (
+                    "choose-docking-recommendation",
+                    "Use Recommended Setup",
+                    "Load a suggested top-k automatically, then finish receptor and grid settings.",
+                ),
+                (
+                    "configure-docking",
+                    "Configure Manually",
+                    "Open the parameter form and set docking values yourself.",
+                ),
+                (
+                    "skip-docking",
+                    "Skip Docking",
+                    "Continue directly to spatial ranking without docking.",
+                ),
+            ],
+        )
+
+    def _show_docking_panel(self, *, recommendation_pending: bool) -> None:
+        self.screen.add_structured_widget(
+            DockingParamPanel(recommendation_pending=recommendation_pending)
+        )
+
 
 # ---------------------------------------------------------------------------
 # Step 8: Docking Run
@@ -1278,11 +1376,9 @@ class DockingRunHandler(StepHandler):
         self.screen.add_system_message(
             f"Running Vina docking on {len(top_candidates)} candidates..."
         )
-        self.screen.set_input_enabled(False)
-        self.screen.run_worker(
+        self.run_worker(
             lambda: self._dock_worker(top_candidates, target),
-            exclusive=True,
-            thread=True,
+            activity="Running docking jobs...",
         )
 
     def _dock_worker(self, candidates, target) -> None:
@@ -1349,11 +1445,9 @@ class SpatialRankHandler(StepHandler):
         self.screen.add_system_message(
             f"Running spatial ranking on {len(candidates)} candidates..."
         )
-        self.screen.set_input_enabled(False)
-        self.screen.run_worker(
+        self.run_worker(
             lambda: self._rank_worker(candidates, target),
-            exclusive=True,
-            thread=True,
+            activity="Ranking spatial interactions...",
         )
 
     def _rank_worker(self, candidates, target) -> None:
@@ -1390,8 +1484,7 @@ class SpatialRankHandler(StepHandler):
 
 class ReportHandler(StepHandler):
     def enter(self) -> None:
-        self.screen.set_input_enabled(False)
-        self.screen.run_worker(self._build_report, exclusive=True, thread=True)
+        self.run_worker(self._build_report, activity="Compiling final report...")
 
     def _build_report(self) -> None:
         state = self.screen.app.current_state

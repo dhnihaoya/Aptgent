@@ -5,6 +5,9 @@ import pytest
 from aptgent.domain.enums import Step
 from aptgent.domain.models import SecondaryStructure, TargetMolecule
 from aptgent.tui.app import AptgentApp
+from aptgent.tui.widgets.chat_widgets import ActivityBubble
+from aptgent.tui.widgets.structured_input import ActionMenuPanel, MutationSitePanel
+from textual.widgets import OptionList
 
 
 class FakeRNAFoldAdapter:
@@ -101,3 +104,94 @@ async def test_create_new_run_enters_chat_screen(tmp_path):
         assert type(app.screen).__name__ == "ChatScreen"
         assert app.current_state.current_step == Step.INTAKE
         assert app.screen._handler.__class__.__name__ == "IntakeHandler"
+
+
+@pytest.mark.anyio
+async def test_welcome_screen_resumes_saved_run_with_keyboard(tmp_path):
+    app = make_app(tmp_path)
+    state = app.engine.create_run("resume_me")
+    state.current_step = Step.PRIMARY_SCORING
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        run_list = app.screen.query_one("#run-list")
+        assert app.screen.focused is run_list
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert type(app.screen).__name__ == "ChatScreen"
+        assert app.current_state.run_id == "resume_me"
+        assert app.current_state.current_step == Step.PRIMARY_SCORING
+
+
+@pytest.mark.anyio
+async def test_site_proposal_uses_choice_panel_before_custom_selector(tmp_path, monkeypatch):
+    class FakeSiteProposalSkill:
+        def propose(self, seq, struct):
+            return {
+                "proposed_sites": [1, 3],
+                "reasoning": "Loop positions look tolerant.",
+                "confidence": "high",
+            }
+
+    monkeypatch.setattr(
+        "aptgent.tui.widgets.step_handlers.SiteProposalSkill",
+        FakeSiteProposalSkill,
+    )
+
+    app = make_app(tmp_path)
+    state = app.engine.create_run("site_choice_case")
+    state.current_step = Step.SITE_PROPOSAL
+    state.input_payload["initial_sequence"] = "ACGTAC"
+    state.secondary_structure = SecondaryStructure(
+        sequence="ACGTAC",
+        dot_bracket="......",
+        mfe=-1.2,
+    )
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.set_run_id("site_choice_case")
+        app.push_screen("chat")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert type(app.screen).__name__ == "ChatScreen"
+        assert app.screen.query_one(ActionMenuPanel) is not None
+        app.screen.query_one("#action-menu", OptionList).focus()
+
+        await pilot.press("down", "enter")
+        await pilot.pause()
+
+        assert app.screen.query_one(MutationSitePanel) is not None
+
+
+@pytest.mark.anyio
+async def test_chat_activity_bubble_is_last_status_message(tmp_path):
+    app = make_app(tmp_path)
+    state = app.engine.create_run("activity_case")
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.set_run_id("activity_case")
+        app.push_screen("chat")
+        await pilot.pause()
+
+        screen = app.screen
+        screen.show_activity("Testing activity")
+        await pilot.pause()
+
+        activity = screen.query_one(ActivityBubble)
+        chat_log = screen.query_one("#chat-log")
+        assert activity is not None
+        assert chat_log.children[-1] is activity
+
+        screen.add_system_message("A normal message")
+        await pilot.pause()
+
+        assert chat_log.children[-1] is activity

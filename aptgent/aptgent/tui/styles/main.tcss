@@ -1,5 +1,6 @@
 Screen {
     layout: vertical;
+    background: $surface;
 }
 
 /* ── Progress Bar ── */
@@ -9,6 +10,7 @@ Screen {
     color: $text-muted;
     background: $surface-darken-2;
     padding: 0 1;
+    border-bottom: tall $surface-lighten-1;
 }
 
 /* ── Status Panel ── */
@@ -18,6 +20,7 @@ Screen {
     background: $surface-darken-1;
     color: $text-muted;
     padding: 0 1;
+    border-bottom: tall $surface-lighten-1;
 }
 
 /* ── Utility classes ── */
@@ -29,6 +32,14 @@ Screen {
 }
 
 .info-text {
+    color: $text-muted;
+}
+
+.panel-title {
+    text-style: bold;
+}
+
+.panel-help {
     color: $text-muted;
 }
 

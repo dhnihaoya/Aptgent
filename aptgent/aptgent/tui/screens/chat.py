@@ -4,9 +4,10 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.screen import Screen
+from textual.widget import Widget
 
 from aptgent.domain.enums import Step
-from aptgent.tui.widgets.chat_widgets import InputBar, StepDivider, StreamingBubble, SystemBubble, ThinkingBubble, UserBubble
+from aptgent.tui.widgets.chat_widgets import ActivityBubble, InputBar, StepDivider, StreamingBubble, SystemBubble, UserBubble
 from aptgent.tui.widgets.step_handlers import StepHandler, create_handler
 from aptgent.tui.widgets.structured_input import StructuredActionRequested, StructuredInputSubmitted
 
@@ -29,7 +30,8 @@ class ChatScreen(Screen):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._handler: StepHandler | None = None
-        self._thinking_bubble: ThinkingBubble | None = None
+        self._activity_bubble: ActivityBubble | None = None
+        self._active_structured_widget: Widget | None = None
 
     def compose(self) -> ComposeResult:
         yield self.app.progress_bar
@@ -45,20 +47,27 @@ class ChatScreen(Screen):
 
     # -- Public API for step handlers --
 
-    def add_system_message(self, text: str, extra_class: str = "") -> None:
+    def add_system_message(self, text: str, extra_class: str = "") -> SystemBubble:
         """Append a system bubble to the chat log."""
         chat_log = self.query_one("#chat-log", VerticalScroll)
         bubble = SystemBubble(text)
         if extra_class:
             bubble.add_class(extra_class)
-        chat_log.mount(bubble)
+        if self._activity_bubble is not None and self._activity_bubble.is_mounted:
+            chat_log.mount(bubble, before=self._activity_bubble)
+        else:
+            chat_log.mount(bubble)
         chat_log.scroll_end(animate=False)
+        return bubble
 
     def add_streaming_message(self) -> StreamingBubble:
         """Append a streaming bubble to the chat log and return it."""
         chat_log = self.query_one("#chat-log", VerticalScroll)
         bubble = StreamingBubble()
-        chat_log.mount(bubble)
+        if self._activity_bubble is not None and self._activity_bubble.is_mounted:
+            chat_log.mount(bubble, before=self._activity_bubble)
+        else:
+            chat_log.mount(bubble)
         chat_log.scroll_end(animate=False)
         return bubble
 
@@ -71,8 +80,52 @@ class ChatScreen(Screen):
     def add_structured_widget(self, widget) -> None:
         """Mount a structured input widget into the chat log."""
         chat_log = self.query_one("#chat-log", VerticalScroll)
-        chat_log.mount(widget)
+        self.clear_structured_widget()
+        self._active_structured_widget = widget
+        if self._activity_bubble is not None and self._activity_bubble.is_mounted:
+            chat_log.mount(widget, before=self._activity_bubble)
+        else:
+            chat_log.mount(widget)
         chat_log.scroll_end(animate=False)
+        self.call_after_refresh(lambda: self._focus_widget(widget))
+
+    def clear_structured_widget(self) -> None:
+        widget = self._active_structured_widget
+        if widget is not None:
+            try:
+                if widget.is_mounted:
+                    widget.remove()
+            except Exception:
+                pass
+        self._active_structured_widget = None
+
+    def show_activity(self, text: str) -> None:
+        chat_log = self.query_one("#chat-log", VerticalScroll)
+        if self._activity_bubble is None or not self._activity_bubble.is_mounted:
+            self._activity_bubble = ActivityBubble(text)
+            chat_log.mount(self._activity_bubble)
+        else:
+            self._activity_bubble.set_text(text)
+        chat_log.scroll_end(animate=False)
+
+    def update_activity(self, text: str) -> None:
+        if self._activity_bubble is None or not self._activity_bubble.is_mounted:
+            self.show_activity(text)
+            return
+        self._activity_bubble.set_text(text)
+
+    def finish_activity(self, text: str | None = None) -> None:
+        if self._activity_bubble is not None and self._activity_bubble.is_mounted:
+            self._activity_bubble.finalize(text)
+
+    def clear_activity(self) -> None:
+        if self._activity_bubble is not None:
+            try:
+                if self._activity_bubble.is_mounted:
+                    self._activity_bubble.remove()
+            except Exception:
+                pass
+            self._activity_bubble = None
 
     def set_input_enabled(self, enabled: bool) -> None:
         try:
@@ -80,9 +133,7 @@ class ChatScreen(Screen):
         except Exception:
             pass
         if enabled:
-            self._remove_thinking()
-        else:
-            self._show_thinking()
+            self.clear_activity()
 
     def set_input_placeholder(self, text: str) -> None:
         try:
@@ -97,6 +148,8 @@ class ChatScreen(Screen):
             self.app.engine.transition_to(state, step)
         self.app.progress_bar.set_step(step)
         self.app.save_state()
+        self.clear_structured_widget()
+        self.clear_activity()
         self._start_step(step)
 
     # -- Internal --
@@ -109,25 +162,24 @@ class ChatScreen(Screen):
         self._handler = create_handler(step, self)
         self._handler.enter()
 
-    def _show_thinking(self) -> None:
-        if self._thinking_bubble is None:
-            bubble = ThinkingBubble()
-            self._thinking_bubble = bubble
-            chat_log = self.query_one("#chat-log", VerticalScroll)
-            chat_log.mount(bubble)
-            chat_log.scroll_end(animate=False)
-
-    def _remove_thinking(self) -> None:
-        if self._thinking_bubble is not None:
-            try:
-                self._thinking_bubble.remove()
-            except Exception:
-                pass
-            self._thinking_bubble = None
-
     def _focus_input(self) -> None:
         try:
             self.query_one("#chat-input").focus()
+        except Exception:
+            pass
+
+    def _focus_widget(self, widget: Widget) -> None:
+        try:
+            if widget.can_focus:
+                widget.focus()
+                return
+        except Exception:
+            pass
+        try:
+            for child in widget.query("*"):
+                if getattr(child, "can_focus", False):
+                    child.focus()
+                    return
         except Exception:
             pass
 

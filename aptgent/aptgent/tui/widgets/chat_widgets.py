@@ -8,7 +8,21 @@ from textual.widgets import Button, Input, Static
 from aptgent.domain.enums import Step
 
 
-class SystemBubble(Static):
+class _BaseBubble(Static):
+    """Shared styling for chat bubbles."""
+
+    DEFAULT_CSS = """
+    _BaseBubble {
+        background: $surface-darken-1;
+        padding: 1 2;
+        margin: 0 4 1 0;
+        width: 95%;
+        border-left: wide $surface-lighten-1;
+    }
+    """
+
+
+class SystemBubble(_BaseBubble):
     """A system message bubble in the chat log."""
 
     DEFAULT_CSS = """
@@ -17,6 +31,7 @@ class SystemBubble(Static):
         padding: 1 2;
         margin: 0 4 1 0;
         width: 95%;
+        border-left: wide $surface-lighten-1;
     }
     """
 
@@ -33,6 +48,7 @@ class StreamingBubble(Static):
         padding: 1 2;
         margin: 0 4 1 0;
         width: 95%;
+        border-left: wide $surface-lighten-1;
     }
     """
 
@@ -63,6 +79,7 @@ class UserBubble(Static):
         margin: 0 0 1 4;
         width: 80%;
         text-align: right;
+        border-right: wide $primary-lighten-1;
     }
     """
 
@@ -79,6 +96,7 @@ class ProgressBubble(Static):
         padding: 1 2;
         margin: 0 4 1 0;
         width: 95%;
+        border-left: wide $primary;
     }
     """
 
@@ -127,6 +145,7 @@ class StepDivider(Static):
     StepDivider {
         color: $primary-lighten-1;
         text-style: bold;
+        background: $surface-darken-2;
         padding: 0 1;
         margin: 1 0;
     }
@@ -138,33 +157,32 @@ class StepDivider(Static):
         self.step = step
 
 
-class ThinkingBubble(Static):
-    """A breathing indicator shown while the system is working."""
+class ActivityBubble(Static):
+    """A breathing status bubble that stays at the end of the chat log."""
 
     _FRAMES = [
-        "[#555555]✳[/]",
-        "[#776600]✳[/]",
-        "[#aa9900]✳[/]",
-        "[bold #ddcc00]✳[/]",
-        "[#aa9900]✳[/]",
-        "[#776600]✳[/]",
+        "[#6b7280]✳[/]",
+        "[#9ca3af]✳[/]",
+        "[bold #facc15]✳[/]",
+        "[#9ca3af]✳[/]",
     ]
 
     DEFAULT_CSS = """
-    ThinkingBubble {
-        color: $primary-lighten-1;
-        text-style: bold;
-        padding: 0 1;
+    ActivityBubble {
+        background: $surface-darken-1;
+        border-left: wide $warning;
+        padding: 1 2;
         margin: 0 4 1 0;
-        width: auto;
+        width: 95%;
         height: auto;
     }
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, text: str = "", **kwargs) -> None:
         super().__init__("", **kwargs)
         self._frame_idx = 0
         self._timer = None
+        self._text = text
 
     def on_mount(self) -> None:
         self._tick()
@@ -175,13 +193,29 @@ class ThinkingBubble(Static):
             self._timer.stop()
             self._timer = None
 
+    def set_text(self, text: str) -> None:
+        self._text = text
+        self._update_render()
+
+    def finalize(self, text: str | None = None) -> None:
+        if text is not None:
+            self._text = text
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+        self.update(f"[bold #facc15]•[/] {self._text}")
+
     def _tick(self) -> None:
-        self.update(self._FRAMES[self._frame_idx % len(self._FRAMES)])
+        self._update_render()
         self._frame_idx += 1
         try:
             self.scroll_visible(animate=False)
         except Exception:
             pass
+
+    def _update_render(self) -> None:
+        frame = self._FRAMES[self._frame_idx % len(self._FRAMES)]
+        self.update(f"{frame} {self._text}")
 
 
 class InputBar(Horizontal):
@@ -200,12 +234,16 @@ class InputBar(Horizontal):
         dock: bottom;
         padding: 0 1;
         background: $surface-darken-2;
+        border-top: tall $surface-lighten-1;
     }
     InputBar > Input {
         width: 1fr;
     }
     InputBar > Button {
         margin-left: 1;
+    }
+    InputBar.-disabled {
+        background: $surface;
     }
     """
 
@@ -226,6 +264,7 @@ class InputBar(Horizontal):
             btn.disabled = not enabled
         except Exception:
             pass
+        self.set_class(not enabled, "-disabled")
 
     def set_placeholder(self, text: str) -> None:
         try:
