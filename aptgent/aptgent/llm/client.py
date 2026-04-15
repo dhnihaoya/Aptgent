@@ -85,6 +85,8 @@ class LLMClient:
         # the provider default instead of sending a value that triggers HTTP 400.
         if temperature is not None and not self._uses_kimi_k25():
             payload["temperature"] = temperature
+        if self._uses_kimi_k25():
+            payload["thinking"] = {"type": "enabled"}
         if stream:
             payload["stream"] = True
         if response_format is not None:
@@ -99,8 +101,8 @@ class LLMClient:
             pool=30.0,
         )
 
-    def _iter_sse_content(self, resp: httpx.Response):
-        """Yield content strings from an SSE stream response."""
+    def _iter_sse_events(self, resp: httpx.Response):
+        """Yield reasoning/content events from an SSE stream response."""
         for line in resp.iter_lines():
             if not line.startswith("data: "):
                 continue
@@ -110,9 +112,12 @@ class LLMClient:
             try:
                 chunk = json.loads(data)
                 delta = chunk["choices"][0].get("delta", {})
+                reasoning = self._extract_content(delta.get("reasoning_content", ""))
+                if reasoning:
+                    yield {"type": "reasoning", "text": reasoning}
                 content = self._extract_content(delta.get("content", ""))
                 if content:
-                    yield content
+                    yield {"type": "content", "text": content}
             except Exception:
                 continue
 
@@ -139,8 +144,9 @@ class LLMClient:
                     timeout=timeout,
                 ) as resp:
                     resp.raise_for_status()
-                    for piece in self._iter_sse_content(resp):
-                        collected.append(piece)
+                    for event in self._iter_sse_events(resp):
+                        if event.get("type") == "content":
+                            collected.append(event.get("text", ""))
                 content = "".join(collected)
                 if not content:
                     raise ValueError("LLM returned empty content")
@@ -173,7 +179,11 @@ class LLMClient:
                     timeout=timeout,
                 ) as resp:
                     resp.raise_for_status()
-                    yield from self._iter_sse_content(resp)
+                    for event in self._iter_sse_events(resp):
+                        if event.get("type") == "content":
+                            text = event.get("text", "")
+                            if text:
+                                yield text
                 return
             except Exception as e:
                 if attempt == self.max_retries:
@@ -201,7 +211,7 @@ class LLMClient:
                     timeout=timeout,
                 ) as resp:
                     resp.raise_for_status()
-                    yield from self._iter_sse_content(resp)
+                    yield from self._iter_sse_events(resp)
                 return
             except Exception as e:
                 if attempt == self.max_retries:

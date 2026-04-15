@@ -104,6 +104,7 @@ def run_llm_interaction(
         return {}
 
     bubble = None
+    thinking_bubble = None
     display_error: Exception | None = None
 
     if display_stream is not None:
@@ -116,10 +117,29 @@ def run_llm_interaction(
             for chunk in display_stream():
                 if worker.is_cancelled:
                     return {}
-                screen.app.call_from_thread(bubble.append_text, chunk)
+                if isinstance(chunk, dict):
+                    chunk_type = chunk.get("type", "content")
+                    text = chunk.get("text", "")
+                else:
+                    chunk_type = "content"
+                    text = chunk
+                if not text:
+                    continue
+                if chunk_type == "reasoning":
+                    if thinking_bubble is None:
+                        def make_thinking_bubble() -> None:
+                            nonlocal thinking_bubble
+                            thinking_bubble = screen.add_thinking_message()
+
+                        screen.app.call_from_thread(make_thinking_bubble)
+                    screen.app.call_from_thread(thinking_bubble.append_text, text)
+                    continue
+                screen.app.call_from_thread(bubble.append_text, text)
         except Exception as exc:
             display_error = exc
         finally:
+            if thinking_bubble:
+                screen.app.call_from_thread(thinking_bubble.finalize)
             if bubble:
                 screen.app.call_from_thread(bubble.finalize)
 

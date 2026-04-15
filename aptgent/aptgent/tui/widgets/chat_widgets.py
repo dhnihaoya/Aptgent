@@ -89,6 +89,69 @@ class StreamingBubble(Static):
             self.update(self._buffer)
 
 
+class ThinkingBubble(Static):
+    """A collapsible bubble for model reasoning content."""
+
+    DEFAULT_CSS = """
+    ThinkingBubble {
+        background: $surface-darken-2;
+        color: $text-muted;
+        padding: 1 2;
+        margin: 0 4 1 0;
+        width: 95%;
+        border-left: wide $warning-darken-2;
+    }
+    """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__("", **kwargs)
+        self._buffer = ""
+        self._expanded = False
+        self._streaming = True
+        self._refresh_display()
+
+    @property
+    def has_content(self) -> bool:
+        return bool(self._buffer.strip())
+
+    @property
+    def expanded(self) -> bool:
+        return self._expanded
+
+    def append_text(self, text: str) -> None:
+        self._buffer += text
+        self._refresh_display()
+        try:
+            self.scroll_visible(animate=False)
+        except Exception:
+            pass
+
+    def toggle(self) -> None:
+        if not self.has_content:
+            return
+        self._expanded = not self._expanded
+        self._refresh_display()
+
+    def finalize(self) -> None:
+        self._streaming = False
+        self._refresh_display()
+
+    def _refresh_display(self) -> None:
+        if not self.has_content:
+            self.update("[dim]Thinking...[/dim]")
+            return
+
+        status = "collapse" if self._expanded else "expand"
+        header = f"[bold #facc15]Thinking[/] [dim](Ctrl+O to {status})[/dim]"
+        if not self._expanded:
+            suffix = " [dim]...[/dim]" if self._streaming else ""
+            self.update(f"{header}\n[dim]Thought process hidden{suffix}[/dim]")
+            return
+
+        body = self._buffer + ("▌" if self._streaming else "")
+        self.update(f"{header}\n{body}")
+
+
 class UserBubble(Static):
     """A user message bubble in the chat log."""
 

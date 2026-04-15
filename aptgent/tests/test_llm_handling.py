@@ -93,6 +93,36 @@ def test_kimi_k25_payload_omits_temperature(tmp_path):
     )
 
     assert "temperature" not in payload
+    assert payload["thinking"] == {"type": "enabled"}
+
+
+def test_iter_sse_events_emits_reasoning_before_content(tmp_path):
+    config_path = tmp_path / "llm.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[provider.openai]",
+                'base_url = "https://api.moonshot.cn/v1"',
+                'model = "kimi-k2.5"',
+                'api_key = "test-key"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeResponse:
+        def iter_lines(self):
+            yield 'data: {"choices":[{"delta":{"reasoning_content":"thinking "}}]}'
+            yield 'data: {"choices":[{"delta":{"content":"answer"}}]}'
+            yield "data: [DONE]"
+
+    client = LLMClient(config_path=config_path)
+    events = list(client._iter_sse_events(FakeResponse()))
+
+    assert events == [
+        {"type": "reasoning", "text": "thinking "},
+        {"type": "content", "text": "answer"},
+    ]
 
 
 def test_format_intake_confirmation_includes_structured_details():

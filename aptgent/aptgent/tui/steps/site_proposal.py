@@ -39,7 +39,15 @@ class SiteProposalHandler(StepHandler):
 
         try:
             skill = SiteProposalSkill()
+            self.screen.app.call_from_thread(
+                self.screen.update_activity,
+                "Preparing site-proposal context...",
+            )
             llm_context = build_site_proposal_llm_context(state)
+            self.screen.app.call_from_thread(
+                self.screen.update_activity,
+                "Waiting for LLM site-analysis response...",
+            )
             result = run_llm_interaction(
                 self.screen,
                 display_stream=lambda: skill.explain_propose_stream_from_context(llm_context),

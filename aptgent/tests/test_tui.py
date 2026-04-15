@@ -10,7 +10,7 @@ from aptgent.tui.app import AptgentApp
 from aptgent.tui.screens.quit_confirm import QuitConfirmScreen
 from aptgent.tui.screens.resume import _overview, _timestamp_label
 from aptgent.tui.screens.theme_picker import ThemePickerScreen
-from aptgent.tui.widgets.chat_widgets import ActivityBubble, InputBar
+from aptgent.tui.widgets.chat_widgets import ActivityBubble, InputBar, ThinkingBubble
 from aptgent.tui.widgets.structured_input import (
     ActionMenuPanel,
     DockingParamPanel,
@@ -366,6 +366,47 @@ def test_activity_bubble_animates_text_and_icon_together():
     assert seen[0] == "[#6b7280]✳ Testing activity[/]"
     assert seen[1] == "[bold #facc15]✳ Testing activity[/]"
     assert seen[2] == "[bold #facc15]•[/] Testing activity"
+
+
+def test_thinking_bubble_toggles_expansion():
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    bubble = ThinkingBubble()
+    bubble.append_text("First thought.")
+
+    assert bubble.expanded is False
+
+    bubble.toggle()
+    assert bubble.expanded is True
+
+    bubble.toggle()
+    assert bubble.expanded is False
+
+
+@pytest.mark.anyio
+async def test_ctrl_o_toggles_latest_thinking_bubble(tmp_path):
+    app = make_app(tmp_path)
+    state = app.engine.create_run("thinking_toggle_case")
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.set_run_id("thinking_toggle_case")
+        app.push_screen("chat")
+        await pilot.pause()
+
+        screen = app.screen
+        bubble = screen.add_thinking_message()
+        bubble.append_text("Thinking details")
+        await pilot.pause()
+
+        assert bubble.expanded is False
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        assert bubble.expanded is True
 
 
 @pytest.mark.anyio

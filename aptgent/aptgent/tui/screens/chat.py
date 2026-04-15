@@ -11,7 +11,15 @@ from aptgent.tui.commands import commands_for_step
 from aptgent.tui.screens.resume import ResumePickerScreen
 from aptgent.tui.screens.theme_picker import ThemePickerScreen
 from aptgent.tui.steps import StepHandler, create_handler
-from aptgent.tui.widgets.chat_widgets import ActivityBubble, InputBar, StepDivider, StreamingBubble, SystemBubble, UserBubble
+from aptgent.tui.widgets.chat_widgets import (
+    ActivityBubble,
+    InputBar,
+    StepDivider,
+    StreamingBubble,
+    SystemBubble,
+    ThinkingBubble,
+    UserBubble,
+)
 from aptgent.tui.widgets.structured_input import StructuredActionRequested, StructuredInputSubmitted
 
 
@@ -20,6 +28,7 @@ class ChatScreen(Screen):
 
     BINDINGS = [
         Binding("escape", "request_quit", "Quit", show=False),
+        Binding("ctrl+o", "toggle_thinking", "Toggle Thinking", show=False),
     ]
 
     CSS = """
@@ -75,6 +84,17 @@ class ChatScreen(Screen):
         """Append a streaming bubble to the chat log and return it."""
         chat_log = self.query_one("#chat-log", VerticalScroll)
         bubble = StreamingBubble(markdown=markdown)
+        if self._activity_bubble is not None and self._activity_bubble.is_mounted:
+            chat_log.mount(bubble, before=self._activity_bubble)
+        else:
+            chat_log.mount(bubble)
+        chat_log.scroll_end(animate=False)
+        return bubble
+
+    def add_thinking_message(self) -> ThinkingBubble:
+        """Append a collapsible thinking bubble to the chat log and return it."""
+        chat_log = self.query_one("#chat-log", VerticalScroll)
+        bubble = ThinkingBubble()
         if self._activity_bubble is not None and self._activity_bubble.is_mounted:
             chat_log.mount(bubble, before=self._activity_bubble)
         else:
@@ -215,6 +235,14 @@ class ChatScreen(Screen):
 
     def action_focus_input(self) -> None:
         self._focus_input()
+
+    def action_toggle_thinking(self) -> None:
+        chat_log = self.query_one("#chat-log", VerticalScroll)
+        for child in reversed(chat_log.children):
+            if isinstance(child, ThinkingBubble) and child.has_content:
+                child.toggle()
+                chat_log.scroll_end(animate=False)
+                return
 
     def action_request_quit(self) -> None:
         input_bar = self.query_one("#input-bar", InputBar)
