@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,18 @@ def _next_step(step: Step) -> Step | None:
     return targets[0] if targets else None
 
 
+def _strip_markdown_fences(text: str) -> str:
+    """Remove ```json ... ``` fences that LLMs sometimes wrap around JSON."""
+    text = text.strip()
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    return text.strip()
+
+
 # ---------------------------------------------------------------------------
 # Step 1: Intake
 # ---------------------------------------------------------------------------
@@ -80,9 +93,7 @@ class IntakeHandler(StepHandler):
         )
 
     def handle_user_input(self, text: str) -> None:
-        self.screen.add_user_message(text)
         self.screen.set_input_enabled(False)
-        self.screen.add_system_message("Processing with LLM...")
         self.screen.run_worker(self._extract, exclusive=True, thread=True)
 
     def _extract(self) -> None:
@@ -92,17 +103,31 @@ class IntakeHandler(StepHandler):
             return
 
         state = self.screen.app.current_state
-        # Get the last user message text
         text = state.input_payload.get("user_text", "")
+
+        bubble = None
+        def _make_bubble():
+            nonlocal bubble
+            bubble = self.screen.add_streaming_message()
+        self.screen.app.call_from_thread(_make_bubble)
 
         try:
             skill = IntakeSkill()
-            result = skill.extract(text)
+            chunks: list[str] = []
+            for chunk in skill.extract_stream(text):
+                if worker.is_cancelled:
+                    break
+                chunks.append(chunk)
+                self.screen.app.call_from_thread(bubble.append_text, chunk)
+            self.screen.app.call_from_thread(bubble.finalize)
+            result = json.loads(_strip_markdown_fences("".join(chunks)))
         except Exception as e:
-            self.screen.call_from_thread(
+            if bubble:
+                self.screen.app.call_from_thread(bubble.finalize)
+            self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"LLM error: {e}", "error-text"
             )
-            self.screen.call_from_thread(self.screen.set_input_enabled, True)
+            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
             return
 
         state.input_payload["user_text"] = text
@@ -111,12 +136,12 @@ class IntakeHandler(StepHandler):
         seq = result.get("initial_sequence")
         if not seq:
             follow_up = result.get("follow_up_question", "Please provide the aptamer sequence.")
-            self.screen.call_from_thread(
+            self.screen.app.call_from_thread(
                 self.screen.add_system_message,
                 f"Missing sequence. {follow_up}\nPlease describe your task again with a sequence.",
                 "warning-text",
             )
-            self.screen.call_from_thread(self.screen.set_input_enabled, True)
+            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
             self.screen.app.save_state()
             return
 
@@ -126,6 +151,39 @@ class IntakeHandler(StepHandler):
         target_text = result.get("target_molecule")
         if target_text:
             resolved = self.screen.app.molecule_resolver.resolve(target_text)
+            # Fallback: if resolution fails and name looks like CJK, translate via LLM
+            if resolved.resolution_status != "resolved" and any(
+                "\u4e00" <= ch <= "\u9fff" for ch in target_text
+            ):
+                try:
+                    translate_prompt = (
+                        "Translate the following molecule name to its standard English common name. "
+                        'Return ONLY a JSON object: {"english_name": "<english name>"}.'
+                    )
+                    translated = skill.client.chat_json(
+                        translate_prompt, target_text
+                    )
+                    if isinstance(translated, str):
+                        english_name = translated.strip()
+                    elif isinstance(translated, dict):
+                        english_name = (
+                            translated.get("english_name")
+                            or translated.get("name")
+                            or translated.get("translation")
+                            or list(translated.values())[0]
+                        )
+                        if isinstance(english_name, str):
+                            english_name = english_name.strip()
+                        else:
+                            english_name = None
+                    else:
+                        english_name = None
+                    if english_name:
+                        resolved = self.screen.app.molecule_resolver.resolve(english_name)
+                        if resolved.resolution_status == "resolved":
+                            target_text = english_name
+                except Exception:
+                    pass
             if resolved.resolution_status == "resolved":
                 state.target_molecule = resolved
                 msg_parts.append(f"Target: {resolved.resolved_name or target_text} ({resolved.smiles})")
@@ -140,12 +198,12 @@ class IntakeHandler(StepHandler):
             state.input_payload["modification_region"] = mod
 
         self.screen.app.save_state()
-        self.screen.call_from_thread(
+        self.screen.app.call_from_thread(
             self.screen.add_system_message, "\n".join(msg_parts)
         )
         ns = _next_step(Step.INTAKE)
         if ns:
-            self.screen.call_from_thread(self.screen.advance_to_step, ns)
+            self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
 
 
 # ---------------------------------------------------------------------------
@@ -175,12 +233,12 @@ class StructureHandler(StepHandler):
                 f"Dot-bracket: {struct.dot_bracket}\n"
                 f"MFE: {struct.mfe} kcal/mol"
             )
-            self.screen.call_from_thread(self.screen.add_system_message, result_text)
+            self.screen.app.call_from_thread(self.screen.add_system_message, result_text)
             ns = _next_step(Step.SECONDARY_STRUCTURE)
             if ns:
-                self.screen.call_from_thread(self.screen.advance_to_step, ns)
+                self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
         except Exception as e:
-            self.screen.call_from_thread(
+            self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"RNAfold error: {e}", "error-text"
             )
 
@@ -205,23 +263,42 @@ class SiteProposalHandler(StepHandler):
                 self.screen.advance_to_step(ns)
             return
 
-        self.screen.add_system_message("Asking LLM for mutation site suggestions...")
         self.screen.set_input_enabled(False)
         self.screen.run_worker(self._propose, exclusive=True, thread=True)
 
     def _propose(self) -> None:
+        from textual.worker import get_current_worker
+        worker = get_current_worker()
+        if worker.is_cancelled:
+            return
+
         state = self.screen.app.current_state
         seq = state.input_payload.get("initial_sequence", "")
         struct = state.secondary_structure
 
+        bubble = None
+        def _make_bubble():
+            nonlocal bubble
+            bubble = self.screen.add_streaming_message()
+        self.screen.app.call_from_thread(_make_bubble)
+
         try:
             skill = SiteProposalSkill()
-            result = skill.propose(seq, struct)
+            chunks: list[str] = []
+            for chunk in skill.propose_stream(seq, struct):
+                if worker.is_cancelled:
+                    break
+                chunks.append(chunk)
+                self.screen.app.call_from_thread(bubble.append_text, chunk)
+            self.screen.app.call_from_thread(bubble.finalize)
+            result = json.loads(_strip_markdown_fences("".join(chunks)))
         except Exception as e:
-            self.screen.call_from_thread(
+            if bubble:
+                self.screen.app.call_from_thread(bubble.finalize)
+            self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"LLM error: {e}", "error-text"
             )
-            self.screen.call_from_thread(self.screen.set_input_enabled, True)
+            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
             return
 
         sites = result.get("proposed_sites", [])
@@ -229,16 +306,16 @@ class SiteProposalHandler(StepHandler):
         self._proposed_sites = sites
 
         msg = f"Proposed sites: {sites}\nReasoning: {reasoning}"
-        self.screen.call_from_thread(self.screen.add_system_message, msg)
+        self.screen.app.call_from_thread(self.screen.add_system_message, msg)
 
         # Mount checkbox panel
         panel = CheckboxPanel(seq, sites)
-        self.screen.call_from_thread(self.screen.add_structured_widget, panel)
-        self.screen.call_from_thread(
+        self.screen.app.call_from_thread(self.screen.add_structured_widget, panel)
+        self.screen.app.call_from_thread(
             self.screen.set_input_placeholder,
             "Type positions (e.g. 3,7,12) or 'use suggestions'",
         )
-        self.screen.call_from_thread(self.screen.set_input_enabled, True)
+        self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
 
     def handle_user_input(self, text: str) -> None:
         state = self.screen.app.current_state
@@ -388,12 +465,12 @@ class ScoringHandler(StepHandler):
             if len(sorted_preds) > 10:
                 lines.append(f"  ... and {len(sorted_preds) - 10} more")
 
-            self.screen.call_from_thread(self.screen.add_system_message, "\n".join(lines))
+            self.screen.app.call_from_thread(self.screen.add_system_message, "\n".join(lines))
             ns = _next_step(Step.PRIMARY_SCORING)
             if ns:
-                self.screen.call_from_thread(self.screen.advance_to_step, ns)
+                self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
         except Exception as e:
-            self.screen.call_from_thread(
+            self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"Scoring failed: {e}", "error-text"
             )
 
@@ -440,28 +517,48 @@ class SpecificityHandler(StepHandler):
             self._suggest()
 
     def _suggest(self) -> None:
-        self.screen.add_system_message("Asking LLM for analog suggestions...")
         self.screen.set_input_enabled(False)
         self.screen.run_worker(self._suggest_worker, exclusive=True, thread=True)
 
     def _suggest_worker(self) -> None:
+        from textual.worker import get_current_worker
+        worker = get_current_worker()
+        if worker.is_cancelled:
+            return
+
         target = self.screen.app.current_state.target_molecule
+
+        bubble = None
+        def _make_bubble():
+            nonlocal bubble
+            bubble = self.screen.add_streaming_message()
+        self.screen.app.call_from_thread(_make_bubble)
+
         try:
             skill = AnalogSuggestionSkill()
-            result = skill.suggest(target)
+            chunks: list[str] = []
+            for chunk in skill.suggest_stream(target):
+                if worker.is_cancelled:
+                    break
+                chunks.append(chunk)
+                self.screen.app.call_from_thread(bubble.append_text, chunk)
+            self.screen.app.call_from_thread(bubble.finalize)
+            result = json.loads(_strip_markdown_fences("".join(chunks)))
             analogs = result.get("analogs", [])
             names = ", ".join(a.get("name", "") for a in analogs if a.get("name"))
-            self.screen.call_from_thread(
+            self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"Suggested analogs: {names}"
             )
             # Update the panel input
-            self.screen.call_from_thread(self._update_analog_input, names)
-            self.screen.call_from_thread(self.screen.set_input_enabled, True)
+            self.screen.app.call_from_thread(self._update_analog_input, names)
+            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
         except Exception as e:
-            self.screen.call_from_thread(
+            if bubble:
+                self.screen.app.call_from_thread(bubble.finalize)
+            self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"Suggestion failed: {e}", "error-text"
             )
-            self.screen.call_from_thread(self.screen.set_input_enabled, True)
+            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
 
     def _update_analog_input(self, names: str) -> None:
         try:
@@ -547,15 +644,15 @@ class SpecificityHandler(StepHandler):
                 removed = [r.candidate_id for r in specificity_results if r.status == "removed"]
                 msg += f"\nRemoved: {', '.join(removed[:10])}"
 
-            self.screen.call_from_thread(self.screen.add_system_message, msg)
+            self.screen.app.call_from_thread(self.screen.add_system_message, msg)
             ns = _next_step(Step.SPECIFICITY_FILTER)
             if ns:
-                self.screen.call_from_thread(self.screen.advance_to_step, ns)
+                self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
         except Exception as e:
-            self.screen.call_from_thread(
+            self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"Filter failed: {e}", "error-text"
             )
-            self.screen.call_from_thread(self.screen.set_input_enabled, True)
+            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
 
     def _skip(self) -> None:
         state = self.screen.app.current_state
@@ -631,7 +728,6 @@ class DockingSelectionHandler(StepHandler):
         if action.startswith("recommend:"):
             budget_str = action.split(":", 1)[1]
             time_budget = int(budget_str) if budget_str.isdigit() else None
-            self.screen.add_system_message("Asking LLM for recommendation...")
             self.screen.run_worker(
                 lambda: self._recommend_worker(time_budget),
                 exclusive=True,
@@ -639,24 +735,45 @@ class DockingSelectionHandler(StepHandler):
             )
 
     def _recommend_worker(self, time_budget: int | None) -> None:
+        from textual.worker import get_current_worker
+        worker = get_current_worker()
+        if worker.is_cancelled:
+            return
+
         state = self.screen.app.current_state
         profile = HardwareProbeAdapter().probe()
+
+        bubble = None
+        def _make_bubble():
+            nonlocal bubble
+            bubble = self.screen.add_streaming_message()
+        self.screen.app.call_from_thread(_make_bubble)
+
         try:
             skill = DockingPlannerSkill()
-            result = skill.plan(
+            chunks: list[str] = []
+            for chunk in skill.plan_stream(
                 candidate_count=len(state.candidates),
                 machine_profile=profile,
                 time_budget_hours=time_budget,
-            )
+            ):
+                if worker.is_cancelled:
+                    break
+                chunks.append(chunk)
+                self.screen.app.call_from_thread(bubble.append_text, chunk)
+            self.screen.app.call_from_thread(bubble.finalize)
+            result = json.loads(_strip_markdown_fences("".join(chunks)))
             top_k = result.get("recommended_top_k", 0)
             reason = result.get("reason", "")
-            self.screen.call_from_thread(
+            self.screen.app.call_from_thread(
                 self.screen.add_system_message,
                 f"LLM recommends top {top_k}. {reason}",
             )
-            self.screen.call_from_thread(self._update_panel, top_k, reason)
+            self.screen.app.call_from_thread(self._update_panel, top_k, reason)
         except Exception as e:
-            self.screen.call_from_thread(
+            if bubble:
+                self.screen.app.call_from_thread(bubble.finalize)
+            self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"Recommendation failed: {e}", "error-text"
             )
 
@@ -741,12 +858,12 @@ class DockingRunHandler(StepHandler):
             if len(sorted_results) > 10:
                 lines.append(f"  ... and {len(sorted_results) - 10} more")
 
-            self.screen.call_from_thread(self.screen.add_system_message, "\n".join(lines))
+            self.screen.app.call_from_thread(self.screen.add_system_message, "\n".join(lines))
             ns = _next_step(Step.DOCKING_RUN)
             if ns:
-                self.screen.call_from_thread(self.screen.advance_to_step, ns)
+                self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
         except Exception as e:
-            self.screen.call_from_thread(
+            self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"Docking failed: {e}", "error-text"
             )
 
@@ -802,12 +919,12 @@ class SpatialRankHandler(StepHandler):
             if len(sorted_results) > 15:
                 lines.append(f"  ... and {len(sorted_results) - 15} more")
 
-            self.screen.call_from_thread(self.screen.add_system_message, "\n".join(lines))
+            self.screen.app.call_from_thread(self.screen.add_system_message, "\n".join(lines))
             ns = _next_step(Step.SPATIAL_RANK)
             if ns:
-                self.screen.call_from_thread(self.screen.advance_to_step, ns)
+                self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
         except Exception as e:
-            self.screen.call_from_thread(
+            self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"Ranking failed: {e}", "error-text"
             )
 
@@ -818,11 +935,15 @@ class SpatialRankHandler(StepHandler):
 
 class ReportHandler(StepHandler):
     def enter(self) -> None:
-        self.screen.add_system_message("Generating final report...")
         self.screen.set_input_enabled(False)
         self.screen.run_worker(self._build_report, exclusive=True, thread=True)
 
     def _build_report(self) -> None:
+        from textual.worker import get_current_worker
+        worker = get_current_worker()
+        if worker.is_cancelled:
+            return
+
         state = self.screen.app.current_state
 
         # Build lookup maps
@@ -881,11 +1002,26 @@ class ReportHandler(StepHandler):
         state.recommendations = recommendations
         self.screen.app.save_state()
 
-        # LLM summary (best-effort)
+        # LLM summary (best-effort, streamed)
+        summary = ""
         try:
             skill = ReportSkill()
             rec_dicts = [r.model_dump() for r in recommendations[:10]]
-            summary_result = skill.summarize(rec_dicts)
+
+            bubble = None
+            def _make_bubble():
+                nonlocal bubble
+                bubble = self.screen.add_streaming_message()
+            self.screen.app.call_from_thread(_make_bubble)
+
+            chunks: list[str] = []
+            for chunk in skill.summarize_stream(rec_dicts):
+                if worker.is_cancelled:
+                    break
+                chunks.append(chunk)
+                self.screen.app.call_from_thread(bubble.append_text, chunk)
+            self.screen.app.call_from_thread(bubble.finalize)
+            summary_result = json.loads(_strip_markdown_fences("".join(chunks)))
             summary = summary_result.get("summary", "")
             if summary:
                 lines.append(f"\nSummary: {summary}")
@@ -894,9 +1030,9 @@ class ReportHandler(StepHandler):
 
         lines.append("\nType 'export' to save, 'finish' to exit.")
 
-        self.screen.call_from_thread(self.screen.add_system_message, "\n".join(lines))
-        self.screen.call_from_thread(self.screen.set_input_enabled, True)
-        self.screen.call_from_thread(
+        self.screen.app.call_from_thread(self.screen.add_system_message, "\n".join(lines))
+        self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+        self.screen.app.call_from_thread(
             self.screen.set_input_placeholder, "Type 'export' or 'finish'"
         )
 

@@ -76,3 +76,54 @@ class LLMClient:
                 if attempt == self.max_retries:
                     raise RuntimeError(f"LLM request failed after {self.max_retries} retries: {e}")
         return {}
+
+    def chat_stream(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ):
+        """Stream LLM response as text chunks (generator)."""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": True,
+            "response_format": {"type": "json_object"},
+        }
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                with httpx.stream(
+                    "POST",
+                    f"{self.base_url}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=self.timeout,
+                ) as resp:
+                    resp.raise_for_status()
+                    for line in resp.iter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if data.strip() == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                            delta = chunk["choices"][0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                yield content
+                        except Exception:
+                            continue
+                return
+            except Exception as e:
+                if attempt == self.max_retries:
+                    raise RuntimeError(f"LLM streaming request failed after {self.max_retries} retries: {e}")

@@ -70,6 +70,15 @@ class ChatScreen(Screen):
         chat_log.mount(bubble)
         chat_log.scroll_end(animate=False)
 
+    def add_streaming_message(self) -> "StreamingBubble":
+        """Append a streaming bubble to the chat log and return it."""
+        from aptgent.tui.widgets.chat_widgets import StreamingBubble
+        chat_log = self.query_one("#chat-log", VerticalScroll)
+        bubble = StreamingBubble()
+        chat_log.mount(bubble)
+        chat_log.scroll_end(animate=False)
+        return bubble
+
     def add_user_message(self, text: str) -> None:
         """Append a user bubble to the chat log."""
         chat_log = self.query_one("#chat-log", VerticalScroll)
@@ -117,9 +126,14 @@ class ChatScreen(Screen):
     def on_input_bar_submitted(self, event: InputBar.Submitted) -> None:
         """Handle user text input from the bottom input bar."""
         event.stop()
-        if self._handler:
-            self.add_user_message(event.value)
-            self._handler.handle_user_input(event.value)
+        if not self._handler:
+            return
+        text = event.value.strip()
+        if not text:
+            return
+        self.add_user_message(text)
+        self.app.current_state.input_payload["user_text"] = text
+        self._handler.handle_user_input(text)
 
     def on_structured_input_submitted(self, event: StructuredInputSubmitted) -> None:
         """Handle structured panel submissions."""

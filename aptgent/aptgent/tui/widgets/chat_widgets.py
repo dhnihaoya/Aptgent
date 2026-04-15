@@ -15,6 +15,30 @@ class SystemBubble(Static):
         super().__init__(text, classes="system-bubble", **kwargs)
 
 
+class StreamingBubble(Static):
+    """A system message bubble that supports typewriter/streaming effect."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__("", classes="system-bubble", **kwargs)
+        self._buffer = ""
+
+    def append_text(self, text: str) -> None:
+        self._buffer += text
+        self.update(self._buffer + "▌")
+        # Keep scroll at bottom as text grows
+        if self.parent:
+            try:
+                from textual.containers import VerticalScroll
+                vs = self.parent
+                if isinstance(vs, VerticalScroll):
+                    vs.scroll_end(animate=False)
+            except Exception:
+                pass
+
+    def finalize(self) -> None:
+        self.update(self._buffer)
+
+
 class UserBubble(Static):
     """A user message bubble in the chat log."""
 

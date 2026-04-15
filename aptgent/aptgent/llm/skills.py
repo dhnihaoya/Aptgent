@@ -10,7 +10,7 @@ from aptgent.llm.client import LLMClient
 SYSTEM_INTAKE = """You are an intake assistant for an aptamer design tool.
 Extract the following fields from the user's natural language input:
 - initial_sequence: the aptamer sequence (DNA or RNA). If missing, set to null.
-- target_molecule: the small molecule name or SMILES the aptamer should bind to. If missing, set to null.
+- target_molecule: the small molecule name or SMILES the aptamer should bind to. If the user gives a non-English name (e.g., Chinese), translate it to the standard English common name. If missing, set to null.
 - modification_region: optional description of regions the user wants to mutate (e.g., "loop region", "positions 10-20"). If missing, set to null.
 - analogs: list of other small molecules to consider for specificity screening. If missing, empty list.
 - time_budget_hours: optional time budget in hours. If missing, null.
@@ -82,6 +82,9 @@ class IntakeSkill:
     def extract(self, user_text: str) -> dict[str, Any]:
         return self.client.chat_json(SYSTEM_INTAKE, user_text)
 
+    def extract_stream(self, user_text: str):
+        return self.client.chat_stream(SYSTEM_INTAKE, user_text)
+
 
 class SiteProposalSkill:
     def __init__(self, client: LLMClient | None = None) -> None:
@@ -99,9 +102,25 @@ class SiteProposalSkill:
         )
         return self.client.chat_json(SYSTEM_SITE_PROPOSAL, user)
 
+    def propose_stream(
+        self,
+        sequence: str,
+        structure: SecondaryStructure,
+    ):
+        user = (
+            f"Sequence: {sequence}\n"
+            f"Dot-bracket: {structure.dot_bracket}\n"
+            f"MFE: {structure.mfe} kcal/mol"
+        )
+        return self.client.chat_stream(SYSTEM_SITE_PROPOSAL, user)
+
     def rephrase(self, sequence: str, user_text: str) -> dict[str, Any]:
         user = f"Sequence length: {len(sequence)}\nUser request: {user_text}"
         return self.client.chat_json(SYSTEM_SITE_REPHRASE, user)
+
+    def rephrase_stream(self, sequence: str, user_text: str):
+        user = f"Sequence length: {len(sequence)}\nUser request: {user_text}"
+        return self.client.chat_stream(SYSTEM_SITE_REPHRASE, user)
 
 
 class AnalogSuggestionSkill:
@@ -111,6 +130,10 @@ class AnalogSuggestionSkill:
     def suggest(self, target: TargetMolecule) -> dict[str, Any]:
         user = f"Target name: {target.resolved_name or target.input_text}\nSMILES: {target.smiles or 'unknown'}"
         return self.client.chat_json(SYSTEM_ANALOG_SUGGESTION, user)
+
+    def suggest_stream(self, target: TargetMolecule):
+        user = f"Target name: {target.resolved_name or target.input_text}\nSMILES: {target.smiles or 'unknown'}"
+        return self.client.chat_stream(SYSTEM_ANALOG_SUGGESTION, user)
 
 
 class DockingPlannerSkill:
@@ -130,6 +153,19 @@ class DockingPlannerSkill:
         )
         return self.client.chat_json(SYSTEM_DOCKING_PLANNER, user)
 
+    def plan_stream(
+        self,
+        candidate_count: int,
+        machine_profile: dict[str, Any],
+        time_budget_hours: int | None,
+    ):
+        user = (
+            f"Candidates: {candidate_count}\n"
+            f"Machine: {json.dumps(machine_profile, ensure_ascii=False)}\n"
+            f"Time budget (hours): {time_budget_hours if time_budget_hours is not None else 'not set'}"
+        )
+        return self.client.chat_stream(SYSTEM_DOCKING_PLANNER, user)
+
 
 class ReportSkill:
     def __init__(self, client: LLMClient | None = None) -> None:
@@ -140,3 +176,9 @@ class ReportSkill:
             recommendations, indent=2, ensure_ascii=False
         )
         return self.client.chat_json(SYSTEM_REPORT, user)
+
+    def summarize_stream(self, recommendations: list[dict[str, Any]]):
+        user = "Recommendations (already sorted by final_priority):\n" + json.dumps(
+            recommendations, indent=2, ensure_ascii=False
+        )
+        return self.client.chat_stream(SYSTEM_REPORT, user)
