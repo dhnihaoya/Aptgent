@@ -7,7 +7,9 @@ from textual.screen import Screen
 from textual.widget import Widget
 
 from aptgent.domain.enums import Step
+from aptgent.tui.commands import commands_for_step
 from aptgent.tui.screens.resume import ResumePickerScreen
+from aptgent.tui.screens.theme_picker import ThemePickerScreen
 from aptgent.tui.widgets.chat_widgets import ActivityBubble, InputBar, StepDivider, StreamingBubble, SystemBubble, UserBubble
 from aptgent.tui.widgets.step_handlers import StepHandler, create_handler
 from aptgent.tui.widgets.structured_input import StructuredActionRequested, StructuredInputSubmitted
@@ -175,6 +177,7 @@ class ChatScreen(Screen):
         chat_log = self.query_one("#chat-log", VerticalScroll)
         chat_log.mount(StepDivider(step))
         chat_log.scroll_end(animate=False)
+        self.query_one("#input-bar", InputBar).set_commands(commands_for_step(step))
         self._handler = create_handler(step, self)
         self._handler.enter()
 
@@ -215,11 +218,23 @@ class ChatScreen(Screen):
             return
         self.app.push_screen(ResumePickerScreen(), self._handle_resume_selection)
 
+    def _open_theme_picker(self) -> None:
+        self.app.push_screen(ThemePickerScreen(), self._handle_theme_selection)
+
     def _handle_resume_selection(self, run_id: str | None) -> None:
         if not run_id:
             self._focus_input()
             return
         self.resume_run(run_id)
+
+    def _handle_theme_selection(self, theme_name: str | None) -> None:
+        if not theme_name:
+            self._focus_input()
+            return
+        label = self.app.apply_theme(theme_name)
+        if label is not None:
+            self.add_system_message(f"Theme switched to {label}.")
+        self._focus_input()
 
     def _submit_pending_message(self, text: str) -> None:
         if not self._handler:
@@ -239,6 +254,9 @@ class ChatScreen(Screen):
         if not text:
             return
         command, _, arg = text.partition(" ")
+        if command == "/theme":
+            self._open_theme_picker()
+            return
         if command == "/resume":
             if arg.strip():
                 state = self.app.engine.load_run(arg.strip())
@@ -248,6 +266,14 @@ class ChatScreen(Screen):
                 self.resume_run(state.run_id)
                 return
             self._open_resume_picker()
+            return
+        if command == "/quit":
+            self.app.open_quit_dialog()
+            return
+        if command in {"/export", "/finish"} and self.app.current_state.current_step == Step.FINAL_REPORT:
+            self.add_user_message(command)
+            self.app.current_state.input_payload["user_text"] = command
+            self._handler.handle_user_input(command[1:])
             return
         if command.startswith("/"):
             self.add_system_message(f"Unknown command: {command}")

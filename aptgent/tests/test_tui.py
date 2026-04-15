@@ -7,6 +7,7 @@ from aptgent.domain.models import SecondaryStructure, TargetMolecule
 from aptgent.tui.app import AptgentApp
 from aptgent.tui.screens.quit_confirm import QuitConfirmScreen
 from aptgent.tui.screens.resume import _overview, _timestamp_label
+from aptgent.tui.screens.theme_picker import ThemePickerScreen
 from aptgent.tui.widgets.chat_widgets import ActivityBubble, InputBar
 from aptgent.tui.widgets.structured_input import ActionMenuPanel, MutationSitePanel
 from textual.css.query import NoMatches
@@ -152,8 +153,10 @@ async def test_slash_shows_command_palette_in_welcome(tmp_path):
         input_bar = app.screen.query_one(InputBar)
         assert input_bar.command_palette_open()
         command_list = app.screen.query_one("#command-list", OptionList)
-        assert len(command_list.options) == 1
+        assert len(command_list.options) == 3
         assert command_list.get_option_at_index(0).id == "/resume"
+        assert command_list.get_option_at_index(1).id == "/quit"
+        assert command_list.get_option_at_index(2).id == "/theme"
 
 
 def test_resume_option_text_includes_overview_step_and_timestamp(tmp_path):
@@ -312,3 +315,47 @@ async def test_chat_activity_bubble_is_last_status_message(tmp_path):
         await pilot.pause()
 
         assert chat_log.children[-1] is activity
+
+
+@pytest.mark.anyio
+async def test_final_report_palette_exposes_report_commands(tmp_path):
+    app = make_app(tmp_path)
+    state = app.engine.create_run("report_commands_case")
+    state.current_step = Step.FINAL_REPORT
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.set_run_id("report_commands_case")
+        app.push_screen("chat")
+        await pilot.pause()
+        await pilot.pause()
+
+        chat_input = app.screen.query_one("#chat-input")
+        chat_input.value = "/"
+        await pilot.pause()
+
+        command_list = app.screen.query_one("#command-list", OptionList)
+        assert [command_list.get_option_at_index(i).id for i in range(len(command_list.options))] == [
+            "/resume",
+            "/quit",
+            "/export",
+            "/finish",
+            "/theme",
+        ]
+
+
+@pytest.mark.anyio
+async def test_theme_command_opens_picker_from_welcome(tmp_path):
+    app = make_app(tmp_path)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        chat_input = app.screen.query_one("#chat-input")
+        chat_input.value = "/theme"
+        chat_input.focus()
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ThemePickerScreen)

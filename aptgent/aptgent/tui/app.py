@@ -8,6 +8,7 @@ from textual.app import App
 from textual.binding import Binding
 
 from aptgent.domain.enums import Step
+from aptgent.tui.commands import get_theme_preset
 from aptgent.tui.screens.chat import ChatScreen
 from aptgent.tui.screens.quit_confirm import QuitConfirmScreen
 from aptgent.tui.screens.welcome import WelcomeScreen
@@ -31,6 +32,7 @@ class AptgentApp(App):
     TITLE = "Aptgent"
     SUB_TITLE = "Aptamer Design Assistant"
     CSS_PATH = "styles/main.tcss"
+    DEFAULT_THEME = "tokyo-night"
 
     SCREENS = {
         "welcome": WelcomeScreen,
@@ -74,6 +76,7 @@ class AptgentApp(App):
 
         self.progress_bar = StepProgressBar(Step.INTAKE, id="progress-bar")
         self.status_panel = StatusPanel("", "", id="status-panel")
+        self.theme = self.DEFAULT_THEME
 
     @property
     def current_state(self) -> RunState:
@@ -117,6 +120,13 @@ class AptgentApp(App):
         if isinstance(self.screen, QuitConfirmScreen):
             return
         self.push_screen(QuitConfirmScreen(), self._handle_quit_confirmation)
+
+    def apply_theme(self, theme_name: str) -> str | None:
+        preset = get_theme_preset(theme_name)
+        if preset is None:
+            return None
+        self.theme = theme_name
+        return preset.label
 
     def _handle_quit_confirmation(self, should_quit: bool | None) -> None:
         if not should_quit:

@@ -78,8 +78,8 @@ class UserBubble(Static):
         background: $primary-darken-2;
         color: $text;
         padding: 1 2;
-        margin: 0 0 1 4;
-        width: 80%;
+        margin: 0 0 1 0;
+        width: 95%;
         text-align: right;
         border-right: wide $primary-lighten-1;
     }
@@ -298,6 +298,14 @@ class InputBar(Vertical):
             self.query_one("#chat-input", Input).placeholder = text
         except Exception:
             pass
+
+    def set_commands(self, commands: tuple[SlashCommand, ...]) -> None:
+        self._commands = commands
+        try:
+            current_value = self.query_one("#chat-input", Input).value
+        except Exception:
+            current_value = ""
+        self._update_command_palette(current_value)
 
     def clear_input(self) -> None:
         try:

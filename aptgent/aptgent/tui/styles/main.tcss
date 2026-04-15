@@ -1,6 +1,6 @@
 Screen {
     layout: vertical;
-    background: $surface;
+    background: $background;
 }
 
 /* ── Progress Bar ── */
@@ -8,16 +8,16 @@ Screen {
 #progress-bar {
     height: 1;
     color: $text-muted;
-    background: $surface-darken-2;
+    background: $panel;
     padding: 0 1;
-    border-bottom: tall $surface-lighten-1;
+    border-bottom: tall $primary;
 }
 
 /* ── Status Panel ── */
 
 #status-panel {
     height: 1;
-    background: $surface-darken-1;
+    background: $surface;
     color: $text-muted;
     padding: 0 1;
     border-bottom: tall $surface-lighten-1;

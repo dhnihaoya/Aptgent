@@ -6,6 +6,8 @@ from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Static
 
+from aptgent.tui.commands import DEFAULT_SLASH_COMMANDS
+from aptgent.tui.screens.theme_picker import ThemePickerScreen
 from aptgent.tui.screens.resume import ResumePickerScreen
 from aptgent.tui.widgets.chat_widgets import InputBar, StepDivider, SystemBubble
 
@@ -53,7 +55,7 @@ class WelcomeScreen(Screen):
                 id="welcome-subtitle",
             )
         yield VerticalScroll(id="welcome-log")
-        yield InputBar(id="input-bar")
+        yield InputBar(id="input-bar", commands=DEFAULT_SLASH_COMMANDS)
 
     def on_mount(self) -> None:
         self.call_after_refresh(self._focus_input)
@@ -82,12 +84,24 @@ class WelcomeScreen(Screen):
             return
         self.app.push_screen(ResumePickerScreen(), self._handle_resume_selection)
 
+    def _open_theme_picker(self) -> None:
+        self.app.push_screen(ThemePickerScreen(), self._handle_theme_selection)
+
     def _handle_resume_selection(self, run_id: str | None) -> None:
         if not run_id:
             self._focus_input()
             return
         self.app.set_run_id(run_id)
         self.app.push_screen("chat")
+
+    def _handle_theme_selection(self, theme_name: str | None) -> None:
+        if not theme_name:
+            self._focus_input()
+            return
+        label = self.app.apply_theme(theme_name)
+        if label is not None:
+            self.add_system_message(f"Theme switched to {label}.")
+        self._focus_input()
 
     def add_system_message(self, text: str) -> None:
         chat_log = self.query_one("#welcome-log", VerticalScroll)
@@ -107,6 +121,9 @@ class WelcomeScreen(Screen):
         if not text:
             return
         command, _, arg = text.partition(" ")
+        if command == "/theme":
+            self._open_theme_picker()
+            return
         if command == "/resume":
             if arg.strip():
                 state = self.app.engine.load_run(arg.strip())
@@ -117,6 +134,9 @@ class WelcomeScreen(Screen):
                 self.app.push_screen("chat")
                 return
             self._open_resume_picker()
+            return
+        if command == "/quit":
+            self.app.open_quit_dialog()
             return
         if command.startswith("/"):
             self.add_system_message(f"Unknown command: {command}")
