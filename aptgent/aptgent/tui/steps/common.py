@@ -252,6 +252,34 @@ def validate_analog_suggestion_result(result: Any) -> dict[str, Any]:
     }
 
 
+def format_specificity_recommendation_markdown(
+    *,
+    target_name: str,
+    analogs: list[dict[str, str | None]],
+    note: str | None = None,
+) -> str:
+    heading_target = target_name or "the current target"
+    if not analogs:
+        return (
+            "### Recommended Specificity Analogs\n\n"
+            f"No strong analog recommendations were returned for **{heading_target}**."
+        )
+
+    lines = [
+        "### Recommended Specificity Analogs",
+        "",
+        f"Target: **{heading_target}**",
+        "",
+    ]
+    for analog in analogs:
+        name = analog.get("name") or "Unnamed analog"
+        reason = analog.get("reason") or "Relevant structural neighbor for specificity screening."
+        lines.append(f"- **{name}**: {reason}")
+    if note:
+        lines.extend(["", f"Note: {note}"])
+    return "\n".join(lines)
+
+
 def default_top_k(
     candidate_count: int,
     machine_profile: dict[str, Any],

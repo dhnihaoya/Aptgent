@@ -173,7 +173,7 @@ class MutationSitePanel(Vertical):
 
 
 class SpecificityPanel(Vertical):
-    """Inline widget for specificity filter: analog input + skip/run buttons."""
+    """Inline widget for specificity filter input."""
 
     DEFAULT_CSS = """
     SpecificityPanel {
@@ -202,19 +202,26 @@ class SpecificityPanel(Vertical):
     }
     """
 
-    def __init__(self, target_name: str = "", analogs_text: str = "", **kwargs) -> None:
+    def __init__(
+        self,
+        target_name: str = "",
+        analogs_text: str = "",
+        *,
+        title: str = "Specificity Filter",
+        help_text: str = "Enter analog molecules for cross-screening. Use commas between names or SMILES.",
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self.target_name = target_name
         self.analogs_text = analogs_text
+        self.title = title
+        self.help_text = help_text
 
     def compose(self) -> ComposeResult:
-        yield Static("Specificity Filter", classes="panel-title")
+        yield Static(self.title, classes="panel-title")
         if self.target_name:
             yield Static(f"Target: [bold]{self.target_name}[/]")
-        yield Static(
-            "Enter analog molecules for cross-screening. Use commas between names or SMILES.",
-            classes="panel-help",
-        )
+        yield Static(self.help_text, classes="panel-help")
         analog_input = Input(
             id="analog-input",
             placeholder="e.g. adenine, hypoxanthine",
@@ -222,7 +229,6 @@ class SpecificityPanel(Vertical):
         analog_input.value = self.analogs_text
         yield analog_input
         with Horizontal():
-            yield Button("Suggest Analogs", id="btn-suggest-analogs", variant="primary")
             yield Button("Run Filter", id="btn-run-filter", variant="warning")
             yield Button("Skip", id="btn-skip-filter")
 
@@ -234,11 +240,7 @@ class SpecificityPanel(Vertical):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         btn_id = event.button.id
-        if btn_id == "btn-suggest-analogs":
-            self.post_message(
-                StructuredActionRequested(Step.SPECIFICITY_FILTER, "suggest")
-            )
-        elif btn_id == "btn-run-filter":
+        if btn_id == "btn-run-filter":
             analogs = self.query_one("#analog-input", Input).value.strip()
             self.post_message(
                 StructuredInputSubmitted(

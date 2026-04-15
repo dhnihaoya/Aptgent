@@ -55,9 +55,20 @@ class DockingRecommendationContext(BaseModel):
     accepted: bool = False
 
 
+class SpecificityRecommendationContext(BaseModel):
+    analog_names: list[str] = Field(default_factory=list)
+    display_markdown: str = ""
+    note: str = ""
+    phase: str = "initial"
+    accepted: bool = False
+
+
 class WorkflowContext(BaseModel):
     intake: IntakeContext = Field(default_factory=IntakeContext)
     site_proposal: SiteProposalContext = Field(default_factory=SiteProposalContext)
+    specificity_recommendation: SpecificityRecommendationContext = Field(
+        default_factory=SpecificityRecommendationContext
+    )
     docking_recommendation: DockingRecommendationContext = Field(
         default_factory=DockingRecommendationContext
     )

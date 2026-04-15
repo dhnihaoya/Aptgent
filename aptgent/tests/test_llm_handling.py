@@ -6,6 +6,7 @@ from aptgent.workflow.context import (
     get_sequence,
     record_docking_recommendation_context,
     record_intake_context,
+    record_specificity_recommendation_context,
     record_site_proposal_context,
 )
 from aptgent.workflow.state import RunState
@@ -247,3 +248,23 @@ def test_record_docking_recommendation_context_persists_reason():
     assert context.phase == "awaiting_decision"
     assert context.reason == "Fits the available CPU budget."
     assert context.accepted is True
+
+
+def test_record_specificity_recommendation_context_persists_names_and_phase():
+    state = RunState(run_id="spec_ctx_case")
+
+    record_specificity_recommendation_context(
+        state,
+        analog_names=[" theobromine ", "", "paraxanthine"],
+        display_markdown="- theobromine",
+        note="Close xanthine analogs.",
+        phase="awaiting_decision",
+        accepted=False,
+    )
+
+    context = state.context.specificity_recommendation
+    assert context.analog_names == ["theobromine", "paraxanthine"]
+    assert context.display_markdown == "- theobromine"
+    assert context.note == "Close xanthine analogs."
+    assert context.phase == "awaiting_decision"
+    assert context.accepted is False

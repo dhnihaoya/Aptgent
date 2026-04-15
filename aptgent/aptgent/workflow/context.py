@@ -183,6 +183,25 @@ def record_docking_recommendation_context(
     context.accepted = accepted
 
 
+def record_specificity_recommendation_context(
+    state: RunState,
+    *,
+    analog_names: list[str] | None = None,
+    display_markdown: str = "",
+    note: str = "",
+    phase: str = "initial",
+    accepted: bool = False,
+) -> None:
+    context = state.context.specificity_recommendation
+    context.analog_names = [
+        text for item in (analog_names or []) if (text := _clean_text(item))
+    ]
+    context.display_markdown = display_markdown
+    context.note = _clean_text(note) or ""
+    context.phase = phase
+    context.accepted = accepted
+
+
 def build_run_overview(state: RunState) -> str:
     target = get_target_label(state)
     sequence = get_sequence(state)
