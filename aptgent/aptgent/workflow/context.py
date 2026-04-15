@@ -75,6 +75,8 @@ def record_site_proposal_context(
     reasoning: str | None = None,
     confidence: str | None = None,
     confirmed_sites: list[int] | None = None,
+    llm_context: dict[str, Any] | None = None,
+    extra_context: dict[str, Any] | None = None,
 ) -> None:
     context = state.context.site_proposal
     if proposed_sites is not None:
@@ -85,6 +87,67 @@ def record_site_proposal_context(
         context.confidence = _clean_text(confidence)
     if confirmed_sites is not None:
         context.confirmed_sites = list(confirmed_sites)
+    if llm_context is not None:
+        context.llm_context = dict(llm_context)
+    if extra_context is not None:
+        context.extra_context = dict(extra_context)
+
+
+def build_site_proposal_llm_context(state: RunState) -> dict[str, Any]:
+    structure = state.secondary_structure
+    target = state.target_molecule
+    intake = state.context.intake
+    proposal = state.context.site_proposal
+    target_label = get_target_label(state)
+
+    target_payload: dict[str, Any] = {
+        "label": target_label,
+    }
+    if target is not None:
+        target_payload.update(
+            {
+                "input_text": target.input_text,
+                "resolved_name": target.resolved_name,
+                "smiles": target.smiles,
+                "resolution_status": target.resolution_status,
+            }
+        )
+    elif target_label or intake.target_input:
+        target_payload.update(
+            {
+                "input_text": intake.target_input,
+                "resolved_name": intake.target_label,
+                "smiles": None,
+                "resolution_status": "pending_context_only",
+            }
+        )
+
+    structure_payload: dict[str, Any] = {}
+    if structure is not None:
+        structure_payload = {
+            "sequence": structure.sequence,
+            "dot_bracket": structure.dot_bracket,
+            "mfe_kcal_per_mol": structure.mfe,
+            "features": dict(structure.features),
+        }
+
+    return {
+        "sequence": get_sequence(state),
+        "target_molecule": target_payload,
+        "secondary_structure": structure_payload,
+        "user_request": {
+            "brief": get_user_brief(state),
+            "modification_region": intake.modification_region,
+            "analogs": list(intake.analogs),
+            "time_budget_hours": intake.time_budget_hours or state.time_budget,
+        },
+        "workflow_context": {
+            "current_step": state.current_step.value,
+            "previous_proposed_sites": list(proposal.proposed_sites),
+            "confirmed_mutation_sites": list(state.confirmed_mutation_sites),
+        },
+        "extra_context": dict(proposal.extra_context),
+    }
 
 
 def record_docking_recommendation_context(

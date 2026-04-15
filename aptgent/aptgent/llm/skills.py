@@ -30,11 +30,16 @@ Rules:
 """
 
 SYSTEM_SITE_PROPOSAL = """You are a mutation advisor for aptamer design.
-Given an aptamer sequence and its RNA secondary structure (dot-bracket notation + MFE), propose a list of mutation sites (0-based indices) that are likely to tolerate changes without destroying the overall fold.
+You are given a structured context payload for the current aptamer design run. The payload may include the aptamer sequence, predicted secondary structure, target-molecule metadata, user-request notes, workflow state, and extra context from future integrations.
+
+Use whatever context is present. Do not assume every field exists.
+
+Your task is to propose a list of mutation sites (0-based indices) that are likely to tolerate changes without destroying the overall fold.
 
 Rules:
 - Prefer loop regions and unpaired nucleotides over stems.
 - Avoid the first and last 3 nucleotides unless explicitly requested.
+- If the user has already constrained a region, treat that as a preference rather than a hard rule unless the context says otherwise.
 - Return a JSON object with:
   - proposed_sites: list of integers (0-based indices)
   - reasoning: short explanation (1-2 sentences)
@@ -43,13 +48,13 @@ Rules:
 Return ONLY the JSON object."""
 
 DISPLAY_SITE_PROPOSAL = """You are a mutation advisor for aptamer design.
-Explain the likely mutation-tolerant regions in plain language for a chat UI.
+You are given a structured context payload for the current aptamer design run. Explain, in a chat-friendly way, which positions or regions look safer to mutate.
 
 Rules:
-- Do not use JSON or markdown code fences.
-- Briefly explain which positions or regions look safer to mutate and why.
-- Mention confidence as a normal word, not a field.
-- Keep it to 2-4 short sentences.
+- Respond as concise Markdown bullets suitable for streaming in a chat UI.
+- Mention candidate positions or regions and why they look mutation-tolerant.
+- Mention uncertainty naturally when needed.
+- Keep it brief and concrete.
 """
 
 SYSTEM_SITE_REPHRASE = """You are a mutation advisor. The user described desired mutation sites in natural language. Convert this description into a concrete list of 0-based indices to mutate.
@@ -161,41 +166,79 @@ class SiteProposalSkill:
     def __init__(self, client: LLMClient | None = None) -> None:
         self.client = client or LLMClient()
 
+    @staticmethod
+    def _site_context_to_user_prompt(context: dict[str, Any]) -> str:
+        return "Site proposal context:\n" + json.dumps(
+            context,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    def propose_from_context(self, context: dict[str, Any]) -> dict[str, Any]:
+        return self.client.chat_json(
+            SYSTEM_SITE_PROPOSAL,
+            self._site_context_to_user_prompt(context),
+        )
+
+    def propose_stream_from_context(self, context: dict[str, Any]):
+        return self.client.chat_stream(
+            SYSTEM_SITE_PROPOSAL,
+            self._site_context_to_user_prompt(context),
+        )
+
+    def explain_propose_stream_from_context(self, context: dict[str, Any]):
+        return self.client.chat_text_stream(
+            DISPLAY_SITE_PROPOSAL,
+            self._site_context_to_user_prompt(context),
+        )
+
     def propose(
         self,
         sequence: str,
         structure: SecondaryStructure,
     ) -> dict[str, Any]:
-        user = (
-            f"Sequence: {sequence}\n"
-            f"Dot-bracket: {structure.dot_bracket}\n"
-            f"MFE: {structure.mfe} kcal/mol"
-        )
-        return self.client.chat_json(SYSTEM_SITE_PROPOSAL, user)
+        context = {
+            "sequence": sequence,
+            "secondary_structure": {
+                "sequence": structure.sequence,
+                "dot_bracket": structure.dot_bracket,
+                "mfe_kcal_per_mol": structure.mfe,
+                "features": dict(structure.features),
+            },
+        }
+        return self.propose_from_context(context)
 
     def propose_stream(
         self,
         sequence: str,
         structure: SecondaryStructure,
     ):
-        user = (
-            f"Sequence: {sequence}\n"
-            f"Dot-bracket: {structure.dot_bracket}\n"
-            f"MFE: {structure.mfe} kcal/mol"
-        )
-        return self.client.chat_stream(SYSTEM_SITE_PROPOSAL, user)
+        context = {
+            "sequence": sequence,
+            "secondary_structure": {
+                "sequence": structure.sequence,
+                "dot_bracket": structure.dot_bracket,
+                "mfe_kcal_per_mol": structure.mfe,
+                "features": dict(structure.features),
+            },
+        }
+        return self.propose_stream_from_context(context)
 
     def explain_propose_stream(
         self,
         sequence: str,
         structure: SecondaryStructure,
     ):
-        user = (
-            f"Sequence: {sequence}\n"
-            f"Dot-bracket: {structure.dot_bracket}\n"
-            f"MFE: {structure.mfe} kcal/mol"
-        )
-        return self.client.chat_text_stream(DISPLAY_SITE_PROPOSAL, user)
+        context = {
+            "sequence": sequence,
+            "secondary_structure": {
+                "sequence": structure.sequence,
+                "dot_bracket": structure.dot_bracket,
+                "mfe_kcal_per_mol": structure.mfe,
+                "features": dict(structure.features),
+            },
+        }
+        return self.explain_propose_stream_from_context(context)
 
     def rephrase(self, sequence: str, user_text: str) -> dict[str, Any]:
         user = f"Sequence length: {len(sequence)}\nUser request: {user_text}"

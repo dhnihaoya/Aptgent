@@ -10,8 +10,8 @@ from aptgent.domain.enums import Step
 from aptgent.tui.commands import commands_for_step
 from aptgent.tui.screens.resume import ResumePickerScreen
 from aptgent.tui.screens.theme_picker import ThemePickerScreen
+from aptgent.tui.steps import StepHandler, create_handler
 from aptgent.tui.widgets.chat_widgets import ActivityBubble, InputBar, StepDivider, StreamingBubble, SystemBubble, UserBubble
-from aptgent.tui.widgets.step_handlers import StepHandler, create_handler
 from aptgent.tui.widgets.structured_input import StructuredActionRequested, StructuredInputSubmitted
 
 

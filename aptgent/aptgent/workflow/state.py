@@ -35,6 +35,8 @@ class SiteProposalContext(BaseModel):
     reasoning: Optional[str] = None
     confidence: Optional[str] = None
     confirmed_sites: list[int] = Field(default_factory=list)
+    llm_context: dict[str, Any] = Field(default_factory=dict)
+    extra_context: dict[str, Any] = Field(default_factory=dict)
 
 
 class DockingRecommendationContext(BaseModel):

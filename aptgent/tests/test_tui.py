@@ -265,8 +265,16 @@ async def test_ctrl_q_opens_quit_modal(tmp_path):
 
 @pytest.mark.anyio
 async def test_site_proposal_uses_choice_panel_before_custom_selector(tmp_path, monkeypatch):
+    seen_context = {}
+
     class FakeSiteProposalSkill:
-        def propose(self, seq, struct):
+        def explain_propose_stream_from_context(self, context):
+            seen_context.update(context)
+            yield "- Positions 1 and 3 look exposed in the unpaired region.\n"
+            yield "- Confidence is high for conservative edits there."
+
+        def propose_from_context(self, context):
+            seen_context.update(context)
             return {
                 "proposed_sites": [1, 3],
                 "reasoning": "Loop positions look tolerant.",
@@ -274,7 +282,7 @@ async def test_site_proposal_uses_choice_panel_before_custom_selector(tmp_path, 
             }
 
     monkeypatch.setattr(
-        "aptgent.tui.widgets.step_handlers.SiteProposalSkill",
+        "aptgent.tui.steps.site_proposal.SiteProposalSkill",
         FakeSiteProposalSkill,
     )
 
@@ -297,6 +305,8 @@ async def test_site_proposal_uses_choice_panel_before_custom_selector(tmp_path, 
         await pilot.pause()
 
         assert type(app.screen).__name__ == "ChatScreen"
+        assert seen_context["secondary_structure"]["dot_bracket"] == "......"
+        assert seen_context["sequence"] == "ACGTAC"
         assert app.screen.query_one(ActionMenuPanel) is not None
         app.screen.query_one("#action-menu", OptionList).focus()
 
@@ -333,6 +343,29 @@ async def test_chat_activity_bubble_is_last_status_message(tmp_path):
         await pilot.pause()
 
         assert chat_log.children[-1] is activity
+
+
+def test_activity_bubble_animates_text_and_icon_together():
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    bubble = ActivityBubble("Testing activity")
+    seen = []
+
+    def capture(renderable):
+        seen.append(renderable)
+
+    bubble.update = capture  # type: ignore[method-assign]
+    bubble._update_render()
+    bubble._frame_idx = 2
+    bubble._update_render()
+    bubble.finalize()
+
+    assert seen[0] == "[#6b7280]✳ Testing activity[/]"
+    assert seen[1] == "[bold #facc15]✳ Testing activity[/]"
+    assert seen[2] == "[bold #facc15]•[/] Testing activity"
 
 
 @pytest.mark.anyio
@@ -403,11 +436,11 @@ async def test_docking_recommendation_requires_accept_or_customize_before_form(t
             return {"cpu_count": 8, "memory_gb": 32}
 
     monkeypatch.setattr(
-        "aptgent.tui.widgets.step_handlers.DockingPlannerSkill",
+        "aptgent.tui.steps.docking_selection.DockingPlannerSkill",
         FakeDockingPlannerSkill,
     )
     monkeypatch.setattr(
-        "aptgent.tui.widgets.step_handlers.HardwareProbeAdapter",
+        "aptgent.tui.steps.docking_selection.HardwareProbeAdapter",
         FakeHardwareProbeAdapter,
     )
 
@@ -466,11 +499,11 @@ async def test_accepting_docking_recommendation_prefills_compact_form(tmp_path, 
             return {"cpu_count": 8, "memory_gb": 32}
 
     monkeypatch.setattr(
-        "aptgent.tui.widgets.step_handlers.DockingPlannerSkill",
+        "aptgent.tui.steps.docking_selection.DockingPlannerSkill",
         FakeDockingPlannerSkill,
     )
     monkeypatch.setattr(
-        "aptgent.tui.widgets.step_handlers.HardwareProbeAdapter",
+        "aptgent.tui.steps.docking_selection.HardwareProbeAdapter",
         FakeHardwareProbeAdapter,
     )
 

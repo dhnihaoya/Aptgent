@@ -1,0 +1,290 @@
+from __future__ import annotations
+
+from aptgent.adapters.docking import HardwareProbeAdapter
+from aptgent.domain.enums import Step
+from aptgent.domain.models import DockingPlan
+from aptgent.llm.skills import DockingPlannerSkill
+from aptgent.tui.steps.base import StepHandler
+from aptgent.tui.steps.common import (
+    format_docking_recommendation_markdown,
+    next_step,
+    run_llm_interaction,
+    validate_docking_recommendation_result,
+)
+from aptgent.tui.widgets.structured_input import (
+    ActionMenuPanel,
+    DockingParamPanel,
+    DockingStrategyPanel,
+)
+from aptgent.workflow.context import record_docking_recommendation_context
+
+
+class DockingSelectionHandler(StepHandler):
+    def enter(self) -> None:
+        state = self.screen.app.current_state
+        recommendation = state.context.docking_recommendation
+
+        self.screen.add_system_message(
+            f"Step 7: Docking Selection\n"
+            f"{len(state.candidates)} candidates available for docking."
+        )
+        if recommendation.display_markdown and recommendation.phase in {"awaiting_decision", "editing_form"}:
+            self.screen.add_system_message(recommendation.display_markdown, markdown=True)
+        if recommendation.phase == "editing_form":
+            self._show_docking_panel()
+        elif recommendation.phase == "awaiting_decision" and recommendation.recommended_top_k > 0:
+            self._show_recommendation_choice_panel()
+        else:
+            self._show_strategy_panel()
+        self.screen.set_input_enabled(True)
+        if recommendation.phase == "awaiting_decision":
+            self.screen.set_input_placeholder("Accept the LLM draft, adjust it, or skip docking.")
+        elif recommendation.phase == "editing_form":
+            self.screen.set_input_placeholder("Review the docking parameters and submit when ready.")
+        else:
+            self.screen.set_input_placeholder("Enter an optional time budget, then choose how to prepare docking.")
+
+    def handle_user_input(self, text: str) -> None:
+        if "skip" in text.strip().lower():
+            self._skip()
+
+    def handle_structured_input(self, data: dict) -> None:
+        state = self.screen.app.current_state
+        top_k = data.get("top_k", 0)
+        candidate_count = len(state.candidates)
+
+        if top_k <= 0:
+            self.screen.add_system_message("Please enter a valid top-k > 0.", "warning-text")
+            return
+        if candidate_count and top_k > candidate_count:
+            top_k = candidate_count
+
+        recommendation = state.context.docking_recommendation
+        profile = recommendation.machine_profile or HardwareProbeAdapter().probe()
+        state.docking_plan = DockingPlan(
+            machine_profile=profile,
+            time_budget=data.get("time_budget"),
+            recommended_top_k=top_k,
+            reason=data.get("recommendation_reason", ""),
+            receptor_path=data.get("receptor_path"),
+            grid_center=data.get("grid_center"),
+            grid_size=data.get("grid_size"),
+        )
+        state.time_budget = data.get("time_budget")
+        recommendation.accepted = bool(data.get("accepted_recommendation"))
+        recommendation.phase = "editing_form"
+        self.screen.app.save_state()
+        self.screen.add_system_message(
+            f"Docking plan: top-{top_k} candidates, "
+            f"receptor={data.get('receptor_path', 'N/A')}"
+        )
+        ns = next_step(Step.DOCKING_SELECTION)
+        if ns:
+            self.screen.advance_to_step(ns)
+
+    def handle_action(self, action: str) -> None:
+        if action.startswith("strategy:"):
+            self._handle_strategy_action(action)
+            return
+        if action == "accept-docking-recommendation":
+            recommendation = self.screen.app.current_state.context.docking_recommendation
+            recommendation.accepted = True
+            recommendation.phase = "editing_form"
+            recommendation.strategy = "llm"
+            self.screen.app.save_state()
+            self._show_docking_panel()
+            self.screen.set_input_enabled(True)
+            return
+        if action == "customize-after-recommendation":
+            recommendation = self.screen.app.current_state.context.docking_recommendation
+            recommendation.accepted = False
+            recommendation.phase = "editing_form"
+            recommendation.strategy = "llm"
+            self.screen.app.save_state()
+            self._show_docking_panel()
+            self.screen.set_input_enabled(True)
+            return
+        if action == "skip-docking":
+            self._skip()
+
+    def _handle_strategy_action(self, action: str) -> None:
+        _, strategy, *rest = action.split(":")
+        budget_str = rest[0] if rest else ""
+        time_budget = int(budget_str) if budget_str.isdigit() else None
+        state = self.screen.app.current_state
+        if time_budget is not None:
+            state.time_budget = time_budget
+        recommendation = state.context.docking_recommendation
+        if not recommendation.machine_profile:
+            recommendation.machine_profile = HardwareProbeAdapter().probe()
+        recommendation.time_budget_hours = time_budget or state.time_budget
+        self.screen.app.save_state()
+        if strategy == "llm":
+            self.run_worker(
+                lambda: self._recommend_worker(recommendation.time_budget_hours),
+                activity="Preparing an LLM docking draft...",
+            )
+            return
+        if strategy == "manual":
+            recommendation.strategy = "manual"
+            recommendation.phase = "editing_form"
+            recommendation.accepted = False
+            self.screen.app.save_state()
+            self._show_docking_panel()
+            self.screen.set_input_enabled(True)
+            return
+        if strategy == "skip":
+            self._skip()
+
+    def _recommend_worker(self, time_budget: int | None) -> None:
+        state = self.screen.app.current_state
+        profile = HardwareProbeAdapter().probe()
+
+        try:
+            skill = DockingPlannerSkill()
+            result = run_llm_interaction(
+                self.screen,
+                display_stream=lambda: skill.explain_plan_stream(
+                    candidate_count=len(state.candidates),
+                    machine_profile=profile,
+                    time_budget_hours=time_budget,
+                ),
+                structured_call=lambda: validate_docking_recommendation_result(
+                    skill.plan(
+                        candidate_count=len(state.candidates),
+                        machine_profile=profile,
+                        time_budget_hours=time_budget,
+                    ),
+                    candidate_count=len(state.candidates),
+                    machine_profile=profile,
+                    time_budget_hours=time_budget,
+                ),
+            )
+            recommended_time_budget = result.get("recommended_time_budget_hours")
+            top_k = result.get("recommended_top_k", 0)
+            grid_size = result.get("recommended_grid_size", [])
+            receptor_path_note = result.get("receptor_path_note", "")
+            grid_center_note = result.get("grid_center_note", "")
+            reason = result.get("reason", "")
+            markdown = format_docking_recommendation_markdown(
+                candidate_count=len(state.candidates),
+                machine_profile=profile,
+                time_budget_hours=recommended_time_budget,
+                recommended_top_k=top_k,
+                recommended_grid_size=grid_size,
+                receptor_path_note=receptor_path_note,
+                grid_center_note=grid_center_note,
+                reason=reason,
+            )
+            record_docking_recommendation_context(
+                state,
+                candidate_count=len(state.candidates),
+                machine_profile=profile,
+                time_budget_hours=time_budget,
+                recommended_time_budget_hours=recommended_time_budget,
+                recommended_top_k=top_k,
+                recommended_grid_size=grid_size,
+                receptor_path_note=receptor_path_note,
+                grid_center_note=grid_center_note,
+                reason=reason,
+                display_markdown=markdown,
+                strategy="llm",
+                phase="awaiting_decision",
+            )
+            state.time_budget = recommended_time_budget
+            self.screen.app.save_state()
+            self.screen.app.call_from_thread(self._show_recommendation_choice_panel)
+        except Exception as exc:
+            self.screen.app.call_from_thread(
+                self.screen.add_system_message, f"Recommendation failed: {exc}", "error-text"
+            )
+        finally:
+            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+
+    @staticmethod
+    def _build_recommendation_choice_panel(top_k: int) -> ActionMenuPanel:
+        return ActionMenuPanel(
+            Step.DOCKING_SELECTION,
+            "Review the LLM docking draft",
+            [
+                (
+                    "accept-docking-recommendation",
+                    "Accept LLM Draft",
+                    f"Load the suggested top-{top_k} setup into the final parameter form.",
+                ),
+                (
+                    "customize-after-recommendation",
+                    "Adjust Parameters",
+                    "Open the same parameter form, prefilled with the LLM draft so you can edit it.",
+                ),
+                (
+                    "skip-docking",
+                    "Skip Docking",
+                    "Continue directly to spatial ranking without docking.",
+                ),
+            ],
+        )
+
+    def _show_strategy_panel(self) -> None:
+        recommendation = self.screen.app.current_state.context.docking_recommendation
+        self.screen.add_structured_widget(
+            DockingStrategyPanel(
+                machine_profile=recommendation.machine_profile or HardwareProbeAdapter().probe(),
+                time_budget=self.screen.app.current_state.time_budget,
+            )
+        )
+        self.screen.set_input_placeholder("Enter an optional time budget, then choose LLM draft or manual setup.")
+
+    def _show_recommendation_choice_panel(self) -> None:
+        recommendation = self.screen.app.current_state.context.docking_recommendation
+        self.screen.add_structured_widget(
+            self._build_recommendation_choice_panel(recommendation.recommended_top_k)
+        )
+        self.screen.set_input_placeholder("Accept the LLM draft, adjust it, or skip docking.")
+
+    def _show_docking_panel(self) -> None:
+        state = self.screen.app.current_state
+        recommendation = state.context.docking_recommendation
+        self.screen.add_structured_widget(
+            DockingParamPanel(
+                mode="llm" if recommendation.strategy == "llm" else "manual",
+                machine_profile=recommendation.machine_profile or HardwareProbeAdapter().probe(),
+                time_budget=(
+                    state.docking_plan.time_budget
+                    if state.docking_plan and state.docking_plan.time_budget is not None
+                    else state.time_budget
+                    or recommendation.recommended_time_budget_hours
+                    or recommendation.time_budget_hours
+                ),
+                recommended_top_k=recommendation.recommended_top_k,
+                recommended_grid_size=recommendation.recommended_grid_size,
+                recommendation_reason=recommendation.reason,
+                receptor_path_note=recommendation.receptor_path_note,
+                grid_center_note=recommendation.grid_center_note,
+                accepted_recommendation=recommendation.accepted,
+                receptor_path=state.docking_plan.receptor_path if state.docking_plan else None,
+                grid_center=state.docking_plan.grid_center if state.docking_plan else None,
+                grid_size=(
+                    state.docking_plan.grid_size
+                    if state.docking_plan and state.docking_plan.grid_size
+                    else recommendation.recommended_grid_size
+                ),
+            )
+        )
+        recommendation.phase = "editing_form"
+        self.screen.set_input_placeholder("Review the docking parameters and submit when ready.")
+        self.screen.app.save_state()
+
+    def _skip(self) -> None:
+        state = self.screen.app.current_state
+        state.docking_plan = DockingPlan(recommended_top_k=0)
+        recommendation = state.context.docking_recommendation
+        recommendation.display_markdown = ""
+        recommendation.phase = "initial"
+        recommendation.strategy = ""
+        recommendation.accepted = False
+        self.screen.app.save_state()
+        self.screen.add_system_message("Docking skipped.")
+        ns = next_step(Step.DOCKING_SELECTION)
+        if ns:
+            self.screen.advance_to_step(ns)

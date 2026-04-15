@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from aptgent.workflow.context import (
+    build_site_proposal_llm_context,
     build_run_overview,
     get_sequence,
     record_docking_recommendation_context,
     record_intake_context,
+    record_site_proposal_context,
 )
 from aptgent.workflow.state import RunState
 from aptgent.llm.client import LLMClient
@@ -14,7 +16,7 @@ from aptgent.tui.widgets.step_handlers import (
     _validate_intake_result,
     _validate_site_proposal_result,
 )
-from aptgent.domain.models import TargetMolecule
+from aptgent.domain.models import SecondaryStructure, TargetMolecule
 
 
 def test_validate_intake_result_normalizes_fields():
@@ -138,6 +140,52 @@ def test_context_helpers_prefer_confirmed_facts():
 
     assert get_sequence(state) == "ACGU"
     assert build_run_overview(state) == "Caffeine | ACGU"
+
+
+def test_build_site_proposal_llm_context_collects_extensible_context():
+    state = RunState(run_id="site_ctx_case")
+    state.input_payload["user_text"] = "Keep the loop flexible."
+    state.time_budget = 3
+    state.secondary_structure = SecondaryStructure(
+        sequence="ACGUAC",
+        dot_bracket="..(..)",
+        mfe=-2.4,
+        features={"length": 6, "source": "rnafold"},
+    )
+    record_intake_context(
+        state,
+        sequence="ACGUAC",
+        target_text="caffeine",
+        resolved_target=TargetMolecule(
+            input_text="caffeine",
+            resolved_name="Caffeine",
+            smiles="Cn1cnc2n(C)c(=O)n(C)c(=O)c12",
+            resolution_status="resolved",
+        ),
+        modification_region="loop region",
+        analogs=["theobromine"],
+        time_budget_hours=4,
+    )
+    record_site_proposal_context(
+        state,
+        proposed_sites=[2],
+        extra_context={
+            "structure_lookup": {
+                "status": "available",
+                "pdb_ids": ["1ABC"],
+            }
+        },
+    )
+
+    result = build_site_proposal_llm_context(state)
+
+    assert result["sequence"] == "ACGUAC"
+    assert result["secondary_structure"]["dot_bracket"] == "..(..)"
+    assert result["secondary_structure"]["features"]["source"] == "rnafold"
+    assert result["target_molecule"]["label"] == "Caffeine"
+    assert result["user_request"]["modification_region"] == "loop region"
+    assert result["workflow_context"]["previous_proposed_sites"] == [2]
+    assert result["extra_context"]["structure_lookup"]["pdb_ids"] == ["1ABC"]
 
 
 def test_record_docking_recommendation_context_persists_reason():

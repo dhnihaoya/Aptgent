@@ -182,10 +182,10 @@ class ActivityBubble(Static):
     """A breathing status bubble that stays at the end of the chat log."""
 
     _FRAMES = [
-        "[#6b7280]✳[/]",
-        "[#9ca3af]✳[/]",
-        "[bold #facc15]✳[/]",
-        "[#9ca3af]✳[/]",
+        ("#6b7280", False),
+        ("#9ca3af", False),
+        ("#facc15", True),
+        ("#9ca3af", False),
     ]
 
     DEFAULT_CSS = """
@@ -235,8 +235,9 @@ class ActivityBubble(Static):
             pass
 
     def _update_render(self) -> None:
-        frame = self._FRAMES[self._frame_idx % len(self._FRAMES)]
-        self.update(f"{frame} {self._text}")
+        color, bold = self._FRAMES[self._frame_idx % len(self._FRAMES)]
+        style = f"bold {color}" if bold else color
+        self.update(f"[{style}]✳ {self._text}[/]")
 
 
 class InputBar(Vertical):

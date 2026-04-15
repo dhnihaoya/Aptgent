@@ -1,29 +1,28 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-import tomli
 from textual.app import App
 from textual.binding import Binding
 
+from aptgent.bootstrap import (
+    build_runtime,
+    create_engine,
+    create_molecule_resolver,
+    create_persistence,
+    create_prediction_adapter,
+    create_rna_fold_adapter,
+    create_spatial_rank_adapter,
+    create_vina_adapter,
+    load_config,
+)
 from aptgent.domain.enums import Step
 from aptgent.tui.commands import get_theme_preset
 from aptgent.tui.screens.chat import ChatScreen
 from aptgent.tui.screens.quit_confirm import QuitConfirmScreen
 from aptgent.tui.screens.welcome import WelcomeScreen
 from aptgent.tui.widgets import StatusPanel, StepProgressBar
-from aptgent.workflow.engine import WorkflowEngine
-from aptgent.workflow.persistence import Persistence
 from aptgent.workflow.state import RunState
-
-_CONFIG_DIR = Path(__file__).parent.parent / "config"
-
-with open(_CONFIG_DIR / "workflow.toml", "rb") as f:
-    CONFIG: dict[str, Any] = tomli.load(f)
-
-with open(_CONFIG_DIR / "tools.toml", "rb") as f:
-    TOOLS_CONFIG: dict[str, Any] = tomli.load(f)
 
 
 class AptgentApp(App):
@@ -48,8 +47,8 @@ class AptgentApp(App):
         *,
         config: dict[str, Any] | None = None,
         tools_config: dict[str, Any] | None = None,
-        persistence: Persistence | None = None,
-        engine: WorkflowEngine | None = None,
+        persistence: Any | None = None,
+        engine: Any | None = None,
         rna_fold_adapter: Any | None = None,
         vina_adapter: Any | None = None,
         prediction_adapter: Any | None = None,
@@ -58,18 +57,45 @@ class AptgentApp(App):
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-        self.config = config or CONFIG
-        self.tools_config = tools_config or TOOLS_CONFIG
+        config_bundle = None
+        if config is None or tools_config is None:
+            config_bundle = load_config()
 
-        runs_dir = self.config.get("paths", {}).get("runs_dir", "./runs")
-        self.persistence = persistence or Persistence(runs_dir)
-        self.engine = engine or WorkflowEngine(self.persistence)
+        self.config = config if config is not None else config_bundle.workflow
+        self.tools_config = (
+            tools_config if tools_config is not None else config_bundle.tools
+        )
+        self.llm_config = config_bundle.llm if config_bundle is not None else {}
+        self.persistence = (
+            persistence if persistence is not None else create_persistence(self.config)
+        )
+        self.engine = engine if engine is not None else create_engine(self.persistence)
 
-        self.rna_fold_adapter = rna_fold_adapter or self._create_rna_fold_adapter()
-        self.vina_adapter = vina_adapter or self._create_vina_adapter()
-        self.prediction_adapter = prediction_adapter or self._create_prediction_adapter()
-        self.molecule_resolver = molecule_resolver or self._create_molecule_resolver()
-        self.spatial_rank_adapter = spatial_rank_adapter or self._create_spatial_rank_adapter()
+        self.rna_fold_adapter = (
+            rna_fold_adapter
+            if rna_fold_adapter is not None
+            else create_rna_fold_adapter(self.tools_config)
+        )
+        self.vina_adapter = (
+            vina_adapter
+            if vina_adapter is not None
+            else create_vina_adapter(self.tools_config)
+        )
+        self.prediction_adapter = (
+            prediction_adapter
+            if prediction_adapter is not None
+            else create_prediction_adapter(self.tools_config)
+        )
+        self.molecule_resolver = (
+            molecule_resolver
+            if molecule_resolver is not None
+            else create_molecule_resolver()
+        )
+        self.spatial_rank_adapter = (
+            spatial_rank_adapter
+            if spatial_rank_adapter is not None
+            else create_spatial_rank_adapter()
+        )
 
         self._state: RunState | None = None
         self._pending_start_message: str | None = None
@@ -134,51 +160,20 @@ class AptgentApp(App):
         self.save_state()
         self.exit()
 
-    def _create_rna_fold_adapter(self) -> Any:
-        from aptgent.adapters.rna_fold import RNAfoldAdapter
-
-        rna_cfg = self.tools_config.get("rna_fold", {})
-        return RNAfoldAdapter(
-            executable=rna_cfg.get("command", "RNAfold"),
-            extra_args=rna_cfg.get("args"),
-            lazy=True,
-        )
-
-    def _create_vina_adapter(self) -> Any:
-        from aptgent.adapters.docking import VinaAdapter
-
-        dock_cfg = self.tools_config.get("docking", {})
-        return VinaAdapter(
-            executable=dock_cfg.get("command", "vina"),
-            exhaustiveness=dock_cfg.get("exhaustiveness", 8),
-            num_modes=dock_cfg.get("num_modes", 9),
-            energy_range=dock_cfg.get("energy_range", 3.0),
-            lazy=True,
-        )
-
-    def _create_prediction_adapter(self) -> Any:
-        from aptgent.adapters.predictor import EnsembleAdapter
-
-        pred_cfg = self.tools_config.get("predictor", {})
-        return EnsembleAdapter(
-            model_dir=pred_cfg.get("model_dir"),
-            conda_env=pred_cfg.get("conda_env"),
-            conda_python=pred_cfg.get("conda_python"),
-        )
-
-    def _create_molecule_resolver(self) -> Any:
-        from aptgent.adapters.molecule import SimpleMoleculeResolver
-
-        return SimpleMoleculeResolver()
-
-    def _create_spatial_rank_adapter(self) -> Any:
-        from aptgent.adapters.spatial_rank import SpatialRankAdapter
-
-        return SpatialRankAdapter()
-
 
 def run() -> None:
-    app = AptgentApp()
+    runtime = build_runtime()
+    app = AptgentApp(
+        config=runtime.config,
+        tools_config=runtime.tools_config,
+        persistence=runtime.persistence,
+        engine=runtime.engine,
+        rna_fold_adapter=runtime.rna_fold_adapter,
+        vina_adapter=runtime.vina_adapter,
+        prediction_adapter=runtime.prediction_adapter,
+        molecule_resolver=runtime.molecule_resolver,
+        spatial_rank_adapter=runtime.spatial_rank_adapter,
+    )
     app.run()
 
 

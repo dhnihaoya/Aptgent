@@ -34,7 +34,7 @@ class EnsembleAdapter:
         self.conda_env = conda_env
         self.conda_python = conda_python
 
-        self._cli_path = os.path.abspath(
+        self._project_root = os.path.abspath(
             os.path.join(
                 os.path.dirname(__file__),
                 "..", "..", "..", "aptamer_predictor",
@@ -61,13 +61,9 @@ class EnsembleAdapter:
     def _run(self, extra_args: list[str], timeout: int = 600) -> subprocess.CompletedProcess[str]:
         """Invoke the predictor CLI with the given extra arguments."""
         cmd = self._build_cmd() + extra_args
-        env = os.environ.copy()
-        env["PYTHONPATH"] = self._cli_path + (
-            os.pathsep + env.get("PYTHONPATH", "")
-        )
         return subprocess.run(
             cmd, capture_output=True, text=True, check=False,
-            timeout=timeout, env=env,
+            timeout=timeout, cwd=self._project_root, env=os.environ.copy(),
         )
 
     # ------------------------------------------------------------------
