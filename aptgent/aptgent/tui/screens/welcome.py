@@ -4,12 +4,11 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Center, Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Input, OptionList, Static
-from textual.widgets.option_list import Option
+from textual.widgets import Button, Footer, Input, Static
 
 
 class WelcomeScreen(Screen):
-    """Entry screen: create a new run or resume an existing one."""
+    """Entry screen: create a new run."""
 
     BINDINGS = [
         Binding("n", "new_run", "New Run"),
@@ -67,11 +66,6 @@ class WelcomeScreen(Screen):
         color: $text-muted;
         margin-bottom: 1;
     }
-    #run-list {
-        height: 10;
-        border: tall $surface-lighten-1;
-        margin-top: 1;
-    }
     #new-run-input {
         margin: 1 0;
     }
@@ -93,61 +87,35 @@ class WelcomeScreen(Screen):
                     yield Static("APTAMER WORKFLOW", id="welcome-kicker")
                     yield Static("Aptgent", id="welcome-title")
                     yield Static(
-                        "Keyboard-first aptamer design workflow. Start a fresh run or resume a saved state.",
+                        "Keyboard-first aptamer design workflow. Start a fresh run here, then use /resume in chat to reopen a saved state.",
                         id="welcome-subtitle",
                     )
-                with Horizontal(id="welcome-body"):
-                    with Vertical(classes="welcome-card"):
-                        yield Static("Resume Run", classes="welcome-card-title")
+                with Vertical(id="welcome-body", classes="welcome-card -primary"):
+                    yield Static("New Run", classes="welcome-card-title")
+                    yield Static(
+                        "Create a new workflow ID now, or leave it blank and let Aptgent generate one.",
+                        classes="welcome-card-copy",
+                    )
+                    if runs:
+                        count = len(runs)
+                        noun = "run" if count == 1 else "runs"
                         yield Static(
-                            "Use Up/Down and Enter to reopen a saved workflow state.",
+                            f"[dim]{count} saved {noun} available. Open chat and type /resume to switch.[/]",
                             classes="welcome-card-copy",
                         )
-                        if runs:
-                            options = [
-                                Option(
-                                    f"[bold]{run_id}[/bold]\n[dim]Resume saved workflow[/dim]",
-                                    id=run_id,
-                                )
-                                for run_id in runs
-                            ]
-                            yield OptionList(*options, id="run-list")
-                        else:
-                            yield Static("[dim]No saved runs yet.[/]")
-                    with Vertical(classes="welcome-card -primary"):
-                        yield Static("New Run", classes="welcome-card-title")
-                        yield Static(
-                            "Create a new workflow ID now, or leave it blank and let Aptgent generate one.",
-                            classes="welcome-card-copy",
-                        )
-                        yield Input(placeholder="Run name (optional)", id="new-run-input")
-                        with Horizontal(id="new-run-actions"):
-                            yield Button("Create New Run", id="btn-new-run", variant="primary")
+                    yield Input(placeholder="Run name (optional)", id="new-run-input")
+                    with Horizontal(id="new-run-actions"):
+                        yield Button("Create New Run", id="btn-new-run", variant="primary")
                 yield Footer()
 
     def on_mount(self) -> None:
         self.call_after_refresh(self._focus_default)
 
     def _focus_default(self) -> None:
-        if self.app.persistence.list_runs():
-            try:
-                self.query_one("#run-list", OptionList).focus()
-                return
-            except Exception:
-                pass
         try:
             self.query_one("#new-run-input", Input).focus()
         except Exception:
             pass
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        if event.option_list.id != "run-list":
-            return
-        run_id = event.option.id
-        if not run_id:
-            return
-        self.app.set_run_id(run_id)
-        self.app.push_screen("chat")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-new-run":

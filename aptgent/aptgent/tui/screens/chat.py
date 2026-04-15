@@ -7,6 +7,7 @@ from textual.screen import Screen
 from textual.widget import Widget
 
 from aptgent.domain.enums import Step
+from aptgent.tui.screens.resume import ResumePickerScreen
 from aptgent.tui.widgets.chat_widgets import ActivityBubble, InputBar, StepDivider, StreamingBubble, SystemBubble, UserBubble
 from aptgent.tui.widgets.step_handlers import StepHandler, create_handler
 from aptgent.tui.widgets.structured_input import StructuredActionRequested, StructuredInputSubmitted
@@ -152,6 +153,18 @@ class ChatScreen(Screen):
         self.clear_activity()
         self._start_step(step)
 
+    def resume_run(self, run_id: str) -> None:
+        """Load a saved run into the current chat screen."""
+        self.app.save_state()
+        self.clear_structured_widget()
+        self.clear_activity()
+        self._handler = None
+        self.app.set_run_id(run_id)
+        self.query_one("#chat-log", VerticalScroll).remove_children()
+        self.set_input_enabled(True)
+        self._start_step(self.app.current_state.current_step)
+        self._focus_input()
+
     # -- Internal --
 
     def _start_step(self, step: Step) -> None:
@@ -186,6 +199,17 @@ class ChatScreen(Screen):
     def action_focus_input(self) -> None:
         self._focus_input()
 
+    def _open_resume_picker(self) -> None:
+        if not self.app.persistence.list_runs():
+            self.add_system_message("No saved runs available yet.")
+            return
+        self.app.push_screen(ResumePickerScreen(), self._handle_resume_selection)
+
+    def _handle_resume_selection(self, run_id: str | None) -> None:
+        if not run_id:
+            return
+        self.resume_run(run_id)
+
     # -- Event handlers --
 
     def on_input_bar_submitted(self, event: InputBar.Submitted) -> None:
@@ -195,6 +219,17 @@ class ChatScreen(Screen):
             return
         text = event.value.strip()
         if not text:
+            return
+        command, _, arg = text.partition(" ")
+        if command == "/resume":
+            if arg.strip():
+                state = self.app.engine.load_run(arg.strip())
+                if state is None:
+                    self.add_system_message(f"Saved run not found: {arg.strip()}")
+                    return
+                self.resume_run(state.run_id)
+                return
+            self._open_resume_picker()
             return
         self.add_user_message(text)
         self.app.current_state.input_payload["user_text"] = text
