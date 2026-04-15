@@ -76,6 +76,7 @@ class VinaAdapter:
         output_pdbqt: str | Path | None = None,
         cpu: int | None = None,
         seed: int | None = None,
+        timeout: int = 3600,
     ) -> DockingResult:
         """Run Vina for a single receptor-ligand pair.
 
@@ -87,10 +88,16 @@ class VinaAdapter:
             output_pdbqt: Optional path for output poses.
             cpu: Number of CPUs to use (None = auto).
             seed: Random seed for reproducibility.
+            timeout: Maximum seconds to wait for Vina (default 3600).
 
         Returns:
             DockingResult with the best mode affinity as docking_score.
         """
+        if not isinstance(center, (list, tuple)) or len(center) < 3:
+            raise ValueError(f"center must have 3 elements [x, y, z], got {center!r}")
+        if not isinstance(size, (list, tuple)) or len(size) < 3:
+            raise ValueError(f"size must have 3 elements [x, y, z], got {size!r}")
+
         cmd = [
             self.executable,
             "--receptor", str(receptor_pdbqt),
@@ -112,7 +119,14 @@ class VinaAdapter:
         if seed is not None:
             cmd.extend(["--seed", str(seed)])
 
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, check=False, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"Vina timed out after {timeout}s"
+            ) from exc
         if proc.returncode != 0:
             raise RuntimeError(f"Vina failed (exit {proc.returncode}): {proc.stderr}")
 
@@ -150,38 +164,44 @@ class VinaAdapter:
         if not target.smiles:
             raise ValueError("Target molecule must have a resolved SMILES string.")
 
+        created_tmp = False
         if work_dir is None:
-            work_dir = tempfile.mkdtemp(prefix="vina_")
-        work_dir = Path(work_dir)
+            work_dir = Path(tempfile.mkdtemp(prefix="vina_"))
+            created_tmp = True
+        else:
+            work_dir = Path(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
 
-        # Prepare ligand PDBQT from target SMILES (shared across all candidates)
-        ligand_path = self.prepare_ligand(target.smiles, work_dir / "ligands")
+        try:
+            ligand_path = self.prepare_ligand(target.smiles, work_dir / "ligands")
 
-        results: list[DockingResult] = []
-        for i, cand in enumerate(candidates):
-            cand_id = cand.candidate_id or f"cand_{i}"
-            out_path = work_dir / f"output_{cand_id}.pdbqt"
-            try:
-                result = self.run_single(
-                    receptor_pdbqt=receptor_pdbqt,
-                    ligand_pdbqt=ligand_path,
-                    center=center,
-                    size=size,
-                    output_pdbqt=out_path,
-                    cpu=cpu,
-                )
-                result.candidate_id = cand_id
-                results.append(result)
-            except Exception as e:
-                results.append(
-                    DockingResult(
-                        candidate_id=cand_id,
-                        docking_score=None,
-                        status=f"error: {e}",
-                        raw_outputs={"error": str(e)},
+            results: list[DockingResult] = []
+            for i, cand in enumerate(candidates):
+                cand_id = cand.candidate_id or f"cand_{i}"
+                out_path = work_dir / f"output_{cand_id}.pdbqt"
+                try:
+                    result = self.run_single(
+                        receptor_pdbqt=receptor_pdbqt,
+                        ligand_pdbqt=ligand_path,
+                        center=center,
+                        size=size,
+                        output_pdbqt=out_path,
+                        cpu=cpu,
                     )
-                )
+                    result.candidate_id = cand_id
+                    results.append(result)
+                except Exception as e:
+                    results.append(
+                        DockingResult(
+                            candidate_id=cand_id,
+                            docking_score=None,
+                            status=f"error: {e}",
+                            raw_outputs={"error": str(e)},
+                        )
+                    )
+        finally:
+            if created_tmp:
+                shutil.rmtree(work_dir, ignore_errors=True)
 
         return results
 

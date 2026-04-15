@@ -32,12 +32,19 @@ class CheckboxPanel(Vertical):
     DEFAULT_CSS = """
     CheckboxPanel {
         background: $surface-darken-2;
-        border: solid $primary;
+        border: tall $primary;
         padding: 1 2;
         margin: 1 0;
         width: 95%;
         height: auto;
-        max-height: 15;
+        max-height: 20;
+        overflow-y: auto;
+    }
+    CheckboxPanel > .checkbox-grid {
+        height: auto;
+    }
+    CheckboxPanel > Button {
+        margin-top: 1;
     }
     """
 
@@ -48,11 +55,12 @@ class CheckboxPanel(Vertical):
         self.checkboxes: list[Checkbox] = []
 
     def compose(self) -> ComposeResult:
-        yield Static("Select mutation sites:", classes="title")
+        yield Static("[bold]Select mutation sites:[/]")
         with Vertical(classes="checkbox-grid"):
             for pos in range(len(self.sequence)):
+                label = f"[bold]{pos}[/] ({self.sequence[pos]})"
                 cb = Checkbox(
-                    f"Position {pos} ({self.sequence[pos]})",
+                    label,
                     value=(pos in self.proposed_sites),
                 )
                 self.checkboxes.append(cb)
@@ -78,11 +86,20 @@ class SpecificityPanel(Vertical):
     DEFAULT_CSS = """
     SpecificityPanel {
         background: $surface-darken-2;
-        border: solid $primary;
+        border: tall $primary;
         padding: 1 2;
         margin: 1 0;
         width: 95%;
         height: auto;
+    }
+    SpecificityPanel > Input {
+        margin: 1 0;
+    }
+    SpecificityPanel Horizontal {
+        height: auto;
+    }
+    SpecificityPanel Horizontal > Button {
+        margin-right: 1;
     }
     """
 
@@ -91,13 +108,12 @@ class SpecificityPanel(Vertical):
         self.target_name = target_name
 
     def compose(self) -> ComposeResult:
-        yield Static("Specificity Filter", classes="title")
+        yield Static("[bold]Specificity Filter[/]")
         if self.target_name:
-            yield Static(f"Target molecule: {self.target_name}", classes="info-text")
+            yield Static(f"Target: [bold]{self.target_name}[/]")
         yield Static(
-            "Enter analog molecules (comma-separated names or SMILES), "
-            "or let the LLM suggest them.",
-            classes="info-text",
+            "[dim]Enter analog molecules (comma-separated names or SMILES), "
+            "or let the LLM suggest them.[/]",
         )
         yield Input(
             id="analog-input",
@@ -137,7 +153,7 @@ class DockingParamPanel(Vertical):
     DEFAULT_CSS = """
     DockingParamPanel {
         background: $surface-darken-2;
-        border: solid $primary;
+        border: tall $primary;
         padding: 1 2;
         margin: 1 0;
         width: 95%;
@@ -146,25 +162,35 @@ class DockingParamPanel(Vertical):
     DockingParamPanel > Input {
         margin-bottom: 1;
     }
+    DockingParamPanel Horizontal {
+        height: auto;
+    }
+    DockingParamPanel Horizontal > Input {
+        width: 1fr;
+        margin-right: 1;
+    }
+    DockingParamPanel > Button {
+        margin-top: 1;
+    }
     """
 
     def compose(self) -> ComposeResult:
-        yield Static("Docking Configuration", classes="title")
-        yield Static(f"Machine: {self._machine_info()}", classes="info-text")
-        yield Static("Time budget (hours):", classes="info-text")
+        yield Static("[bold]Docking Configuration[/]")
+        yield Static(f"[dim]{self._machine_info()}[/]")
+        yield Static("Time budget (hours):")
         yield Input(id="dock-time-budget", placeholder="e.g. 4")
         yield Button("Get LLM Recommendation", id="btn-dock-recommend", variant="primary")
-        yield Static("", id="dock-recommendation-text", classes="info-text")
-        yield Static("Top-k candidates to dock:", classes="info-text")
+        yield Static("", id="dock-recommendation-text")
+        yield Static("Top-k candidates to dock:")
         yield Input(id="dock-top-k", placeholder="e.g. 10")
-        yield Static("Receptor PDBQT file path:", classes="info-text")
+        yield Static("Receptor PDBQT file path:")
         yield Input(id="dock-receptor", placeholder="/path/to/receptor.pdbqt")
-        yield Static("Grid box center (x, y, z):", classes="info-text")
+        yield Static("Grid box center (x, y, z):")
         with Horizontal():
             yield Input(id="dock-cx", placeholder="0.0")
             yield Input(id="dock-cy", placeholder="0.0")
             yield Input(id="dock-cz", placeholder="0.0")
-        yield Static("Grid box size (x, y, z):", classes="info-text")
+        yield Static("Grid box size (x, y, z):")
         with Horizontal():
             yield Input(id="dock-sx", placeholder="20.0")
             yield Input(id="dock-sy", placeholder="20.0")
@@ -221,5 +247,5 @@ class DockingParamPanel(Vertical):
     def set_recommendation(self, top_k: int, reason: str) -> None:
         self.query_one("#dock-top-k", Input).value = str(top_k)
         self.query_one("#dock-recommendation-text", Static).update(
-            f"LLM recommends top {top_k}. {reason}"
+            f"[green]LLM recommends top {top_k}.[/] {reason}"
         )

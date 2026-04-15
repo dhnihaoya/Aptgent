@@ -14,14 +14,32 @@ from aptgent.workflow.persistence import Persistence
 
 
 class FakeEnsembleAdapter(EnsembleAdapter):
-    def _predict_single(self, seq: str, smiles: str):
-        return {
-            "individual": {
+    def _predict_batch_via_csv(self, candidates, target):
+        from aptgent.domain.models import PredictionResult
+
+        smiles = target.smiles or ""
+        results = []
+        for idx, cand in enumerate(candidates):
+            cand_id = cand.candidate_id or f"cand_{idx}"
+            individual = {
                 "model_a": {"label": 1, "probability": 0.8},
                 "model_b": {"label": 1, "probability": 0.6},
                 "model_c": {"label": 1, "probability": 0.7},
             }
-        }
+            probs = [v["probability"] for v in individual.values()]
+            avg_prob = sum(probs) / len(probs)
+            results.append(
+                PredictionResult(
+                    candidate_id=cand_id,
+                    model_name="ensemble",
+                    target=smiles,
+                    score=avg_prob,
+                    label=1,
+                    probability=avg_prob,
+                    raw_outputs={"individual": individual},
+                )
+            )
+        return results
 
 
 def test_create_and_load_run():
@@ -68,6 +86,24 @@ def test_molecule_resolver_smiles_without_rdkit(monkeypatch):
 
     assert result.resolution_status == "resolved"
     assert result.smiles == "C1=CC=CC=C1"
+
+
+def test_molecule_resolver_rejects_names_without_rdkit(monkeypatch):
+    monkeypatch.setattr(molecule_module, "_check_rdkit", lambda: False)
+    resolver = molecule_module.SimpleMoleculeResolver()
+
+    # Direct heuristic validation: long alphabetic names and CJK should
+    # not be treated as SMILES when RDKit is unavailable.
+    assert resolver._validate_smiles("theophylline") is False
+    assert resolver._validate_smiles("茶碱") is False
+
+    # If PubChem lookup also fails, the name should resolve to failed.
+    monkeypatch.setattr(
+        resolver, "_pubchem_name_to_smiles", lambda name: None
+    )
+    result = resolver.resolve("theophylline")
+    assert result.resolution_status == "failed"
+    assert result.smiles is None
 
 
 def test_candidate_enumeration_logic():

@@ -315,12 +315,13 @@ def _write_batch_results(results: list[dict], output_path: str):
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     with open(output_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["sequence", "smiles", "ensemble_label"])
+        writer.writerow(["sequence", "smiles", "ensemble_label", "individual"])
         for r in results:
             writer.writerow([
                 r.get("sequence", ""),
                 r.get("smiles", ""),
                 r.get("ensemble_label", ""),
+                json.dumps(r.get("individual", {})),
             ])
 
 

@@ -1,6 +1,8 @@
 [enumeration]
 max_candidates = 5000
 default_edit_ratio_threshold = 0.3
+batch_size = 1000
+top_k_keep = 500
 
 [docking]
 enabled = false

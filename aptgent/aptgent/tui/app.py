@@ -5,14 +5,16 @@ from typing import Any
 
 import tomli
 from textual.app import App
+from textual.binding import Binding
 
 from aptgent.domain.enums import Step
-from aptgent.workflow.state import RunState
+from aptgent.tui.screens.chat import ChatScreen
+from aptgent.tui.screens.welcome import WelcomeScreen
 from aptgent.tui.widgets import StatusPanel, StepProgressBar
 from aptgent.workflow.engine import WorkflowEngine
 from aptgent.workflow.persistence import Persistence
+from aptgent.workflow.state import RunState
 
-# Load configs
 _CONFIG_DIR = Path(__file__).parent.parent / "config"
 
 with open(_CONFIG_DIR / "workflow.toml", "rb") as f:
@@ -25,17 +27,18 @@ with open(_CONFIG_DIR / "tools.toml", "rb") as f:
 class AptgentApp(App):
     """Main Textual application for aptamer design workflow."""
 
+    TITLE = "Aptgent"
+    SUB_TITLE = "Aptamer Design Assistant"
     CSS_PATH = "styles/main.tcss"
 
-    # Supported UI path: welcome -> chat.
     SCREENS = {
-        "welcome": __import__(
-            "aptgent.tui.screens.welcome", fromlist=["WelcomeScreen"]
-        ).WelcomeScreen,
-        "chat": __import__(
-            "aptgent.tui.screens.chat", fromlist=["ChatScreen"]
-        ).ChatScreen,
+        "welcome": WelcomeScreen,
+        "chat": ChatScreen,
     }
+
+    BINDINGS = [
+        Binding("ctrl+q", "quit", "Quit", priority=True),
+    ]
 
     def __init__(
         self,
@@ -59,7 +62,6 @@ class AptgentApp(App):
         self.persistence = persistence or Persistence(runs_dir)
         self.engine = engine or WorkflowEngine(self.persistence)
 
-        # Configure adapters from tools.toml
         self.rna_fold_adapter = rna_fold_adapter or self._create_rna_fold_adapter()
         self.vina_adapter = vina_adapter or self._create_vina_adapter()
         self.prediction_adapter = prediction_adapter or self._create_prediction_adapter()

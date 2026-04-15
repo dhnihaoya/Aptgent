@@ -7,8 +7,6 @@ from typing import Any
 
 import httpx
 
-from aptgent.domain.models import TargetMolecule
-
 
 class LLMClient:
     def __init__(self, config_path: str | Path | None = None) -> None:
@@ -93,32 +91,64 @@ class LLMClient:
             payload["response_format"] = response_format
         return payload
 
+    def _stream_timeout(self) -> httpx.Timeout:
+        return httpx.Timeout(
+            connect=15.0,
+            read=max(self.timeout, 120.0),
+            write=30.0,
+            pool=30.0,
+        )
+
+    def _iter_sse_content(self, resp: httpx.Response):
+        """Yield content strings from an SSE stream response."""
+        for line in resp.iter_lines():
+            if not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data.strip() == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+                delta = chunk["choices"][0].get("delta", {})
+                content = self._extract_content(delta.get("content", ""))
+                if content:
+                    yield content
+            except Exception:
+                continue
+
     def chat_json(
         self,
         system_prompt: str,
         user_prompt: str,
     ) -> dict[str, Any]:
+        timeout = self._stream_timeout()
         for attempt in range(self.max_retries + 1):
             try:
-                resp = httpx.post(
+                collected: list[str] = []
+                with httpx.stream(
+                    "POST",
                     f"{self.base_url}/chat/completions",
                     headers=self._headers(),
                     json=self._payload(
                         system_prompt,
                         user_prompt,
                         temperature=self.json_temperature,
+                        stream=True,
                         response_format={"type": "json_object"},
                     ),
-                    timeout=self.timeout,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                content = self._extract_content(data["choices"][0]["message"]["content"])
+                    timeout=timeout,
+                ) as resp:
+                    resp.raise_for_status()
+                    for piece in self._iter_sse_content(resp):
+                        collected.append(piece)
+                content = "".join(collected)
+                if not content:
+                    raise ValueError("LLM returned empty content")
                 return json.loads(content)
             except Exception as e:
                 if attempt == self.max_retries:
                     raise RuntimeError(f"LLM request failed after {self.max_retries} retries: {e}")
-        return {}
+        raise RuntimeError(f"LLM request failed after {self.max_retries} retries")
 
     def chat_stream(
         self,
@@ -126,6 +156,7 @@ class LLMClient:
         user_prompt: str,
     ):
         """Stream LLM response as text chunks (generator)."""
+        timeout = self._stream_timeout()
         for attempt in range(self.max_retries + 1):
             try:
                 with httpx.stream(
@@ -139,23 +170,10 @@ class LLMClient:
                         stream=True,
                         response_format={"type": "json_object"},
                     ),
-                    timeout=self.timeout,
+                    timeout=timeout,
                 ) as resp:
                     resp.raise_for_status()
-                    for line in resp.iter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        data = line[6:]
-                        if data.strip() == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data)
-                            delta = chunk["choices"][0].get("delta", {})
-                            content = delta.get("content", "")
-                            if content:
-                                yield content
-                        except Exception:
-                            continue
+                    yield from self._iter_sse_content(resp)
                 return
             except Exception as e:
                 if attempt == self.max_retries:
@@ -167,6 +185,7 @@ class LLMClient:
         user_prompt: str,
     ):
         """Stream plain-language text for direct user display."""
+        timeout = self._stream_timeout()
         for attempt in range(self.max_retries + 1):
             try:
                 with httpx.stream(
@@ -179,23 +198,10 @@ class LLMClient:
                         temperature=self.temperature,
                         stream=True,
                     ),
-                    timeout=self.timeout,
+                    timeout=timeout,
                 ) as resp:
                     resp.raise_for_status()
-                    for line in resp.iter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        data = line[6:]
-                        if data.strip() == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data)
-                            delta = chunk["choices"][0].get("delta", {})
-                            content = self._extract_content(delta.get("content", ""))
-                            if content:
-                                yield content
-                        except Exception:
-                            continue
+                    yield from self._iter_sse_content(resp)
                 return
             except Exception as e:
                 if attempt == self.max_retries:

@@ -23,15 +23,21 @@ class RNAfoldAdapter:
                 "Please install ViennaRNA (https://www.tbi.univie.ac.at/RNA/)."
             )
 
-    def fold(self, sequence: str) -> SecondaryStructure:
+    def fold(self, sequence: str, timeout: int = 120) -> SecondaryStructure:
         cmd = [self.executable] + self.extra_args
-        proc = subprocess.run(
-            cmd,
-            input=sequence + "\n",
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=sequence + "\n",
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"RNAfold timed out after {timeout}s for sequence of length {len(sequence)}"
+            ) from exc
         if proc.returncode != 0:
             raise RuntimeError(f"RNAfold failed: {proc.stderr}")
 

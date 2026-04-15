@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
-import os
+import logging
+import re
 from pathlib import Path
 from typing import Any
 
 from aptgent.workflow.state import RunState
+
+_log = logging.getLogger(__name__)
+
+_VALID_RUN_ID = re.compile(r"^[a-zA-Z0-9_\-]+$")
 
 
 class Persistence:
@@ -13,7 +18,16 @@ class Persistence:
         self.runs_dir = Path(runs_dir)
         self.runs_dir.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _validate_run_id(run_id: str) -> None:
+        if not run_id or not _VALID_RUN_ID.match(run_id):
+            raise ValueError(
+                f"Invalid run_id '{run_id}': must be non-empty and contain only "
+                "alphanumeric characters, hyphens, or underscores."
+            )
+
     def _run_dir(self, run_id: str) -> Path:
+        self._validate_run_id(run_id)
         return self.runs_dir / run_id
 
     def init_run(self, run_id: str) -> RunState:
@@ -33,12 +47,20 @@ class Persistence:
             f.write(state.model_dump_json(indent=2))
 
     def load(self, run_id: str) -> RunState | None:
-        path = self._run_dir(run_id) / "state.json"
+        try:
+            path = self._run_dir(run_id) / "state.json"
+        except ValueError:
+            _log.warning("Attempted to load run with invalid id: %s", run_id)
+            return None
         if not path.exists():
             return None
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return RunState.model_validate(data)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return RunState.model_validate(data)
+        except Exception:
+            _log.exception("Failed to load run state from %s", path)
+            return None
 
     def list_runs(self) -> list[str]:
         return sorted(

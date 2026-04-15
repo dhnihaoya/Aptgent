@@ -114,6 +114,80 @@ class EnsembleAdapter:
             target.smiles or ""
         ]
 
+    def _predict_batch_via_csv(
+        self,
+        candidates: list[CandidateSequence],
+        target: TargetMolecule,
+    ) -> list[PredictionResult]:
+        """Run a batch prediction via the CLI batch mode using a temporary CSV."""
+        import csv as csv_module
+
+        smiles = target.smiles or ""
+        if not smiles:
+            raise ValueError("Target molecule must have a resolved SMILES string.")
+
+        # Write temporary input CSV
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".csv", delete=False, prefix="pred_in_"
+        ) as tmp_in:
+            writer = csv_module.writer(tmp_in)
+            writer.writerow(["sequence", "smiles"])
+            for cand in candidates:
+                writer.writerow([cand.sequence, smiles])
+            in_path = tmp_in.name
+
+        out_path = in_path.replace("pred_in_", "pred_out_").replace(".csv", "_out.csv")
+
+        try:
+            proc = self._run(
+                [
+                    "--model-dir", self.model_dir,
+                    "predict",
+                    "--input", in_path,
+                    "--output", out_path,
+                ],
+                timeout=600,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"Predictor batch failed (exit {proc.returncode}): "
+                    f"{proc.stderr[:500]}"
+                )
+
+            results: list[PredictionResult] = []
+            with open(out_path, "r", newline="") as f:
+                reader = csv_module.DictReader(f)
+                for idx, row in enumerate(reader):
+                    cand = candidates[idx]
+                    cand_id = cand.candidate_id or f"cand_{idx}"
+                    individual_raw = row.get("individual", "{}")
+                    try:
+                        individual = json.loads(individual_raw)
+                    except Exception:
+                        individual = {}
+                    labels = [v["label"] for v in individual.values()]
+                    probs = [v["probability"] for v in individual.values()]
+                    avg_prob = sum(probs) / len(probs) if probs else 0.0
+                    ens_label = 1 if all(l == 1 for l in labels) else 0
+                    results.append(
+                        PredictionResult(
+                            candidate_id=cand_id,
+                            model_name="ensemble",
+                            target=smiles,
+                            score=avg_prob,
+                            label=ens_label,
+                            probability=avg_prob,
+                            raw_outputs={"individual": individual},
+                        )
+                    )
+            return results
+        finally:
+            for p in (in_path, out_path):
+                try:
+                    os.unlink(p)
+                except Exception:
+                    pass
+
     def predict_batch_for_targets(
         self,
         candidates: list[CandidateSequence],
@@ -134,31 +208,8 @@ class EnsembleAdapter:
         results_by_target: dict[str, list[PredictionResult]] = {}
 
         for target in targets:
-            smiles = target.smiles
-            ensemble_results: list[PredictionResult] = []
-
-            for idx, cand in enumerate(candidates):
-                cand_id = cand.candidate_id or f"cand_{idx}"
-                result_json = self._predict_single(cand.sequence, smiles)
-
-                individual = result_json.get("individual", {})
-                labels = [v["label"] for v in individual.values()]
-                probs = [v["probability"] for v in individual.values()]
-                avg_prob = sum(probs) / len(probs) if probs else 0.0
-                ens_label = 1 if all(l == 1 for l in labels) else 0
-
-                ensemble_results.append(
-                    PredictionResult(
-                        candidate_id=cand_id,
-                        model_name="ensemble",
-                        target=smiles,
-                        score=avg_prob,
-                        label=ens_label,
-                        probability=avg_prob,
-                        raw_outputs={"individual": individual},
-                    )
-                )
-
-            results_by_target[smiles] = ensemble_results
+            results_by_target[target.smiles] = self._predict_batch_via_csv(
+                candidates, target
+            )
 
         return results_by_target

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import heapq
 import itertools
+import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -22,6 +24,7 @@ from aptgent.llm.skills import (
     SiteProposalSkill,
 )
 from aptgent.workflow.engine import TRANSITIONS
+from aptgent.tui.widgets.chat_widgets import ProgressBubble
 from aptgent.tui.widgets.structured_input import (
     CheckboxPanel,
     DockingParamPanel,
@@ -154,6 +157,10 @@ def _run_llm_interaction(
     if worker.is_cancelled:
         return {}
 
+    screen.app.call_from_thread(
+        screen.add_system_message,
+        "Processing structured result...",
+    )
     result = structured_call()
     if not isinstance(result, dict):
         raise RuntimeError("LLM returned a non-object response.")
@@ -317,8 +324,49 @@ class IntakeHandler(StepHandler):
         )
 
     def handle_user_input(self, text: str) -> None:
+        state = self.screen.app.current_state
+        seq = state.input_payload.get("initial_sequence", "")
+        target = state.target_molecule
+        if seq and target and target.resolution_status != "resolved":
+            self.screen.set_input_enabled(False)
+            self.screen.run_worker(
+                lambda: self._resolve_molecule_direct(text.strip()),
+                exclusive=True,
+                thread=True,
+            )
+            return
         self.screen.set_input_enabled(False)
         self.screen.run_worker(self._extract, exclusive=True, thread=True)
+
+    def _resolve_molecule_direct(self, text: str) -> None:
+        """Try to resolve user input directly as SMILES or molecule name."""
+        state = self.screen.app.current_state
+        resolved = self.screen.app.molecule_resolver.resolve(text)
+        if resolved.resolution_status == "resolved":
+            state.target_molecule = resolved
+            self.screen.app.save_state()
+            confirmation = _format_intake_confirmation(
+                sequence=state.input_payload.get("initial_sequence", ""),
+                target_text=text,
+                resolved=resolved,
+                modification_region=state.input_payload.get("modification_region"),
+                analogs=state.input_payload.get("analogs", []),
+                time_budget_hours=getattr(state, "time_budget", None),
+            )
+            self.screen.app.call_from_thread(
+                self.screen.add_system_message, confirmation
+            )
+            ns = _next_step(Step.INTAKE)
+            if ns:
+                self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
+        else:
+            self.screen.app.call_from_thread(
+                self.screen.add_system_message,
+                f"Could not resolve '{text}' either. "
+                "Please provide a valid SMILES string.",
+                "warning-text",
+            )
+            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
 
     def _extract(self) -> None:
         state = self.screen.app.current_state
@@ -396,6 +444,19 @@ class IntakeHandler(StepHandler):
             state.target_molecule = resolved
         else:
             state.target_molecule = TargetMolecule(input_text=target_text)
+            self.screen.app.save_state()
+            self.screen.app.call_from_thread(
+                self.screen.add_system_message,
+                f"Could not resolve molecule '{target_text}'. "
+                "Please provide a valid SMILES string or molecule name directly.",
+                "warning-text",
+            )
+            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+            self.screen.app.call_from_thread(
+                self.screen.set_input_placeholder,
+                "Enter SMILES (e.g. Cn1c2c(c(=O)n(c1=O)C)[nH]cn2) or molecule name",
+            )
+            return
 
         mod = result.get("modification_region")
         if mod:
@@ -433,6 +494,7 @@ class StructureHandler(StepHandler):
         seq = state.input_payload.get("initial_sequence", "")
         if not seq:
             self.screen.add_system_message("Error: no sequence available.", "error-text")
+            self.screen.set_input_enabled(True)
             return
         self.screen.add_system_message(f"Running RNAfold on: {seq}")
         self.screen.set_input_enabled(False)
@@ -458,6 +520,7 @@ class StructureHandler(StepHandler):
             self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"RNAfold error: {e}", "error-text"
             )
+            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
 
 
 # ---------------------------------------------------------------------------
@@ -488,15 +551,16 @@ class SiteProposalHandler(StepHandler):
         seq = state.input_payload.get("initial_sequence", "")
         struct = state.secondary_structure
 
+        self.screen.app.call_from_thread(
+            self.screen.add_system_message,
+            "Analyzing secondary structure for mutation-tolerant sites...",
+        )
+
         try:
             skill = SiteProposalSkill()
-            result = _run_llm_interaction(
-                self.screen,
-                display_stream=lambda: skill.explain_propose_stream(seq, struct),
-                structured_call=lambda: _validate_site_proposal_result(
-                    skill.propose(seq, struct),
-                    len(seq),
-                ),
+            result = _validate_site_proposal_result(
+                skill.propose(seq, struct),
+                len(seq),
             )
         except Exception as e:
             self.screen.app.call_from_thread(
@@ -507,9 +571,14 @@ class SiteProposalHandler(StepHandler):
 
         sites = result.get("proposed_sites", [])
         reasoning = result.get("reasoning", "")
+        confidence = result.get("confidence", "")
         self._proposed_sites = sites
 
-        msg = f"Suggested sites: {sites}\nReasoning: {reasoning}"
+        if reasoning:
+            self.screen.app.call_from_thread(self.screen.add_system_message, reasoning)
+        msg = f"Suggested sites: {sites}"
+        if confidence:
+            msg += f"\nConfidence: {confidence}"
         self.screen.app.call_from_thread(self.screen.add_system_message, msg)
 
         # Mount checkbox panel
@@ -562,65 +631,225 @@ class SiteProposalHandler(StepHandler):
 # ---------------------------------------------------------------------------
 
 class EnumerationHandler(StepHandler):
+    """Full enumeration + batch prediction + batch JSONL save + in-memory top-K heap."""
+
+    _BASES = ["A", "T", "G", "C"]
+
     def enter(self) -> None:
         state = self.screen.app.current_state
         seq: str = state.input_payload.get("initial_sequence", "")
         sites = state.confirmed_mutation_sites
-        max_candidates = self.screen.app.config.get("enumeration", {}).get("max_candidates", 5000)
+        enum_cfg = self.screen.app.config.get("enumeration", {})
+        batch_size = enum_cfg.get("batch_size", 1000)
+        top_k_keep = enum_cfg.get("top_k_keep", 500)
 
         if not sites:
             self.screen.add_system_message(
                 "No mutation sites selected. Please go back.", "error-text"
             )
+            self.screen.set_input_enabled(True)
             return
 
-        total = 4 ** len(sites)
-        if total > max_candidates:
-            self.screen.add_system_message(
-                f"Too many candidates ({total} > {max_candidates}). "
-                "Reduce mutation sites or increase threshold.",
+        total_space = 4 ** len(sites)
+        total_batches = (total_space + batch_size - 1) // batch_size
+
+        self.screen.add_system_message(
+            f"Mutation space: 4^{len(sites)} = {total_space:,} candidates\n"
+            f"Batch size: {batch_size:,} | Batches: {total_batches:,} | "
+            f"Top-K kept: {top_k_keep:,}\n"
+            f"Each batch: enumerate → predict → save to JSONL"
+        )
+        self.screen.set_input_enabled(False)
+        self.screen.run_worker(
+            lambda: self._pipeline(
+                seq, sites, total_space, batch_size, top_k_keep
+            ),
+            exclusive=True,
+            thread=True,
+        )
+
+    def _pipeline(
+        self,
+        seq: str,
+        sites: list[int],
+        total_space: int,
+        batch_size: int,
+        top_k_keep: int,
+    ) -> None:
+        from textual.worker import get_current_worker
+
+        worker = get_current_worker()
+        state = self.screen.app.current_state
+        target = state.target_molecule
+        can_score = bool(target and target.smiles)
+
+        # Prepare JSONL artifact path
+        run_dir = self.screen.app.persistence._run_dir(state.run_id)
+        artifact_dir = run_dir / "artifacts"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        results_path = artifact_dir / "scored_candidates.jsonl"
+
+        progress = ProgressBubble(total_space, label="Enumerating & Scoring")
+        self.screen.app.call_from_thread(
+            self.screen.add_structured_widget, progress
+        )
+        self.screen.app.call_from_thread(
+            self.screen.add_system_message,
+            "Starting candidate enumeration and scoring...",
+        )
+
+        top_heap: list[tuple[float, int, CandidateSequence, Any]] = []
+        heap_counter = 0
+        total_processed = 0
+        total_binding = 0
+        batch_num = 0
+        total_batches = (total_space + batch_size - 1) // batch_size
+        batch_buf: list[CandidateSequence] = []
+
+        try:
+            with open(results_path, "w", encoding="utf-8") as f:
+                for combo in itertools.product(self._BASES, repeat=len(sites)):
+                    if worker.is_cancelled:
+                        return
+
+                    cand = self._build_candidate(
+                        seq, sites, combo, total_processed
+                    )
+                    batch_buf.append(cand)
+                    total_processed += 1
+
+                    if len(batch_buf) < batch_size and total_processed < total_space:
+                        continue
+
+                    # --- process one full batch ---
+                    batch_num += 1
+                    batch_preds: list[Any] = []
+
+                    if can_score:
+                        try:
+                            batch_preds = (
+                                self.screen.app.prediction_adapter.predict_batch(
+                                    batch_buf, target
+                                )
+                            )
+                        except Exception as exc:
+                            self.screen.app.call_from_thread(
+                                self.screen.add_system_message,
+                                f"Batch {batch_num} scoring error: {exc}",
+                                "warning-text",
+                            )
+
+                    for i, c in enumerate(batch_buf):
+                        entry: dict[str, Any] = {"candidate": c.model_dump()}
+                        if i < len(batch_preds):
+                            pred = batch_preds[i]
+                            entry["prediction"] = pred.model_dump()
+                            prob = pred.probability or 0.0
+                            if pred.label == 1:
+                                total_binding += 1
+                            heap_counter += 1
+                            if len(top_heap) < top_k_keep:
+                                heapq.heappush(
+                                    top_heap,
+                                    (prob, heap_counter, c, pred),
+                                )
+                            elif prob > top_heap[0][0]:
+                                heapq.heapreplace(
+                                    top_heap,
+                                    (prob, heap_counter, c, pred),
+                                )
+                        f.write(
+                            json.dumps(entry, ensure_ascii=False) + "\n"
+                        )
+
+                    f.flush()
+
+                    info_parts = [
+                        f"Batch {batch_num:,}/{total_batches:,}"
+                    ]
+                    if can_score:
+                        info_parts.append(f"Binding: {total_binding:,}")
+                        if top_heap:
+                            best_prob = max(h[0] for h in top_heap)
+                            info_parts.append(f"Best: {best_prob:.4f}")
+                    self.screen.app.call_from_thread(
+                        progress.set_progress,
+                        total_processed,
+                        " | ".join(info_parts),
+                    )
+                    batch_buf = []
+
+        except Exception as exc:
+            self.screen.app.call_from_thread(
+                self.screen.add_system_message,
+                f"Pipeline failed at candidate {total_processed:,}: {exc}",
                 "error-text",
             )
+            self.screen.app.call_from_thread(
+                self.screen.set_input_enabled, True
+            )
             return
 
-        self.screen.set_input_enabled(False)
+        # --- extract top-K into state ---
+        top_heap.sort(key=lambda x: x[0], reverse=True)
+        top_candidates = [item[2] for item in top_heap]
+        top_predictions = [item[3] for item in top_heap]
 
-        bases = ["A", "T", "G", "C"]
-        candidates: list[CandidateSequence] = []
-        for combo in itertools.product(bases, repeat=len(sites)):
-            muts: list[Mutation] = []
-            new_seq = list(seq)
-            for idx, base in zip(sites, combo):
-                muts.append(Mutation(position=idx, original=seq[idx], mutated=base))
-                new_seq[idx] = base
-            cand_seq = "".join(new_seq)
-            edit_ratio = len(muts) / len(seq)
-            candidates.append(
-                CandidateSequence(
-                    sequence=cand_seq,
-                    mutations=muts,
-                    edit_ratio=edit_ratio,
-                    candidate_id=f"cand_{len(candidates)}",
-                )
-            )
-
-        state.candidates = candidates
+        state.candidates = top_candidates
+        if top_predictions:
+            state.predictions = top_predictions
         self.screen.app.save_state()
 
-        msg = f"Generated {len(candidates)} candidates from {len(sites)} mutation sites."
-        # Show first few
-        preview_lines = []
-        for c in candidates[:5]:
-            mut_str = ", ".join(f"{m.position}:{m.original}>{m.mutated}" for m in c.mutations)
-            preview_lines.append(f"  {c.candidate_id} | {c.sequence[:40]}... | {mut_str}")
-        if len(candidates) > 5:
-            preview_lines.append(f"  ... and {len(candidates) - 5} more")
-        msg += "\n" + "\n".join(preview_lines)
+        finish_msg = f"Scored {total_processed:,} candidates"
+        if can_score:
+            finish_msg += (
+                f", {total_binding:,} binding, "
+                f"top {len(top_candidates)} kept"
+            )
+        finish_msg += f"\nResults: {results_path}"
+        self.screen.app.call_from_thread(progress.finish, finish_msg)
 
-        self.screen.add_system_message(msg)
+        # Preview top candidates
+        preview = []
+        for c, p in zip(top_candidates[:10], top_predictions[:10]):
+            label_str = "Bind" if p.label == 1 else "Non-bind"
+            mut_str = ", ".join(
+                f"{m.position}:{m.original}>{m.mutated}" for m in c.mutations
+            )
+            preview.append(
+                f"  {c.candidate_id}: {label_str} P={p.probability:.4f} | {mut_str}"
+            )
+        if len(top_candidates) > 10:
+            preview.append(f"  … and {len(top_candidates) - 10} more")
+        if preview:
+            self.screen.app.call_from_thread(
+                self.screen.add_system_message, "\n".join(preview)
+            )
+
         ns = _next_step(Step.CANDIDATE_ENUMERATION)
         if ns:
-            self.screen.advance_to_step(ns)
+            self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
+
+    @staticmethod
+    def _build_candidate(
+        seq: str,
+        sites: list[int],
+        combo: tuple[str, ...],
+        index: int,
+    ) -> CandidateSequence:
+        muts: list[Mutation] = []
+        new_seq = list(seq)
+        for idx, base in zip(sites, combo):
+            muts.append(Mutation(position=idx, original=seq[idx], mutated=base))
+            new_seq[idx] = base
+        cand_seq = "".join(new_seq)
+        edit_ratio = len(muts) / len(seq)
+        return CandidateSequence(
+            sequence=cand_seq,
+            mutations=muts,
+            edit_ratio=edit_ratio,
+            candidate_id=f"cand_{index}",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -635,11 +864,20 @@ class ScoringHandler(StepHandler):
 
         if not candidates:
             self.screen.add_system_message("No candidates available.", "error-text")
+            self.screen.set_input_enabled(True)
             return
+
+        # If predictions were already computed during the enumeration pipeline,
+        # display a summary and advance immediately.
+        if state.predictions:
+            self._show_existing(state)
+            return
+
         if not target or not target.smiles:
             self.screen.add_system_message(
                 "Target molecule missing. Cannot score.", "error-text"
             )
+            self.screen.set_input_enabled(True)
             return
 
         self.screen.add_system_message(
@@ -647,6 +885,27 @@ class ScoringHandler(StepHandler):
         )
         self.screen.set_input_enabled(False)
         self.screen.run_worker(self._score, exclusive=True, thread=True)
+
+    def _show_existing(self, state: Any) -> None:
+        ens_preds = [p for p in state.predictions if p.model_name == "ensemble"]
+        sorted_preds = sorted(
+            ens_preds, key=lambda x: x.probability or 0.0, reverse=True
+        )
+        lines = [
+            f"Scoring already completed during enumeration "
+            f"({len(sorted_preds)} candidates):"
+        ]
+        for p in sorted_preds[:10]:
+            label_str = "Binding" if p.label == 1 else "Non-binding"
+            lines.append(
+                f"  {p.candidate_id}: {label_str} (P={p.probability:.4f})"
+            )
+        if len(sorted_preds) > 10:
+            lines.append(f"  ... and {len(sorted_preds) - 10} more")
+        self.screen.add_system_message("\n".join(lines))
+        ns = _next_step(Step.PRIMARY_SCORING)
+        if ns:
+            self.screen.advance_to_step(ns)
 
     def _score(self) -> None:
         state = self.screen.app.current_state
@@ -658,7 +917,6 @@ class ScoringHandler(StepHandler):
             state.predictions = results
             self.screen.app.save_state()
 
-            # Format results
             ens_preds = [p for p in results if p.model_name == "ensemble"]
             sorted_preds = sorted(ens_preds, key=lambda x: x.probability or 0.0, reverse=True)
 
@@ -677,6 +935,7 @@ class ScoringHandler(StepHandler):
             self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"Scoring failed: {e}", "error-text"
             )
+            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
 
 
 # ---------------------------------------------------------------------------
@@ -993,6 +1252,7 @@ class DockingRunHandler(StepHandler):
 
         if not target or not target.smiles:
             self.screen.add_system_message("Target molecule missing.", "error-text")
+            self.screen.set_input_enabled(True)
             return
 
         if not plan.receptor_path or not Path(plan.receptor_path).exists():
@@ -1000,10 +1260,12 @@ class DockingRunHandler(StepHandler):
                 f"Receptor file not found: {plan.receptor_path}",
                 "error-text",
             )
+            self.screen.set_input_enabled(True)
             return
 
         if not plan.grid_center or not plan.grid_size:
             self.screen.add_system_message("Grid box parameters not set.", "error-text")
+            self.screen.set_input_enabled(True)
             return
 
         # Select top-k candidates
@@ -1055,6 +1317,7 @@ class DockingRunHandler(StepHandler):
             self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"Docking failed: {e}", "error-text"
             )
+            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
 
 
 # ---------------------------------------------------------------------------
@@ -1068,6 +1331,7 @@ class SpatialRankHandler(StepHandler):
 
         if not target:
             self.screen.add_system_message("Target molecule missing.", "error-text")
+            self.screen.set_input_enabled(True)
             return
 
         # Use docked candidates if available
@@ -1079,6 +1343,7 @@ class SpatialRankHandler(StepHandler):
 
         if not candidates:
             self.screen.add_system_message("No candidates available.", "error-text")
+            self.screen.set_input_enabled(True)
             return
 
         self.screen.add_system_message(
@@ -1116,6 +1381,7 @@ class SpatialRankHandler(StepHandler):
             self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"Ranking failed: {e}", "error-text"
             )
+            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
 
 
 # ---------------------------------------------------------------------------

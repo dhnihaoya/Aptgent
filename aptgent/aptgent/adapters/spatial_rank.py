@@ -66,7 +66,10 @@ class SpatialRankAdapter:
     def _load_matrix(self) -> None:
         with open(self.matrix_path, newline="", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
-            assert reader.fieldnames is not None
+            if reader.fieldnames is None:
+                raise ValueError(
+                    f"Spatial interaction matrix CSV has no header row: {self.matrix_path}"
+                )
             self._groups = [k for k in reader.fieldnames if k != "base"]
             for row in reader:
                 base = row["base"].strip()
