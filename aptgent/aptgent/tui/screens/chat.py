@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
@@ -21,6 +23,9 @@ from aptgent.tui.widgets.chat_widgets import (
     UserBubble,
 )
 from aptgent.tui.widgets.structured_input import StructuredActionRequested, StructuredInputSubmitted
+from aptgent.workflow.engine import TRANSITIONS
+
+_log = logging.getLogger(__name__)
 
 
 class ChatScreen(Screen):
@@ -79,6 +84,16 @@ class ChatScreen(Screen):
             chat_log.mount(bubble)
         chat_log.scroll_end(animate=False)
         return bubble
+
+    def add_tool_message(
+        self,
+        text: str,
+        *,
+        label: str = "tool",
+        markdown: bool = True,
+    ) -> SystemBubble:
+        body = f"`{label}`\n\n{text}" if markdown else f"[{label}] {text}"
+        return self.add_system_message(body, extra_class="tool-bubble", markdown=markdown)
 
     def add_streaming_message(self, *, markdown: bool = False) -> StreamingBubble:
         """Append a streaming bubble to the chat log and return it."""
@@ -175,7 +190,22 @@ class ChatScreen(Screen):
     def advance_to_step(self, step: Step) -> None:
         """Transition to the next step in the chat."""
         state = self.app.current_state
-        if step != state.current_step:
+        if step == state.current_step:
+            allowed = TRANSITIONS.get(state.current_step, [])
+            if step in allowed:
+                self.app.engine.transition_to(
+                    state,
+                    step,
+                    metadata={"reenter": True},
+                )
+            else:
+                _log.warning(
+                    "Ignored self-transition for step %s because it is not allowed from %s.",
+                    step.value,
+                    state.current_step.value,
+                )
+                return
+        else:
             self.app.engine.transition_to(state, step)
         self.app.progress_bar.set_step(step)
         self.app.save_state()

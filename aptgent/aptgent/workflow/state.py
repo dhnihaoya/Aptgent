@@ -12,6 +12,8 @@ from aptgent.domain.models import (
     DockingPlan,
     DockingResult,
     FinalRecommendation,
+    PdbChainCandidate,
+    PdbLigandCandidate,
     PredictionResult,
     SecondaryStructure,
     SpatialRankResult,
@@ -28,6 +30,51 @@ class IntakeContext(BaseModel):
     modification_region: Optional[str] = None
     analogs: list[str] = Field(default_factory=list)
     time_budget_hours: Optional[int] = None
+    phase: str = "initial"
+    retry_count: int = 0
+    last_resolution_error: Optional[str] = None
+    resolved_once: bool = False
+
+
+class SecondaryStructureContext(BaseModel):
+    lookup_status: str = "idle"
+    source: str = "rnafold"
+    query_sequence: Optional[str] = None
+    match_ids: list[str] = Field(default_factory=list)
+    downloaded_artifact_path: Optional[str] = None
+    note: Optional[str] = None
+
+
+class PdbIntakeContext(BaseModel):
+    pdb_id: Optional[str] = None
+    input_mode: str = "direct"
+    mixed_input_detected: bool = False
+    download_status: str = "idle"
+    analysis_status: str = "idle"
+    artifact_path: Optional[str] = None
+    title: Optional[str] = None
+    chains: list[PdbChainCandidate] = Field(default_factory=list)
+    ligands: list[PdbLigandCandidate] = Field(default_factory=list)
+    recommended_chain_id: Optional[str] = None
+    recommended_ligand_key: Optional[str] = None
+    selected_chain_id: Optional[str] = None
+    selected_ligand_key: Optional[str] = None
+    user_sequence: Optional[str] = None
+    derived_sequence: Optional[str] = None
+    sequence_match_status: str = "unknown"
+    semantic_validation_status: str = "unknown"
+    semantic_note: Optional[str] = None
+    needs_user_selection: bool = False
+    error: Optional[str] = None
+
+
+class TertiaryStructureContext(BaseModel):
+    provider: Optional[str] = None
+    receptor_source: Optional[str] = None
+    receptor_status: str = "idle"
+    job_id: Optional[str] = None
+    result_path: Optional[str] = None
+    error: Optional[str] = None
 
 
 class SiteProposalContext(BaseModel):
@@ -65,12 +112,19 @@ class SpecificityRecommendationContext(BaseModel):
 
 class WorkflowContext(BaseModel):
     intake: IntakeContext = Field(default_factory=IntakeContext)
+    pdb_intake: PdbIntakeContext = Field(default_factory=PdbIntakeContext)
+    secondary_structure: SecondaryStructureContext = Field(
+        default_factory=SecondaryStructureContext
+    )
     site_proposal: SiteProposalContext = Field(default_factory=SiteProposalContext)
     specificity_recommendation: SpecificityRecommendationContext = Field(
         default_factory=SpecificityRecommendationContext
     )
     docking_recommendation: DockingRecommendationContext = Field(
         default_factory=DockingRecommendationContext
+    )
+    tertiary_structure: TertiaryStructureContext = Field(
+        default_factory=TertiaryStructureContext
     )
 
 

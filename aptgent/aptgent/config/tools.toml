@@ -13,3 +13,9 @@ energy_range = 3.0
 model_dir = "/home/dh/Aptgent/aptamer_predictor/models"
 conda_env = "aptamer-predictor"
 conda_python = "/home/dh/.conda/envs/aptamer-predictor/bin/python"
+
+[pdb_analysis]
+# `wget` is preferred when available, but the adapter falls back to `urllib`
+# so the server can still run without this binary.
+command = "wget"
+base_url = "https://files.rcsb.org/download"

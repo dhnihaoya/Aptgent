@@ -9,6 +9,7 @@ from aptgent.bootstrap import (
     build_runtime,
     create_engine,
     create_molecule_resolver,
+    create_pdb_analysis_adapter,
     create_persistence,
     create_prediction_adapter,
     create_rna_fold_adapter,
@@ -23,6 +24,12 @@ from aptgent.tui.screens.quit_confirm import QuitConfirmScreen
 from aptgent.tui.screens.welcome import WelcomeScreen
 from aptgent.tui.widgets import StatusPanel, StepProgressBar
 from aptgent.workflow.state import RunState
+from aptgent.adapters.structure_services import (
+    NoopStructureFetchAdapter,
+    NoopStructureLookupAdapter,
+    NoopTertiaryStructureAdapter,
+)
+from aptgent.llm.skills import IntakeSkill, PdbReviewSkill
 
 
 class AptgentApp(App):
@@ -54,6 +61,12 @@ class AptgentApp(App):
         prediction_adapter: Any | None = None,
         molecule_resolver: Any | None = None,
         spatial_rank_adapter: Any | None = None,
+        pdb_analysis_adapter: Any | None = None,
+        structure_lookup_adapter: Any | None = None,
+        structure_fetch_adapter: Any | None = None,
+        tertiary_structure_adapter: Any | None = None,
+        intake_skill_factory: Any | None = None,
+        pdb_review_skill_factory: Any | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -96,6 +109,34 @@ class AptgentApp(App):
             if spatial_rank_adapter is not None
             else create_spatial_rank_adapter()
         )
+        self.pdb_analysis_adapter = (
+            pdb_analysis_adapter
+            if pdb_analysis_adapter is not None
+            else create_pdb_analysis_adapter(self.tools_config)
+        )
+        self.structure_lookup_adapter = (
+            structure_lookup_adapter
+            if structure_lookup_adapter is not None
+            else NoopStructureLookupAdapter()
+        )
+        self.structure_fetch_adapter = (
+            structure_fetch_adapter
+            if structure_fetch_adapter is not None
+            else NoopStructureFetchAdapter()
+        )
+        self.tertiary_structure_adapter = (
+            tertiary_structure_adapter
+            if tertiary_structure_adapter is not None
+            else NoopTertiaryStructureAdapter()
+        )
+        self.intake_skill_factory = (
+            intake_skill_factory if intake_skill_factory is not None else IntakeSkill
+        )
+        self.pdb_review_skill_factory = (
+            pdb_review_skill_factory
+            if pdb_review_skill_factory is not None
+            else PdbReviewSkill
+        )
 
         self._state: RunState | None = None
         self._pending_start_message: str | None = None
@@ -136,6 +177,12 @@ class AptgentApp(App):
             self.persistence.save(self._state)
             self.status_panel.set_status(self._state.run_id, self._state.status.value)
 
+    def create_intake_skill(self):
+        return self.intake_skill_factory()
+
+    def create_pdb_review_skill(self):
+        return self.pdb_review_skill_factory()
+
     def on_mount(self) -> None:
         self.push_screen("welcome")
 
@@ -173,6 +220,7 @@ def run() -> None:
         prediction_adapter=runtime.prediction_adapter,
         molecule_resolver=runtime.molecule_resolver,
         spatial_rank_adapter=runtime.spatial_rank_adapter,
+        pdb_analysis_adapter=runtime.pdb_analysis_adapter,
     )
     app.run()
 

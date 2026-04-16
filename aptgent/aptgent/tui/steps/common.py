@@ -2,13 +2,19 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from aptgent.adapters.pdb_analysis import normalize_pdb_id
 from aptgent.domain.models import TargetMolecule
 from aptgent.workflow.engine import TRANSITIONS
 
 
 def next_step(step) -> Any:
     targets = TRANSITIONS.get(step, [])
-    return targets[0] if targets else None
+    if not targets:
+        return None
+    for candidate in targets:
+        if candidate != step:
+            return candidate
+    return targets[0]
 
 
 def clean_text(value: Any) -> str | None:
@@ -96,6 +102,7 @@ def run_llm_interaction(
     *,
     display_stream: Callable[[], Any] | None,
     structured_call: Callable[[], Any],
+    structured_client: Any | None = None,
 ) -> dict[str, Any]:
     from textual.worker import get_current_worker
 
@@ -175,6 +182,8 @@ def validate_intake_result(result: Any) -> dict[str, Any]:
             missing_fields.append(text)
     return {
         "initial_sequence": normalize_sequence(result.get("initial_sequence")),
+        "pdb_id": normalize_pdb_id(clean_text(result.get("pdb_id"))),
+        "input_mode": clean_text(result.get("input_mode")) or "direct",
         "target_molecule": clean_text(result.get("target_molecule")),
         "modification_region": clean_text(result.get("modification_region")),
         "analogs": [
@@ -182,6 +191,7 @@ def validate_intake_result(result: Any) -> dict[str, Any]:
             if text
         ] if isinstance(result.get("analogs"), list) else [],
         "time_budget_hours": coerce_int(result.get("time_budget_hours")),
+        "mixed_input_detected": bool(result.get("mixed_input_detected")),
         "missing_fields": missing_fields,
         "follow_up_question": clean_text(result.get("follow_up_question")),
     }
@@ -197,19 +207,26 @@ def format_intake_confirmation(
     time_budget_hours: int | None,
 ) -> str:
     lines = [
-        "Captured intake details.",
-        f"Sequence: {sequence}",
+        "### Captured Intake Details",
+        "",
+        f"- **Sequence**: `{sequence}`",
     ]
     if resolved.resolution_status == "resolved":
-        lines.append(f"Target: {resolved.resolved_name or target_text} ({resolved.smiles})")
+        lines.append(
+            f"- **Target**: **{resolved.resolved_name or target_text}**"
+            f" (`{resolved.smiles}`)"
+        )
     else:
-        lines.append(f"Target: {target_text} (resolution failed)")
+        lines.append(f"- **Target**: {target_text} (`resolution failed`)")
     if modification_region:
-        lines.append(f"Requested modification region: {modification_region}")
+        lines.append(f"- **Requested modification region**: {modification_region}")
     if analogs:
-        lines.append(f"Specificity analogs: {', '.join(analogs)}")
+        lines.append(
+            "- **Specificity analogs**: "
+            + ", ".join(f"`{analog}`" for analog in analogs)
+        )
     if time_budget_hours is not None:
-        lines.append(f"Time budget: {time_budget_hours} hour(s)")
+        lines.append(f"- **Time budget**: {time_budget_hours} hour(s)")
     return "\n".join(lines)
 
 
@@ -332,7 +349,7 @@ def validate_docking_recommendation_result(
     if not grid_size:
         grid_size = [20.0, 20.0, 20.0]
     receptor_path_note = clean_text(result.get("receptor_path_note")) or (
-        "Provide the receptor PDBQT path from your prepared docking target."
+        "Provide the receptor PDBQT path from your prepared or downloaded tertiary-structure target."
     )
     grid_center_note = clean_text(result.get("grid_center_note")) or (
         "Confirm the grid center manually from the binding region before running docking."

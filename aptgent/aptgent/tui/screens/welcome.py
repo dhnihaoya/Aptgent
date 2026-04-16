@@ -46,8 +46,8 @@ class WelcomeScreen(Screen):
         scrollbar-size: 1 1;
     }
     #welcome-hero {
-        background: #0a0d12;
-        border: round #495a57;
+        background: #0a1220;
+        border: round $primary;
         padding: 2 3 1 3;
         margin: 1 1 0 1;
         height: auto;
@@ -57,19 +57,19 @@ class WelcomeScreen(Screen):
     }
     #welcome-logo {
         width: 8;
-        color: #c4d45d;
+        color: $primary;
         margin-right: 3;
     }
     #welcome-wordmark {
-        color: #f1efe4;
+        color: $primary-lighten-2;
         text-style: bold;
     }
     #welcome-tagline {
-        color: #9aa5ab;
+        color: #b4c6de;
         margin-top: 1;
     }
     #welcome-subtitle {
-        color: #7c878d;
+        color: #8297b3;
         margin-top: 1;
     }
     """
@@ -96,8 +96,9 @@ class WelcomeScreen(Screen):
         chat_log.mount(StepDivider(self.app.progress_bar.current_step))
         chat_log.mount(
             SystemBubble(
-                "Start with a plain-language brief, sequence, or target molecule. "
-                "Use /resume to reopen a saved run."
+                "Start with a plain-language brief, sequence, or target molecule.\n"
+                "Use `/resume` to reopen a saved run.",
+                markdown=True,
             )
         )
         chat_log.scroll_end(animate=False)
@@ -133,9 +134,9 @@ class WelcomeScreen(Screen):
             self.add_system_message(f"Theme switched to {label}.")
         self._focus_input()
 
-    def add_system_message(self, text: str) -> None:
+    def add_system_message(self, text: str, *, markdown: bool = False) -> None:
         chat_log = self.query_one("#welcome-log", VerticalScroll)
-        chat_log.mount(SystemBubble(text))
+        chat_log.mount(SystemBubble(text, markdown=markdown))
         chat_log.scroll_end(animate=False)
 
     def action_request_quit(self) -> None:

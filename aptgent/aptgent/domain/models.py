@@ -34,6 +34,38 @@ class SecondaryStructure(BaseModel):
     features: dict[str, Any] = Field(default_factory=dict)
 
 
+class PdbChainCandidate(BaseModel):
+    chain_id: str
+    sequence: str
+    residue_count: int
+    molecule_type: str = "nucleic_acid"
+    note: str = ""
+
+
+class PdbLigandCandidate(BaseModel):
+    key: str
+    identifier: str
+    display_name: str
+    chain_id: Optional[str] = None
+    residue_number: Optional[int] = None
+    atom_count: int = 0
+    note: str = ""
+
+
+class PdbAnalysisResult(BaseModel):
+    pdb_id: str
+    title: str = ""
+    artifact_path: str = ""
+    nucleic_acid_chains: list[PdbChainCandidate] = Field(default_factory=list)
+    ligands: list[PdbLigandCandidate] = Field(default_factory=list)
+    recommended_chain_id: Optional[str] = None
+    recommended_ligand_key: Optional[str] = None
+    needs_user_selection: bool = False
+    semantic_status: str = "unknown"
+    semantic_note: str = ""
+    error: str = ""
+
+
 class PredictionResult(BaseModel):
     candidate_id: str
     model_name: str

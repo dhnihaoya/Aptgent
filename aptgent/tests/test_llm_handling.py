@@ -34,11 +34,29 @@ def test_validate_intake_result_normalizes_fields():
     )
 
     assert result["initial_sequence"] == "ACGU"
+    assert result["pdb_id"] is None
+    assert result["input_mode"] == "direct"
     assert result["target_molecule"] == "theophylline"
     assert result["modification_region"] == "loop region"
     assert result["analogs"] == ["adenine"]
     assert result["time_budget_hours"] == 4
     assert result["missing_fields"] == ["target_molecule"]
+
+
+def test_validate_intake_result_normalizes_pdb_fields():
+    result = _validate_intake_result(
+        {
+            "pdb_id": " 1ehz ",
+            "input_mode": "mixed",
+            "initial_sequence": "acgu",
+            "target_molecule": None,
+            "mixed_input_detected": True,
+        }
+    )
+
+    assert result["pdb_id"] == "1EHZ"
+    assert result["input_mode"] == "mixed"
+    assert result["mixed_input_detected"] is True
 
 
 def test_validate_site_proposal_result_filters_invalid_positions():
@@ -70,7 +88,7 @@ def test_validate_docking_recommendation_result_uses_fallback_for_invalid_top_k(
     assert "resources" in result["reason"].lower()
 
 
-def test_kimi_k25_payload_omits_temperature(tmp_path):
+def test_kimi_k25_payload_omits_temperature_and_keeps_thinking_by_default(tmp_path):
     config_path = tmp_path / "llm.toml"
     config_path.write_text(
         "\n".join(
@@ -94,7 +112,41 @@ def test_kimi_k25_payload_omits_temperature(tmp_path):
     )
 
     assert "temperature" not in payload
-    assert payload["thinking"] == {"type": "enabled"}
+    assert "thinking" not in payload
+
+
+def test_without_thinking_context_disables_kimi_thinking(tmp_path):
+    config_path = tmp_path / "llm.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[provider.openai]",
+                'base_url = "https://api.moonshot.cn/v1"',
+                'model = "kimi-k2.5"',
+                'api_key = "test-key"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    client = LLMClient(config_path=config_path)
+    with client.without_thinking():
+        payload = client._payload(
+            "system",
+            "user",
+            temperature=0.2,
+            response_format={"type": "json_object"},
+        )
+
+    assert "thinking" not in payload
+
+    restored_payload = client._payload(
+        "system",
+        "user",
+        temperature=0.2,
+        response_format={"type": "json_object"},
+    )
+    assert "thinking" not in restored_payload
 
 
 def test_iter_sse_events_emits_reasoning_before_content(tmp_path):
@@ -141,12 +193,12 @@ def test_format_intake_confirmation_includes_structured_details():
         time_budget_hours=6,
     )
 
-    assert "Captured intake details." in message
-    assert "Sequence: ACGU" in message
-    assert "Target: theophylline" in message
-    assert "Requested modification region: loop region" in message
-    assert "Specificity analogs: caffeine, theobromine" in message
-    assert "Time budget: 6 hour(s)" in message
+    assert "### Captured Intake Details" in message
+    assert "- **Sequence**: `ACGU`" in message
+    assert "- **Target**: **theophylline**" in message
+    assert "- **Requested modification region**: loop region" in message
+    assert "- **Specificity analogs**: `caffeine`, `theobromine`" in message
+    assert "- **Time budget**: 6 hour(s)" in message
 
 
 def test_context_helpers_prefer_confirmed_facts():
@@ -213,6 +265,7 @@ def test_build_site_proposal_llm_context_collects_extensible_context():
     assert result["sequence"] == "ACGUAC"
     assert result["secondary_structure"]["dot_bracket"] == "..(..)"
     assert result["secondary_structure"]["features"]["source"] == "rnafold"
+    assert result["secondary_structure_context"]["source"] == "rnafold"
     assert result["target_molecule"]["label"] == "Caffeine"
     assert result["user_request"]["modification_region"] == "loop region"
     assert result["workflow_context"]["previous_proposed_sites"] == [2]

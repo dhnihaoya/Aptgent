@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
+
+from aptgent.adapters.pdb_analysis import normalize_pdb_id
 from aptgent.domain.enums import Step
 from aptgent.domain.models import TargetMolecule
-from aptgent.llm.skills import IntakeSkill
 from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.steps.common import (
     clean_text,
@@ -11,78 +13,248 @@ from aptgent.tui.steps.common import (
     run_llm_interaction,
     validate_intake_result,
 )
-from aptgent.workflow.context import get_sequence, record_intake_context
+from aptgent.tui.steps.pdb_intake import PdbIntakeHelper
+from aptgent.workflow.context import (
+    get_sequence,
+    record_intake_context,
+    record_pdb_intake_context,
+)
+
+_EXPLICIT_SEQUENCE_FIELD = re.compile(r"\b(sequence|seq)\b\s*[:=]?\s*[ACGTU]", re.IGNORECASE)
+_INLINE_SEQUENCE_TOKEN = re.compile(r"\b[ACGTU]{4,}\b", re.IGNORECASE)
 
 
 class IntakeHandler(StepHandler):
-    def enter(self) -> None:
-        self.screen.add_system_message(
-            "Step 1: Intake\n"
-            "Describe your aptamer design task. Include the sequence, "
-            "target molecule (name or SMILES), and any preferences."
-        )
-        self.screen.set_input_enabled(True)
-        self.screen.set_input_placeholder(
-            "e.g. Design an aptamer for theophylline, sequence: GGGAAACCC..."
+    _INITIAL_PLACEHOLDER = (
+        "e.g. Design an aptamer for theophylline, sequence: GGGAAACCC... or provide a PDB ID"
+    )
+    _TARGET_RETRY_PLACEHOLDER = (
+        "Enter a corrected molecule name or SMILES, or paste a full intake brief."
+    )
+    _MISSING_TARGET_PLACEHOLDER = (
+        "Enter the target molecule name or SMILES, or paste a new full intake brief."
+    )
+    _GENERAL_RETRY_PLACEHOLDER = (
+        "Enter a valid PDB ID, sequence + target, or paste a new intake brief."
+    )
+
+    def __init__(self, screen) -> None:
+        super().__init__(screen)
+        self._pdb_helper = PdbIntakeHelper(
+            screen,
+            resolve_and_complete=self._resolve_and_complete,
+            activate_general_retry=self._activate_general_retry,
         )
 
-    def handle_user_input(self, text: str) -> None:
+    def enter(self) -> None:
         state = self.screen.app.current_state
-        record_intake_context(state, user_brief=text.strip())
-        seq = get_sequence(state) or ""
-        target = state.target_molecule
-        if seq and target and target.resolution_status != "resolved":
+        intake = state.context.intake
+        pdb_ctx = state.context.pdb_intake
+        sequence = get_sequence(state)
+
+        if intake.phase == "awaiting_target_retry" and sequence:
+            error_text = intake.last_resolution_error or "Target molecule lookup failed."
+            self.screen.add_system_message(
+                "\n".join(
+                    [
+                        "### Step 1: Intake Retry",
+                        "",
+                        f"- **Sequence kept**: `{sequence}`",
+                        f"- **Current target input**: `{intake.target_input or 'unknown'}`",
+                        f"- **Issue**: {error_text}",
+                        "- **Next input**: enter a corrected molecule name or SMILES.",
+                        "- **Alternative**: paste a full intake brief to rerun extraction.",
+                    ]
+                ),
+                "warning-text",
+                markdown=True,
+            )
+            self.screen.set_input_placeholder(self._TARGET_RETRY_PLACEHOLDER)
+        elif intake.phase == "awaiting_missing_target" and sequence:
+            source_label = (
+                f"PDB `{pdb_ctx.pdb_id}` chain `{pdb_ctx.selected_chain_id}`"
+                if pdb_ctx.pdb_id and pdb_ctx.selected_chain_id
+                else "the current intake context"
+            )
+            self.screen.add_system_message(
+                "\n".join(
+                    [
+                        "### Step 1: Missing Target Molecule",
+                        "",
+                        f"- **Sequence kept** from {source_label}: `{sequence}`",
+                        "- **Missing**: target small molecule",
+                        "- **Next input**: provide the target molecule name or SMILES.",
+                        "- **Alternative**: paste a new full intake brief to replace the current context.",
+                    ]
+                ),
+                "warning-text",
+                markdown=True,
+            )
+            self.screen.set_input_placeholder(self._MISSING_TARGET_PLACEHOLDER)
+        elif intake.phase == "awaiting_pdb_selection" and pdb_ctx.chains:
+            self.screen.add_system_message(
+                "\n".join(
+                    [
+                        "### Step 1: Review PDB Import",
+                        "",
+                        f"- **PDB ID**: `{pdb_ctx.pdb_id or 'unknown'}`",
+                        "- Multiple chain and/or ligand candidates were detected.",
+                        "- Use the selection panel below, or paste a new full intake brief to restart.",
+                    ]
+                ),
+                markdown=True,
+            )
+            self._pdb_helper.show_selection_panel()
+            self.screen.set_input_placeholder(
+                "Use the PDB selection panel, or paste a new intake brief."
+            )
+        elif intake.phase == "awaiting_general_retry":
+            error_text = intake.last_resolution_error or "The previous intake attempt could not be used."
+            self.screen.add_system_message(
+                "\n".join(
+                    [
+                        "### Step 1: Intake Retry",
+                        "",
+                        f"- **Issue**: {error_text}",
+                        "- **Next input**: provide a valid PDB ID, or a sequence plus target molecule.",
+                    ]
+                ),
+                "warning-text",
+                markdown=True,
+            )
+            self.screen.set_input_placeholder(self._GENERAL_RETRY_PLACEHOLDER)
+        else:
+            self.screen.add_system_message(
+                "\n".join(
+                    [
+                        "### Step 1: Intake",
+                        "",
+                        "- Describe the aptamer design task in plain language.",
+                        "- You can provide a sequence and target molecule directly.",
+                        "- You can also provide a PDB ID and let the workflow extract the sequence and any bound ligand candidates.",
+                    ]
+                ),
+                markdown=True,
+            )
+            self.screen.set_input_placeholder(self._INITIAL_PLACEHOLDER)
+
+        self.screen.set_input_enabled(True)
+
+    def handle_user_input(self, text: str) -> None:
+        text = text.strip()
+        if not text:
+            return
+
+        state = self.screen.app.current_state
+        phase = state.context.intake.phase
+
+        if phase in {"awaiting_target_retry", "awaiting_missing_target"}:
+            if self._looks_like_full_intake(text):
+                self._start_full_extract(text)
+                return
             self.run_worker(
-                lambda: self._resolve_molecule_direct(text.strip()),
+                lambda: self._resolve_molecule_direct(text),
                 activity="Resolving target molecule...",
             )
             return
-        self.run_worker(self._extract, activity="Extracting intake details...")
 
-    def _resolve_molecule_direct(self, text: str) -> None:
-        state = self.screen.app.current_state
-        resolved = self.screen.app.molecule_resolver.resolve(text)
-        if resolved.resolution_status == "resolved":
-            state.target_molecule = resolved
-            record_intake_context(
-                state,
-                target_text=text,
-                resolved_target=resolved,
-                sequence=get_sequence(state),
-                modification_region=state.input_payload.get("modification_region"),
-                analogs=state.input_payload.get("analogs", []),
-                time_budget_hours=getattr(state, "time_budget", None),
-            )
-            self.screen.app.save_state()
-            confirmation = format_intake_confirmation(
-                sequence=get_sequence(state) or "",
-                target_text=text,
-                resolved=resolved,
-                modification_region=state.input_payload.get("modification_region"),
-                analogs=state.input_payload.get("analogs", []),
-                time_budget_hours=getattr(state, "time_budget", None),
-            )
-            self.screen.app.call_from_thread(
-                self.screen.add_system_message, confirmation
-            )
-            ns = next_step(Step.INTAKE)
-            if ns:
-                self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
-        else:
-            self.screen.app.call_from_thread(
-                self.screen.add_system_message,
-                f"Could not resolve '{text}' either. "
-                "Please provide a valid SMILES string.",
+        if phase == "awaiting_pdb_selection":
+            if self._looks_like_full_intake(text):
+                self._start_full_extract(text)
+                return
+            self.screen.add_system_message(
+                "Use the PDB selection panel, or paste a new full intake brief.",
                 "warning-text",
             )
-            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+            return
+
+        self._start_full_extract(text)
+
+    def handle_structured_input(self, data: dict) -> None:
+        if data.get("action") != "confirm_pdb_selection":
+            return
+        chain_id = clean_text(data.get("chain_id"))
+        ligand_key = clean_text(data.get("ligand_key"))
+        self.run_worker(
+            lambda: self._pdb_helper.apply_pdb_selection(chain_id, ligand_key),
+            activity="Applying PDB selection...",
+        )
+
+    def handle_action(self, action: str) -> None:
+        if action == "restart-pdb-selection":
+            record_intake_context(
+                self.screen.app.current_state,
+                phase="awaiting_general_retry",
+                last_resolution_error="PDB import was not confirmed.",
+            )
+            self.screen.advance_to_step(Step.INTAKE)
+
+    def _start_full_extract(self, text: str) -> None:
+        state = self.screen.app.current_state
+        if state.context.intake.phase not in {"awaiting_target_retry", "awaiting_missing_target"}:
+            state.context.intake.sequence = None
+            state.context.intake.target_input = None
+            state.context.intake.target_label = None
+            state.target_molecule = None
+            state.input_payload.pop("initial_sequence", None)
+            state.input_payload.pop("target_molecule", None)
+        record_intake_context(
+            state,
+            user_brief=text,
+            phase="initial",
+            clear_resolution_error=True,
+        )
+        state.input_payload["user_text"] = text
+        self.run_worker(self._extract, activity="Extracting intake details...")
+
+    def _looks_like_full_intake(self, text: str) -> bool:
+        lowered = text.lower()
+        has_multiline_brief = len([line for line in text.splitlines() if line.strip()]) > 1
+        has_explicit_sequence_field = bool(_EXPLICIT_SEQUENCE_FIELD.search(text))
+        has_inline_sequence = bool(_INLINE_SEQUENCE_TOKEN.search(text))
+        has_target_signal = any(token in lowered for token in ("target", "smiles", "ligand", "molecule"))
+        has_brief_signal = any(
+            token in lowered
+            for token in (
+                "design an aptamer",
+                "aptamer for",
+                "screening",
+                "preference",
+                "analog",
+                "budget",
+                "modification",
+            )
+        )
+        explicit_field_count = sum(
+            1
+            for present in (
+                has_explicit_sequence_field,
+                "target" in lowered,
+                "smiles" in lowered,
+                "analog" in lowered,
+                "budget" in lowered,
+                "preference" in lowered,
+                "modification" in lowered,
+            )
+            if present
+        )
+
+        if has_multiline_brief and (has_explicit_sequence_field or has_target_signal or has_brief_signal):
+            return True
+        if has_explicit_sequence_field:
+            return True
+        if has_inline_sequence and (has_target_signal or has_brief_signal):
+            return True
+        if explicit_field_count >= 2:
+            return True
+        return any(phrase in lowered for phrase in ("design an aptamer", "aptamer for"))
 
     def _extract(self) -> None:
         state = self.screen.app.current_state
         text = state.context.intake.user_brief or state.input_payload.get("user_text", "")
 
         try:
-            skill = IntakeSkill()
+            skill = self.screen.app.create_intake_skill()
             result = run_llm_interaction(
                 self.screen,
                 display_stream=None,
@@ -98,9 +270,72 @@ class IntakeHandler(StepHandler):
         state.input_payload["llm_extracted"] = result
 
         seq = result.get("initial_sequence")
+        pdb_id = result.get("pdb_id") or normalize_pdb_id(text)
+        input_mode = result.get("input_mode") or ("pdb" if pdb_id else "direct")
         target_text = result.get("target_molecule")
+        mod = result.get("modification_region")
+        analogs = result.get("analogs", [])
+        time_budget = result.get("time_budget_hours")
+        mixed_input_detected = bool(result.get("mixed_input_detected") or (pdb_id and (seq or target_text)))
+
+        if mod:
+            state.input_payload["modification_region"] = mod
+        else:
+            state.input_payload.pop("modification_region", None)
+        if analogs:
+            state.input_payload["analogs"] = analogs
+        else:
+            state.input_payload.pop("analogs", None)
+        if time_budget is not None:
+            state.time_budget = time_budget
+        if seq:
+            state.input_payload["initial_sequence"] = seq
+        elif not pdb_id:
+            state.input_payload.pop("initial_sequence", None)
+
+        record_intake_context(
+            state,
+            user_brief=text,
+            sequence=seq,
+            target_text=target_text,
+            modification_region=mod,
+            analogs=analogs,
+            time_budget_hours=time_budget,
+            phase="initial",
+            clear_resolution_error=True,
+        )
+
+        if pdb_id:
+            record_pdb_intake_context(
+                state,
+                clear=True,
+                pdb_id=pdb_id,
+                input_mode="mixed" if mixed_input_detected else "pdb",
+                mixed_input_detected=mixed_input_detected,
+                user_sequence=seq,
+                analysis_status="queued",
+            )
+            self.run_worker(
+                lambda: self._pdb_helper.analyze_pdb_intake(
+                    pdb_id=pdb_id,
+                    user_sequence=seq,
+                    user_target_text=target_text,
+                    user_brief=text,
+                    modification_region=mod,
+                    analogs=analogs,
+                    time_budget_hours=time_budget,
+                ),
+                activity="Analyzing PDB intake...",
+            )
+            return
+
+        record_pdb_intake_context(state, clear=True)
+
         if not seq or not target_text:
-            follow_up = result.get("follow_up_question") or "Please provide the aptamer sequence and target molecule."
+            follow_up = (
+                result.get("follow_up_question")
+                or "Please provide the aptamer sequence and target molecule."
+            )
             missing_parts: list[str] = []
             if not seq:
                 missing_parts.append("sequence")
@@ -115,19 +350,53 @@ class IntakeHandler(StepHandler):
             self.screen.app.save_state()
             return
 
-        state.input_payload["initial_sequence"] = seq
-        analogs = result.get("analogs", [])
+        self._resolve_and_complete(
+            sequence=seq,
+            target_text=target_text,
+            user_brief=text,
+            modification_region=mod,
+            analogs=analogs,
+            time_budget_hours=time_budget,
+        )
 
+    def _resolve_molecule_direct(self, text: str) -> None:
+        state = self.screen.app.current_state
+        resolved_text, resolved = self._resolve_target_text(text)
+        if resolved is None:
+            self._activate_target_retry(
+                text,
+                f"Could not resolve `{text}`. Please correct the molecule name or provide a valid SMILES string.",
+            )
+            return
+
+        state.target_molecule = resolved
+        self._complete_intake(
+            sequence=get_sequence(state) or "",
+            target_text=resolved_text,
+            resolved=resolved,
+            modification_region=state.input_payload.get("modification_region"),
+            analogs=state.input_payload.get("analogs", []),
+            time_budget_hours=getattr(state, "time_budget", None),
+        )
+
+    def _resolve_target_text(
+        self,
+        target_text: str,
+    ) -> tuple[str, TargetMolecule | None]:
         resolved = self.screen.app.molecule_resolver.resolve(target_text)
-        if resolved.resolution_status != "resolved" and any(
-            "\u4e00" <= ch <= "\u9fff" for ch in target_text
-        ):
+        if resolved.resolution_status == "resolved":
+            return target_text, resolved
+
+        if any("\u4e00" <= ch <= "\u9fff" for ch in target_text):
             try:
                 translate_prompt = (
                     "Translate the following molecule name to its standard English common name. "
                     'Return ONLY a JSON object: {"english_name": "<english name>"}.'
                 )
-                translated = skill.client.chat_json(translate_prompt, target_text)
+                translated = self.screen.app.create_intake_skill().client.chat_json(
+                    translate_prompt,
+                    target_text,
+                )
                 english_name = None
                 if isinstance(translated, dict):
                     english_name = clean_text(
@@ -142,58 +411,154 @@ class IntakeHandler(StepHandler):
                 if english_name:
                     resolved = self.screen.app.molecule_resolver.resolve(english_name)
                     if resolved.resolution_status == "resolved":
-                        target_text = english_name
+                        return english_name, resolved
             except Exception:
                 pass
-        if resolved.resolution_status == "resolved":
-            state.target_molecule = resolved
-        else:
-            state.target_molecule = TargetMolecule(input_text=target_text)
-            self.screen.app.save_state()
-            self.screen.app.call_from_thread(
-                self.screen.add_system_message,
-                f"Could not resolve molecule '{target_text}'. "
-                "Please provide a valid SMILES string or molecule name directly.",
-                "warning-text",
-            )
-            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
-            self.screen.app.call_from_thread(
-                self.screen.set_input_placeholder,
-                "Enter SMILES (e.g. Cn1c2c(c(=O)n(c1=O)C)[nH]cn2) or molecule name",
+
+        return target_text, None
+
+    def _resolve_and_complete(
+        self,
+        *,
+        sequence: str,
+        target_text: str,
+        user_brief: str | None,
+        modification_region: str | None,
+        analogs: list[str],
+        time_budget_hours: int | None,
+        source_label: str | None = None,
+    ) -> None:
+        state = self.screen.app.current_state
+        resolved_text, resolved = self._resolve_target_text(target_text)
+        if resolved is None:
+            self._activate_target_retry(
+                target_text,
+                (
+                    f"Could not resolve `{target_text}` from the current intake. "
+                    "Enter a corrected molecule name or SMILES, or paste a full intake brief to rerun extraction."
+                ),
+                user_brief=user_brief,
+                sequence=sequence,
+                modification_region=modification_region,
+                analogs=analogs,
+                time_budget_hours=time_budget_hours,
             )
             return
 
-        mod = result.get("modification_region")
-        if mod:
-            state.input_payload["modification_region"] = mod
+        state.target_molecule = resolved
+        self._complete_intake(
+            sequence=sequence,
+            target_text=resolved_text,
+            resolved=resolved,
+            modification_region=modification_region,
+            analogs=analogs,
+            time_budget_hours=time_budget_hours,
+            user_brief=user_brief,
+            source_label=source_label,
+        )
+
+    def _activate_target_retry(
+        self,
+        target_text: str,
+        error_message: str,
+        *,
+        user_brief: str | None = None,
+        sequence: str | None = None,
+        modification_region: str | None = None,
+        analogs: list[str] | None = None,
+        time_budget_hours: int | None = None,
+    ) -> None:
+        state = self.screen.app.current_state
+        intake = state.context.intake
+        state.target_molecule = TargetMolecule(
+            input_text=target_text,
+            resolution_status="failed",
+        )
+        record_intake_context(
+            state,
+            user_brief=user_brief,
+            sequence=sequence,
+            target_text=target_text,
+            modification_region=modification_region,
+            analogs=analogs,
+            time_budget_hours=time_budget_hours,
+            phase="awaiting_target_retry",
+            retry_count=intake.retry_count + 1,
+            last_resolution_error=error_message,
+            resolved_once=False,
+        )
+        self.screen.app.save_state()
+        self.screen.app.call_from_thread(self.screen.advance_to_step, Step.INTAKE)
+
+    def _activate_general_retry(self, error_message: str) -> None:
+        state = self.screen.app.current_state
+        record_intake_context(
+            state,
+            phase="awaiting_general_retry",
+            last_resolution_error=error_message,
+            resolved_once=False,
+        )
+        self.screen.app.save_state()
+        self.screen.app.call_from_thread(self.screen.advance_to_step, Step.INTAKE)
+
+    def _complete_intake(
+        self,
+        *,
+        sequence: str,
+        target_text: str,
+        resolved: TargetMolecule,
+        modification_region: str | None,
+        analogs: list[str],
+        time_budget_hours: int | None,
+        user_brief: str | None = None,
+        source_label: str | None = None,
+    ) -> None:
+        state = self.screen.app.current_state
+        state.input_payload["initial_sequence"] = sequence
+        state.input_payload["target_molecule"] = target_text
+        if modification_region:
+            state.input_payload["modification_region"] = modification_region
         if analogs:
             state.input_payload["analogs"] = analogs
-        time_budget = result.get("time_budget_hours")
-        if time_budget is not None:
-            state.time_budget = time_budget
+        if time_budget_hours is not None:
+            state.time_budget = time_budget_hours
 
         record_intake_context(
             state,
-            user_brief=text,
-            sequence=seq,
+            user_brief=user_brief,
+            sequence=sequence,
             target_text=target_text,
-            resolved_target=state.target_molecule,
-            modification_region=mod,
+            resolved_target=resolved,
+            modification_region=modification_region,
             analogs=analogs,
-            time_budget_hours=time_budget,
+            time_budget_hours=time_budget_hours,
+            phase="initial",
+            clear_resolution_error=True,
+            resolved_once=True,
         )
 
+        if source_label:
+            self.screen.app.call_from_thread(
+                self.screen.add_tool_message,
+                f"**Intake source**\n\n- Using `{source_label}` as the authoritative sequence source.",
+                label="agent:intake",
+            )
+
         confirmation = format_intake_confirmation(
-            sequence=seq,
+            sequence=sequence,
             target_text=target_text,
-            resolved=state.target_molecule,
-            modification_region=mod,
+            resolved=resolved,
+            modification_region=modification_region,
             analogs=analogs,
-            time_budget_hours=time_budget,
+            time_budget_hours=time_budget_hours,
         )
         self.screen.app.save_state()
         self.screen.app.call_from_thread(
-            self.screen.add_system_message, confirmation
+            lambda: self.screen.add_system_message(
+                confirmation,
+                extra_class="",
+                markdown=True,
+            )
         )
         ns = next_step(Step.INTAKE)
         if ns:

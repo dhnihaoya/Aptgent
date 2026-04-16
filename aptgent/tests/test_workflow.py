@@ -64,6 +64,17 @@ def test_transition_validation():
         assert state.current_step == Step.SECONDARY_STRUCTURE
 
 
+def test_intake_self_loop_transition_is_valid():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        persistence = Persistence(tmpdir)
+        engine = WorkflowEngine(persistence)
+        state = engine.create_run("run_retry")
+
+        engine.transition_to(state, Step.INTAKE, metadata={"reenter": True})
+
+        assert state.current_step == Step.INTAKE
+
+
 def test_pause_and_resume():
     with tempfile.TemporaryDirectory() as tmpdir:
         persistence = Persistence(tmpdir)

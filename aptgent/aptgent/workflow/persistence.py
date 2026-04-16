@@ -30,6 +30,12 @@ class Persistence:
         self._validate_run_id(run_id)
         return self.runs_dir / run_id
 
+    def get_artifact_dir(self, run_id: str) -> Path:
+        run_dir = self._run_dir(run_id)
+        artifact_dir = run_dir / "artifacts"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        return artifact_dir
+
     def init_run(self, run_id: str) -> RunState:
         run_dir = self._run_dir(run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -68,9 +74,7 @@ class Persistence:
         )
 
     def write_artifact(self, run_id: str, filename: str, content: Any, mime_type: str = "application/json") -> Path:
-        run_dir = self._run_dir(run_id)
-        artifact_dir = run_dir / "artifacts"
-        artifact_dir.mkdir(parents=True, exist_ok=True)
+        artifact_dir = self.get_artifact_dir(run_id)
         path = artifact_dir / filename
         if isinstance(content, (dict, list)):
             with open(path, "w", encoding="utf-8") as f:

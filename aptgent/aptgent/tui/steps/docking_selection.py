@@ -17,6 +17,7 @@ from aptgent.tui.widgets.structured_input import (
     DockingStrategyPanel,
 )
 from aptgent.workflow.context import record_docking_recommendation_context
+from aptgent.workflow.context import record_tertiary_structure_context
 
 
 class DockingSelectionHandler(StepHandler):
@@ -69,6 +70,14 @@ class DockingSelectionHandler(StepHandler):
             receptor_path=data.get("receptor_path"),
             grid_center=data.get("grid_center"),
             grid_size=data.get("grid_size"),
+        )
+        record_tertiary_structure_context(
+            state,
+            provider="rnacomposer",
+            receptor_source="manual_input",
+            receptor_status="provided" if data.get("receptor_path") else "pending",
+            result_path=data.get("receptor_path"),
+            error="",
         )
         state.time_budget = data.get("time_budget")
         recommendation.accepted = bool(data.get("accepted_recommendation"))
@@ -279,6 +288,14 @@ class DockingSelectionHandler(StepHandler):
         state = self.screen.app.current_state
         state.docking_plan = None
         state.docking_results = []
+        record_tertiary_structure_context(
+            state,
+            provider="rnacomposer",
+            receptor_source="manual_input",
+            receptor_status="skipped",
+            result_path="",
+            error="",
+        )
         recommendation = state.context.docking_recommendation
         recommendation.display_markdown = ""
         recommendation.reason = ""

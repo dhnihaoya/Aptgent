@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -31,6 +32,7 @@ class LLMClient:
         self.max_tokens = self.config.get("max_tokens", 4096)
         self.timeout = self.config.get("timeout_seconds", 60)
         self.max_retries = self.config.get("max_retries", 2)
+        self._thinking_enabled = True
 
     def _uses_kimi_k25(self) -> bool:
         return self.model.startswith("kimi-k2.5")
@@ -64,6 +66,15 @@ class LLMClient:
             "Content-Type": "application/json",
         }
 
+    @contextmanager
+    def without_thinking(self):
+        previous = self._thinking_enabled
+        self._thinking_enabled = False
+        try:
+            yield self
+        finally:
+            self._thinking_enabled = previous
+
     def _payload(
         self,
         system_prompt: str,
@@ -72,6 +83,7 @@ class LLMClient:
         temperature: float | None,
         stream: bool = False,
         response_format: dict[str, Any] | None = None,
+        enable_thinking: bool | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": self.model,
@@ -85,7 +97,13 @@ class LLMClient:
         # the provider default instead of sending a value that triggers HTTP 400.
         if temperature is not None and not self._uses_kimi_k25():
             payload["temperature"] = temperature
-        if self._uses_kimi_k25():
+        if enable_thinking is None:
+            thinking_enabled = (
+                False if response_format is not None else self._thinking_enabled
+            )
+        else:
+            thinking_enabled = enable_thinking
+        if self._uses_kimi_k25() and thinking_enabled:
             payload["thinking"] = {"type": "enabled"}
         if stream:
             payload["stream"] = True
@@ -140,6 +158,7 @@ class LLMClient:
                         temperature=self.json_temperature,
                         stream=True,
                         response_format={"type": "json_object"},
+                        enable_thinking=False,
                     ),
                     timeout=timeout,
                 ) as resp:
@@ -175,6 +194,7 @@ class LLMClient:
                         temperature=self.json_temperature,
                         stream=True,
                         response_format={"type": "json_object"},
+                        enable_thinking=False,
                     ),
                     timeout=timeout,
                 ) as resp:

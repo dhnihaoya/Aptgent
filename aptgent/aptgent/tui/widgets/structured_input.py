@@ -172,6 +172,129 @@ class MutationSitePanel(Vertical):
         event.stop()
 
 
+class PdbSelectionPanel(Vertical):
+    """Select a chain and optional ligand from a parsed PDB structure."""
+
+    DEFAULT_CSS = """
+    PdbSelectionPanel {
+        background: $surface-darken-2;
+        border: round $primary;
+        padding: 1 2;
+        margin: 1 0;
+        width: 95%;
+        height: auto;
+    }
+    PdbSelectionPanel > .panel-title {
+        text-style: bold;
+    }
+    PdbSelectionPanel > .panel-help {
+        color: $text-muted;
+        margin: 1 0;
+    }
+    PdbSelectionPanel > .panel-section {
+        margin-top: 1;
+        text-style: bold;
+    }
+    PdbSelectionPanel > OptionList {
+        height: auto;
+        max-height: 8;
+        border: tall $surface-lighten-1;
+        margin-bottom: 1;
+    }
+    PdbSelectionPanel Horizontal {
+        height: auto;
+    }
+    PdbSelectionPanel Horizontal > Button {
+        margin-right: 1;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        chain_choices: list[tuple[str, str, str]],
+        ligand_choices: list[tuple[str, str, str]] | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.chain_choices = chain_choices
+        self.ligand_choices = ligand_choices or []
+
+    def compose(self) -> ComposeResult:
+        yield Static("PDB Import Review", classes="panel-title")
+        yield Static(
+            "Select which nucleic-acid chain and ligand should be used for this workflow.",
+            classes="panel-help",
+        )
+        yield Static("Chain candidates", classes="panel-section")
+        yield OptionList(
+            *[
+                Option(
+                    f"[bold]{label}[/bold]\n[dim]{description}[/dim]",
+                    id=value,
+                )
+                for value, label, description in self.chain_choices
+            ],
+            id="pdb-chain-menu",
+        )
+        if self.ligand_choices:
+            yield Static("Ligand candidates", classes="panel-section")
+            yield OptionList(
+                *[
+                    Option(
+                        f"[bold]{label}[/bold]\n[dim]{description}[/dim]",
+                        id=value,
+                    )
+                    for value, label, description in self.ligand_choices
+                ],
+                id="pdb-ligand-menu",
+            )
+        with Horizontal():
+            yield Button("Use Selection", id="btn-confirm-pdb-selection", variant="success")
+            yield Button("Re-enter Intake", id="btn-restart-pdb-selection")
+
+    def on_mount(self) -> None:
+        try:
+            self.query_one("#pdb-chain-menu", OptionList).focus()
+        except Exception:
+            pass
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-confirm-pdb-selection":
+            chain_menu = self.query_one("#pdb-chain-menu", OptionList)
+            if chain_menu.option_count == 0:
+                return
+            chain_index = chain_menu.highlighted if chain_menu.highlighted is not None else 0
+            chain_option = chain_menu.get_option_at_index(chain_index)
+            ligand_key = None
+            if self.ligand_choices:
+                ligand_menu = self.query_one("#pdb-ligand-menu", OptionList)
+                if ligand_menu.option_count == 0:
+                    return
+                ligand_index = (
+                    ligand_menu.highlighted if ligand_menu.highlighted is not None else 0
+                )
+                ligand_option = ligand_menu.get_option_at_index(ligand_index)
+                ligand_key = ligand_option.id
+            self.post_message(
+                StructuredInputSubmitted(
+                    Step.INTAKE,
+                    {
+                        "action": "confirm_pdb_selection",
+                        "chain_id": chain_option.id,
+                        "ligand_key": ligand_key,
+                    },
+                )
+            )
+        elif event.button.id == "btn-restart-pdb-selection":
+            self.post_message(
+                StructuredActionRequested(
+                    Step.INTAKE,
+                    "restart-pdb-selection",
+                )
+            )
+
+
 class SpecificityPanel(Vertical):
     """Inline widget for specificity filter input."""
 
@@ -429,7 +552,7 @@ class DockingParamPanel(Vertical):
         yield Static("Docking Configuration", classes="panel-title")
         if self.mode == "llm":
             yield Static(
-                "An LLM draft has been loaded. Review the suggested values, then confirm the receptor path and grid center before continuing.",
+                "An LLM draft has been loaded. Review the suggested values, then confirm the tertiary-structure receptor path and grid center before continuing.",
                 classes="panel-help",
             )
             yield Static(
@@ -455,7 +578,7 @@ class DockingParamPanel(Vertical):
         if self.recommended_top_k > 0:
             top_k_input.value = str(self.recommended_top_k)
         yield top_k_input
-        yield Static("Receptor PDBQT file path:")
+        yield Static("Receptor PDBQT file path (prepared or downloaded):")
         if self.mode == "llm" and self.receptor_path_note:
             yield Static(f"[dim]{self.receptor_path_note}[/]", classes="panel-note")
         receptor_input = Input(id="dock-receptor", placeholder="/path/to/receptor.pdbqt")

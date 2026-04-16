@@ -10,10 +10,13 @@ from aptgent.llm.client import LLMClient
 SYSTEM_INTAKE = """You are an intake assistant for an aptamer design tool.
 Extract the following fields from the user's natural language input:
 - initial_sequence: the aptamer sequence (DNA or RNA). If missing, set to null.
+- pdb_id: a 4-character PDB identifier if the user provided one. If missing, set to null.
+- input_mode: one of "direct", "pdb", or "mixed".
 - target_molecule: the small molecule name or SMILES the aptamer should bind to. If the user gives a non-English name (e.g., Chinese), translate it to the standard English common name. If missing, set to null.
 - modification_region: optional description of regions the user wants to mutate (e.g., "loop region", "positions 10-20"). If missing, set to null.
 - analogs: list of other small molecules to consider for specificity screening. If missing, empty list.
 - time_budget_hours: optional time budget in hours. If missing, null.
+- mixed_input_detected: true if the user provided a PDB identifier plus direct sequence/target details together, otherwise false.
 - missing_fields: list of required fields that are still missing ("initial_sequence" and/or "target_molecule").
 - follow_up_question: a concise question to ask the user to fill in the missing required fields. If nothing is missing, set to null.
 
@@ -24,9 +27,24 @@ Summarize the user's request in plain language for a chat UI.
 
 Rules:
 - Do not use JSON, markdown code fences, or key-value formatting.
-- Mention the detected sequence and target molecule if present.
+- Mention the detected sequence, target molecule, and PDB ID if present.
 - If required fields are missing, say what is missing and ask one concise follow-up question.
 - Keep it to 2-4 short sentences.
+"""
+
+SYSTEM_PDB_REVIEW = """You are reviewing a PDB-derived summary for an aptamer workflow.
+
+You are given a concise summary of one PDB structure after deterministic parsing already extracted chain and ligand candidates.
+
+Return ONLY a JSON object with:
+- semantic_status: one of "aptamer_like", "uncertain", "not_aptamer"
+- confidence: one of "high", "medium", "low"
+- note: a short factual note for the UI
+
+Rules:
+- Do not invent chains, ligands, or sequence facts not present in the summary.
+- Treat this as a semantic sanity check only.
+- If nucleic acid chains are present but the structure could still be relevant, prefer "uncertain" over "not_aptamer".
 """
 
 SYSTEM_SITE_PROPOSAL = """You are a mutation advisor for aptamer design.
@@ -160,6 +178,14 @@ class IntakeSkill:
 
     def explain_extract_stream(self, user_text: str):
         return self.client.chat_text_stream(DISPLAY_INTAKE, user_text)
+
+
+class PdbReviewSkill:
+    def __init__(self, client: LLMClient | None = None) -> None:
+        self.client = client or LLMClient()
+
+    def review_summary(self, summary: str) -> dict[str, Any]:
+        return self.client.chat_json(SYSTEM_PDB_REVIEW, summary)
 
 
 class SiteProposalSkill:

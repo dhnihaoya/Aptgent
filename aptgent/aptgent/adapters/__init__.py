@@ -6,10 +6,20 @@ from aptgent.adapters.base import (
     SpatialRankAdapter,
     StructureAdapter,
 )
+from aptgent.adapters.pdb_analysis import PdbAnalysisAdapter
+from aptgent.adapters.structure_services import (
+    StructureFetchAdapter,
+    StructureLookupAdapter,
+    TertiaryStructureAdapter,
+)
 
 __all__ = [
     "MoleculeAdapter",
+    "PdbAnalysisAdapter",
     "PredictionAdapter",
     "SpatialRankAdapter",
+    "StructureFetchAdapter",
     "StructureAdapter",
+    "StructureLookupAdapter",
+    "TertiaryStructureAdapter",
 ]

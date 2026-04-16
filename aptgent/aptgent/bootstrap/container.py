@@ -20,6 +20,7 @@ class AppRuntime:
     prediction_adapter: Any
     molecule_resolver: Any
     spatial_rank_adapter: Any
+    pdb_analysis_adapter: Any
 
 
 def create_persistence(config: dict[str, Any]) -> Persistence:
@@ -78,6 +79,16 @@ def create_spatial_rank_adapter() -> Any:
     return SpatialRankAdapter()
 
 
+def create_pdb_analysis_adapter(tools_config: dict[str, Any]) -> Any:
+    from aptgent.adapters.pdb_analysis import PdbAnalysisAdapter
+
+    pdb_cfg = tools_config.get("pdb_analysis", {})
+    return PdbAnalysisAdapter(
+        wget_command=pdb_cfg.get("command", "wget"),
+        base_url=pdb_cfg.get("base_url", "https://files.rcsb.org/download"),
+    )
+
+
 def build_runtime(config_bundle: AppConfigBundle | None = None) -> AppRuntime:
     bundle = config_bundle or load_config()
     config = bundle.workflow
@@ -97,4 +108,5 @@ def build_runtime(config_bundle: AppConfigBundle | None = None) -> AppRuntime:
         prediction_adapter=create_prediction_adapter(tools_config),
         molecule_resolver=create_molecule_resolver(),
         spatial_rank_adapter=create_spatial_rank_adapter(),
+        pdb_analysis_adapter=create_pdb_analysis_adapter(tools_config),
     )

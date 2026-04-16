@@ -336,7 +336,7 @@ class ActivityBubble(Static):
         if self._timer is not None:
             self._timer.stop()
             self._timer = None
-        self.update(f"[bold #facc15]•[/] {self._text}")
+        self.update(f"[bold #94a3b8]run[/] [bold #facc15]•[/] {self._text}")
 
     def _tick(self) -> None:
         self._update_render()
@@ -349,7 +349,7 @@ class ActivityBubble(Static):
     def _update_render(self) -> None:
         color, bold, icon = self._FRAMES[self._frame_idx % len(self._FRAMES)]
         style = f"bold {color}" if bold else color
-        self.update(f"[{style}]{icon} {self._text}[/]")
+        self.update(f"[bold #94a3b8]run[/] [{style}]{icon} {self._text}[/]")
 
 
 class InputBar(Vertical):

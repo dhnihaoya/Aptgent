@@ -7,7 +7,7 @@ from aptgent.workflow.persistence import Persistence
 from aptgent.workflow.state import RunState
 
 TRANSITIONS: dict[Step, list[Step]] = {
-    Step.INTAKE: [Step.SECONDARY_STRUCTURE],
+    Step.INTAKE: [Step.INTAKE, Step.SECONDARY_STRUCTURE],
     Step.SECONDARY_STRUCTURE: [Step.SITE_PROPOSAL],
     Step.SITE_PROPOSAL: [Step.CANDIDATE_ENUMERATION],
     Step.CANDIDATE_ENUMERATION: [Step.PRIMARY_SCORING],
