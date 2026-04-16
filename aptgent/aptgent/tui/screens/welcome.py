@@ -9,6 +9,10 @@ from textual.widgets import Static
 from aptgent.tui.commands import DEFAULT_SLASH_COMMANDS
 from aptgent.tui.screens.theme_picker import ThemePickerScreen
 from aptgent.tui.screens.resume import ResumePickerScreen
+from aptgent.tui.steps.common import (
+    INITIAL_INTAKE_PLACEHOLDER,
+    format_initial_intake_prompt,
+)
 from aptgent.tui.widgets.chat_widgets import InputBar, StepDivider, SystemBubble
 
 
@@ -94,14 +98,9 @@ class WelcomeScreen(Screen):
     def _seed_log(self) -> None:
         chat_log = self.query_one("#welcome-log", VerticalScroll)
         chat_log.mount(StepDivider(self.app.progress_bar.current_step))
-        chat_log.mount(
-            SystemBubble(
-                "Start with a plain-language brief, sequence, or target molecule.\n"
-                "Use `/resume` to reopen a saved run.",
-                markdown=True,
-            )
-        )
+        chat_log.mount(SystemBubble(format_initial_intake_prompt(), markdown=True))
         chat_log.scroll_end(animate=False)
+        self.query_one("#input-bar", InputBar).set_placeholder(INITIAL_INTAKE_PLACEHOLDER)
 
     def _focus_input(self) -> None:
         try:

@@ -193,7 +193,7 @@ def test_format_intake_confirmation_includes_structured_details():
         time_budget_hours=6,
     )
 
-    assert "### Captured Intake Details" in message
+    assert "**Captured Intake Details**" in message
     assert "- **Sequence**: `ACGU`" in message
     assert "- **Target**: **theophylline**" in message
     assert "- **Requested modification region**: loop region" in message

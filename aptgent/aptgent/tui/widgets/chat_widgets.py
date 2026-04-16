@@ -23,6 +23,21 @@ _BREATHING_HEADER_FRAMES = [
 ]
 
 
+def _normalize_markdown_for_chat(text: str) -> str:
+    normalized_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if not stripped.startswith("#"):
+            normalized_lines.append(line)
+            continue
+        heading = stripped.lstrip("#").strip()
+        if heading:
+            normalized_lines.append(f"**{heading}**")
+        else:
+            normalized_lines.append(line)
+    return "\n".join(normalized_lines)
+
+
 class _BaseBubble(Static):
     """Shared styling for chat bubbles."""
 
@@ -45,7 +60,7 @@ class _BaseBubble(Static):
     def set_content(self, text: str) -> None:
         self._text = text
         if self._markdown:
-            super().update(Markdown(text or " "))
+            super().update(Markdown(_normalize_markdown_for_chat(text or " ")))
         else:
             super().update(text)
 
@@ -89,14 +104,10 @@ class StreamingBubble(Static):
     def append_text(self, text: str) -> None:
         self._buffer += text
         self.update(self._buffer + "▌")
-        try:
-            self.scroll_visible(animate=False)
-        except Exception:
-            pass
 
     def finalize(self) -> None:
         if self._markdown:
-            self.update(Markdown(self._buffer or " "))
+            self.update(Markdown(_normalize_markdown_for_chat(self._buffer or " ")))
         else:
             self.update(self._buffer)
 
@@ -151,10 +162,6 @@ class ThinkingBubble(Static):
     def append_text(self, text: str) -> None:
         self._buffer += text
         self._refresh_display()
-        try:
-            self.scroll_visible(animate=False)
-        except Exception:
-            pass
 
     def toggle(self) -> None:
         if not self.has_content:
@@ -172,10 +179,6 @@ class ThinkingBubble(Static):
     def _tick(self) -> None:
         self._refresh_display()
         self._frame_idx += 1
-        try:
-            self.scroll_visible(animate=False)
-        except Exception:
-            pass
 
     def _header_style(self) -> str:
         if not self._streaming:
@@ -244,10 +247,6 @@ class ProgressBubble(Static):
         if info:
             self._info = info
         self._update_display()
-        try:
-            self.scroll_visible(animate=False)
-        except Exception:
-            pass
 
     def finish(self, message: str) -> None:
         self.update(f"[bold green]✓[/bold green] {message}")
@@ -341,10 +340,6 @@ class ActivityBubble(Static):
     def _tick(self) -> None:
         self._update_render()
         self._frame_idx += 1
-        try:
-            self.scroll_visible(animate=False)
-        except Exception:
-            pass
 
     def _update_render(self) -> None:
         color, bold, icon = self._FRAMES[self._frame_idx % len(self._FRAMES)]

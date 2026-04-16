@@ -6,6 +6,14 @@ from aptgent.adapters.pdb_analysis import normalize_pdb_id
 from aptgent.domain.models import TargetMolecule
 from aptgent.workflow.engine import TRANSITIONS
 
+INITIAL_INTAKE_PLACEHOLDER = (
+    "e.g. Design an aptamer for theophylline, sequence: GGGAAACCC... or provide a PDB ID"
+)
+
+
+def section_heading(title: str) -> str:
+    return f"**{title}**"
+
 
 def next_step(step) -> Any:
     targets = TRANSITIONS.get(step, [])
@@ -197,6 +205,18 @@ def validate_intake_result(result: Any) -> dict[str, Any]:
     }
 
 
+def format_initial_intake_prompt() -> str:
+    return "\n".join(
+        [
+            section_heading("Step 1: Intake"),
+            "",
+            "- Describe the aptamer design task in plain language.",
+            "- You can provide a sequence and target molecule directly.",
+            "- You can also provide a PDB ID and let the workflow extract the sequence and any bound ligand candidates.",
+        ]
+    )
+
+
 def format_intake_confirmation(
     *,
     sequence: str,
@@ -207,7 +227,7 @@ def format_intake_confirmation(
     time_budget_hours: int | None,
 ) -> str:
     lines = [
-        "### Captured Intake Details",
+        section_heading("Captured Intake Details"),
         "",
         f"- **Sequence**: `{sequence}`",
     ]
@@ -278,12 +298,12 @@ def format_specificity_recommendation_markdown(
     heading_target = target_name or "the current target"
     if not analogs:
         return (
-            "### Recommended Specificity Analogs\n\n"
+            f"{section_heading('Recommended Specificity Analogs')}\n\n"
             f"No strong analog recommendations were returned for **{heading_target}**."
         )
 
     lines = [
-        "### Recommended Specificity Analogs",
+        section_heading("Recommended Specificity Analogs"),
         "",
         f"Target: **{heading_target}**",
         "",
@@ -397,7 +417,7 @@ def format_docking_recommendation_markdown(
         else "not specified"
     )
     return (
-        "### Recommended Docking Setup\n\n"
+        f"{section_heading('Recommended Docking Setup')}\n\n"
         f"- Candidates available: **{candidate_count}**\n"
         f"- Time budget: **{budget_text}**\n"
         f"- Suggested batch: **top {recommended_top_k}**\n"

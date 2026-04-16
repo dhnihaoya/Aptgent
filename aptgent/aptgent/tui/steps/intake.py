@@ -9,6 +9,9 @@ from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.steps.common import (
     clean_text,
     format_intake_confirmation,
+    format_initial_intake_prompt,
+    section_heading,
+    INITIAL_INTAKE_PLACEHOLDER,
     next_step,
     run_llm_interaction,
     validate_intake_result,
@@ -25,9 +28,7 @@ _INLINE_SEQUENCE_TOKEN = re.compile(r"\b[ACGTU]{4,}\b", re.IGNORECASE)
 
 
 class IntakeHandler(StepHandler):
-    _INITIAL_PLACEHOLDER = (
-        "e.g. Design an aptamer for theophylline, sequence: GGGAAACCC... or provide a PDB ID"
-    )
+    _INITIAL_PLACEHOLDER = INITIAL_INTAKE_PLACEHOLDER
     _TARGET_RETRY_PLACEHOLDER = (
         "Enter a corrected molecule name or SMILES, or paste a full intake brief."
     )
@@ -57,7 +58,7 @@ class IntakeHandler(StepHandler):
             self.screen.add_system_message(
                 "\n".join(
                     [
-                        "### Step 1: Intake Retry",
+                        section_heading("Step 1: Intake Retry"),
                         "",
                         f"- **Sequence kept**: `{sequence}`",
                         f"- **Current target input**: `{intake.target_input or 'unknown'}`",
@@ -79,7 +80,7 @@ class IntakeHandler(StepHandler):
             self.screen.add_system_message(
                 "\n".join(
                     [
-                        "### Step 1: Missing Target Molecule",
+                        section_heading("Step 1: Missing Target Molecule"),
                         "",
                         f"- **Sequence kept** from {source_label}: `{sequence}`",
                         "- **Missing**: target small molecule",
@@ -95,7 +96,7 @@ class IntakeHandler(StepHandler):
             self.screen.add_system_message(
                 "\n".join(
                     [
-                        "### Step 1: Review PDB Import",
+                        section_heading("Step 1: Review PDB Import"),
                         "",
                         f"- **PDB ID**: `{pdb_ctx.pdb_id or 'unknown'}`",
                         "- Multiple chain and/or ligand candidates were detected.",
@@ -113,7 +114,7 @@ class IntakeHandler(StepHandler):
             self.screen.add_system_message(
                 "\n".join(
                     [
-                        "### Step 1: Intake Retry",
+                        section_heading("Step 1: Intake Retry"),
                         "",
                         f"- **Issue**: {error_text}",
                         "- **Next input**: provide a valid PDB ID, or a sequence plus target molecule.",
@@ -125,15 +126,7 @@ class IntakeHandler(StepHandler):
             self.screen.set_input_placeholder(self._GENERAL_RETRY_PLACEHOLDER)
         else:
             self.screen.add_system_message(
-                "\n".join(
-                    [
-                        "### Step 1: Intake",
-                        "",
-                        "- Describe the aptamer design task in plain language.",
-                        "- You can provide a sequence and target molecule directly.",
-                        "- You can also provide a PDB ID and let the workflow extract the sequence and any bound ligand candidates.",
-                    ]
-                ),
+                format_initial_intake_prompt(),
                 markdown=True,
             )
             self.screen.set_input_placeholder(self._INITIAL_PLACEHOLDER)

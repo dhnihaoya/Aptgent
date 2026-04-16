@@ -45,6 +45,15 @@ class FakeRNAFoldAdapter:
         )
 
 
+class CountingRNAFoldAdapter(FakeRNAFoldAdapter):
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def fold(self, sequence: str) -> SecondaryStructure:
+        self.calls.append(sequence)
+        return super().fold(sequence)
+
+
 class FakePredictionAdapter:
     def predict_batch(self, candidates, target):
         return []
@@ -105,10 +114,24 @@ class FakePdbAnalysisAdapter:
             return "unknown"
         return "match" if user_sequence == pdb_sequence else "mismatch"
 
+    def derive_secondary_structure(self, *, pdb_id, artifact_path, chain_id):
+        return SecondaryStructure(
+            sequence="ACGU",
+            dot_bracket="(())",
+            mfe=0.0,
+            features={
+                "source": "pdb_derived",
+                "pdb_id": pdb_id,
+                "chain_id": chain_id,
+                "artifact_path": str(artifact_path),
+            },
+        )
+
 
 def make_app(
     tmp_path,
     *,
+    rna_fold_adapter=None,
     pdb_analysis_adapter=None,
     intake_skill_factory=None,
     pdb_review_skill_factory=None,
@@ -123,7 +146,7 @@ def make_app(
             "enumeration": {"max_candidates": 5000},
         },
         tools_config={},
-        rna_fold_adapter=FakeRNAFoldAdapter(),
+        rna_fold_adapter=rna_fold_adapter or FakeRNAFoldAdapter(),
         prediction_adapter=FakePredictionAdapter(),
         vina_adapter=FakeVinaAdapter(),
         molecule_resolver=FakeResolver(),
@@ -194,6 +217,11 @@ async def test_welcome_screen_has_chat_input_not_name_prompt(tmp_path):
             app.screen.query_one("#btn-new-run")
         with pytest.raises(NoMatches):
             app.screen.query_one("#welcome-kicker")
+        welcome_bubbles = list(app.screen.query("#welcome-log SystemBubble"))
+        assert any("**Step 1: Intake**" in bubble._text for bubble in welcome_bubbles)
+        assert chat_input.placeholder == (
+            "e.g. Design an aptamer for theophylline, sequence: GGGAAACCC... or provide a PDB ID"
+        )
 
 
 @pytest.mark.anyio
@@ -599,7 +627,7 @@ async def test_intake_retry_prompt_sets_retry_placeholder(tmp_path):
         assert chat_input.placeholder == (
             "Enter a corrected molecule name or SMILES, or paste a full intake brief."
         )
-        assert any("### Step 1: Intake Retry" in bubble._text for bubble in bubbles)
+        assert any("**Step 1: Intake Retry**" in bubble._text for bubble in bubbles)
 
 
 @pytest.mark.anyio
@@ -838,6 +866,42 @@ async def test_secondary_structure_hides_not_configured_lookup_note(tmp_path):
         ]
         assert not any("No structure lookup adapter is configured" in text for text in bubble_texts)
         assert app.current_state.context.secondary_structure.note == "Secondary structure generated from RNAfold."
+
+
+@pytest.mark.anyio
+async def test_secondary_structure_prefers_pdb_derived_result_when_pdb_context_exists(tmp_path):
+    rnafold = CountingRNAFoldAdapter()
+    app = make_app(
+        tmp_path,
+        rna_fold_adapter=rnafold,
+        pdb_analysis_adapter=FakePdbAnalysisAdapter(),
+    )
+    state = app.engine.create_run("structure_from_pdb")
+    state.current_step = Step.SECONDARY_STRUCTURE
+    state.input_payload["initial_sequence"] = "ACGU"
+    state.context.pdb_intake.pdb_id = "1EHZ"
+    state.context.pdb_intake.artifact_path = str(tmp_path / "1EHZ.pdb")
+    state.context.pdb_intake.selected_chain_id = "A"
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.set_run_id("structure_from_pdb")
+        app.push_screen("chat")
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert rnafold.calls == []
+        assert app.current_state.secondary_structure is not None
+        assert app.current_state.secondary_structure.dot_bracket == "(())"
+        assert app.current_state.context.secondary_structure.source == "pdb"
+        bubble_texts = [
+            bubble._text
+            for bubble in app.screen.query(SystemBubble)
+            if hasattr(bubble, "_text")
+        ]
+        assert any("Using PDB-derived secondary structure." in text for text in bubble_texts)
 
 
 def test_thinking_bubble_toggles_expansion():
