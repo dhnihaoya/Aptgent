@@ -46,7 +46,7 @@ class WelcomeScreen(Screen):
         scrollbar-size: 1 1;
     }
     #welcome-hero {
-        background: #0a1220;
+        background: #0f151d;
         border: round $primary;
         padding: 2 3 1 3;
         margin: 1 1 0 1;

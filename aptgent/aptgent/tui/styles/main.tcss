@@ -1,53 +1,56 @@
 Screen {
     layout: vertical;
-    background: #08101a;
+    background: $background;
+    color: $text;
 }
 
 /* ── Progress Bar ── */
 
 #progress-bar {
     height: 1;
-    color: #9fb6d1;
-    background: #0b1421;
+    color: #92a6bc;
+    background: #0b1016;
     padding: 0 1;
-    border-bottom: tall #23415d;
+    border-bottom: tall #21456d;
 }
 
 /* ── Status Panel ── */
 
 #status-panel {
     height: 1;
-    background: #0d1623;
-    color: #95abc6;
+    background: #0e1319;
+    color: #8fa2b6;
     padding: 0 1;
-    border-bottom: tall #1b2d40;
+    border-bottom: tall #182d44;
 }
 
 SystemBubble {
-    background: #0f1724;
-    border-left: wide #27425d;
+    background: #10151c;
+    color: #d7e1ec;
+    border-left: wide #24527f;
 }
 
 StreamingBubble {
-    background: #111b29;
-    border-left: wide #366da1;
+    background: #121821;
+    color: #d7e1ec;
+    border-left: wide #3c82c9;
 }
 
 SystemBubble.tool-bubble {
-    background: #11161d;
+    background: #141922;
     color: #c6d0db;
-    border-left: wide #66758b;
+    border-left: wide #5f6f84;
 }
 
 ActivityBubble {
-    background: #11161d;
-    border-left: wide #66758b;
+    background: #141922;
+    border-left: wide #5f6f84;
     color: #c6d0db;
 }
 
 StepDivider {
     color: #8fc7ff;
-    background: #0d1623;
+    background: transparent;
 }
 
 /* ── Utility classes ── */

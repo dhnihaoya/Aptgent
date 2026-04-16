@@ -4,6 +4,7 @@ from typing import Any
 
 from textual.app import App
 from textual.binding import Binding
+from textual.theme import Theme
 
 from aptgent.bootstrap import (
     build_runtime,
@@ -31,6 +32,25 @@ from aptgent.adapters.structure_services import (
 )
 from aptgent.llm.skills import IntakeSkill, PdbReviewSkill
 
+APTGENT_DARK_THEME = Theme(
+    name="aptgent-dark",
+    primary="#4C9DFF",
+    secondary="#2D5B8E",
+    warning="#F0B64E",
+    error="#C86B7A",
+    success="#63B58C",
+    accent="#72C3FF",
+    foreground="#D7E1EC",
+    background="#05080D",
+    surface="#0E141B",
+    panel="#151D26",
+    dark=True,
+    variables={
+        "button-color-foreground": "#05080D",
+        "input-selection-background": "#4C9DFF33",
+    },
+)
+
 
 class AptgentApp(App):
     """Main Textual application for aptamer design workflow."""
@@ -38,7 +58,7 @@ class AptgentApp(App):
     TITLE = "Aptgent"
     SUB_TITLE = "Aptamer Design Assistant"
     CSS_PATH = "styles/main.tcss"
-    DEFAULT_THEME = "textual-dark"
+    DEFAULT_THEME = "aptgent-dark"
 
     SCREENS = {
         "welcome": WelcomeScreen,
@@ -143,6 +163,7 @@ class AptgentApp(App):
 
         self.progress_bar = StepProgressBar(Step.INTAKE, id="progress-bar")
         self.status_panel = StatusPanel("", "", id="status-panel")
+        self.register_theme(APTGENT_DARK_THEME)
         self.theme = self.DEFAULT_THEME
 
     @property

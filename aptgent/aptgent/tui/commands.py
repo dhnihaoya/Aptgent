@@ -45,9 +45,14 @@ THEME_COMMAND = SlashCommand(
 
 THEME_PRESETS = (
     ThemePreset(
+        label="Aptgent Dark",
+        theme_name="aptgent-dark",
+        description="Near-black default theme with cool blue accents.",
+    ),
+    ThemePreset(
         label="Textual Dark",
         theme_name="textual-dark",
-        description="Near-black default theme with restrained contrast.",
+        description="The stock Textual dark palette with restrained contrast.",
     ),
     ThemePreset(
         label="Tokyo Night",

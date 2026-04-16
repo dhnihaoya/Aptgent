@@ -173,7 +173,8 @@ async def test_welcome_screen_starts_without_active_run(tmp_path):
         assert app._state is None
         assert app.persistence.list_runs() == []
         assert app.status_panel.run_id == ""
-        assert app.theme == "textual-dark"
+        assert app.theme == "aptgent-dark"
+        assert app.get_theme("aptgent-dark").name == "aptgent-dark"
 
 
 @pytest.mark.anyio
@@ -500,6 +501,37 @@ async def test_chat_activity_bubble_is_last_status_message(tmp_path):
         await pilot.pause()
 
         assert chat_log.children[-1] is activity
+
+
+@pytest.mark.anyio
+async def test_chat_screen_does_not_force_scroll_when_user_is_reading_history(tmp_path):
+    app = make_app(tmp_path)
+    state = app.engine.create_run("scroll_history_case")
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.set_run_id("scroll_history_case")
+        app.push_screen("chat")
+        await pilot.pause()
+
+        screen = app.screen
+        chat_log = screen.query_one("#chat-log")
+        for index in range(40):
+            screen.add_system_message(f"History block {index}\nLine A\nLine B")
+        await pilot.pause()
+
+        assert chat_log.max_scroll_y > 0
+
+        chat_log.scroll_home(animate=False, immediate=True)
+        await pilot.pause()
+
+        scroll_before = chat_log.scroll_y
+        screen.add_system_message("Newest update should not hijack the viewport.")
+        await pilot.pause()
+
+        assert chat_log.scroll_y == scroll_before
+        assert not chat_log.is_vertical_scroll_end
 
 
 def test_activity_bubble_animates_text_and_icon_together():
