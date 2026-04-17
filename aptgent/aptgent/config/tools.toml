@@ -10,7 +10,7 @@ num_modes = 9
 energy_range = 3.0
 
 [predictor]
-model_dir = "/home/dh/Aptgent/aptamer_predictor/models"
+model_dir = "/home/dh/Aptgent/aptgent/aptgent/resources/predictor_models"
 conda_env = "aptamer-predictor"
 conda_python = "/home/dh/.conda/envs/aptamer-predictor/bin/python"
 

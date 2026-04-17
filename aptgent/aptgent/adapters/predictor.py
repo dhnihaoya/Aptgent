@@ -4,15 +4,17 @@ import json
 import os
 import subprocess
 import tempfile
+from pathlib import Path
 from typing import Any
 
 from aptgent.domain.models import CandidateSequence, PredictionResult, TargetMolecule
+from aptgent.predictor_runtime.paths import RUNNER_MODULE, default_model_dir
 
 
 class EnsembleAdapter:
-    """Adapter wrapping the 9-model ensemble predictor via subprocess.
+    """Adapter wrapping the internal 9-model ensemble predictor via subprocess.
 
-    Calls the ``aptamer-predictor`` CLI in its own conda environment so that
+    Calls the internal predictor runner in its own conda environment so that
     heavy dependencies (rdkit, torch, xgboost, …) need not be installed in
     the main aptgent environment.
     """
@@ -24,22 +26,12 @@ class EnsembleAdapter:
         conda_python: str | None = None,
     ) -> None:
         if model_dir is None:
-            model_dir = os.path.abspath(
-                os.path.join(
-                    os.path.dirname(__file__),
-                    "..", "..", "..", "aptamer_predictor", "models",
-                )
-            )
+            model_dir = str(default_model_dir())
         self.model_dir = model_dir
         self.conda_env = conda_env
         self.conda_python = conda_python
 
-        self._project_root = os.path.abspath(
-            os.path.join(
-                os.path.dirname(__file__),
-                "..", "..", "..", "aptamer_predictor",
-            )
-        )
+        self._project_root = str(Path(__file__).resolve().parents[2])
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -48,15 +40,15 @@ class EnsembleAdapter:
     def _build_cmd(self) -> list[str]:
         """Return the base command prefix for invoking the predictor CLI."""
         if self.conda_python:
-            return [self.conda_python, "-m", "aptamer_predictor"]
+            return [self.conda_python, "-m", RUNNER_MODULE]
         if self.conda_env:
             return [
                 "conda", "run",
                 "--no-capture-output",
                 "-n", self.conda_env,
-                "python", "-m", "aptamer_predictor",
+                "python", "-m", RUNNER_MODULE,
             ]
-        return ["python", "-m", "aptamer_predictor"]
+        return ["python", "-m", RUNNER_MODULE]
 
     def _run(self, extra_args: list[str], timeout: int = 600) -> subprocess.CompletedProcess[str]:
         """Invoke the predictor CLI with the given extra arguments."""

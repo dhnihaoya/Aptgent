@@ -24,3 +24,6 @@ aptgent = "aptgent.tui.app:run"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["aptgent*"]
+
+[tool.setuptools.package-data]
+aptgent = ["resources/predictor_models/*.pkl"]

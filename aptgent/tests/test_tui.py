@@ -262,7 +262,16 @@ async def test_welcome_screen_has_refined_hero_elements(tmp_path):
         meta = app.screen.query_one("#welcome-meta")
         assert meta is not None
         assert "Sequence" in str(meta.render())
-        assert "╱╳╲" in WelcomeScreen.LOGO
+        assert "/" in WelcomeScreen.LOGO
+        assert "\\" in WelcomeScreen.LOGO
+
+
+def test_welcome_logo_uses_ascii_safe_weave_core():
+    lines = WelcomeScreen.LOGO.splitlines()
+    assert len(lines) == 5
+    assert all(len(line) == len(lines[0]) for line in lines)
+    assert "╭" not in WelcomeScreen.LOGO
+    assert "│" not in WelcomeScreen.LOGO
 
 
 @pytest.mark.anyio

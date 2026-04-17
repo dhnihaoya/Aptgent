@@ -1,9 +1,10 @@
 # Aptgent — Aptamer Design Assistant
 
-This repository contains two related Python projects:
+This repository centers on one Python project:
 
 - `aptgent/`: the Textual-based TUI workflow application.
-- `aptamer_predictor/`: a separate CLI package that provides the aptamer-small molecule predictor used by `aptgent` via subprocess.
+
+The aptamer-small molecule predictor is now integrated inside `aptgent` as an internal runtime that is still launched via subprocess to keep the ML dependency stack isolated from the main TUI environment.
 
 `aptgent` drives a chat-first workflow from natural-language intake to ranked candidate recommendations, combining RNA structure prediction, deterministic scoring, specificity filtering, molecular docking, and spatial interaction ranking.
 
@@ -57,12 +58,11 @@ Natural language input
 
 ## Setup
 
-### 1. Use the monorepo layout as-is
+### 1. Use the repository layout as-is
 
 ```
 /path/to/Aptgent/
-  ├── aptgent/              # TUI app package
-  └── aptamer_predictor/    # Predictor CLI package
+  └── aptgent/              # TUI app package + internal predictor runtime
 ```
 
 ```bash
@@ -128,16 +128,18 @@ cd aptgent
 pip install -e .
 ```
 
-This installs the `aptgent` app dependencies listed in `pyproject.toml` (Textual, Pydantic, httpx, numpy, psutil, meeko). The heavier predictor stack stays isolated in `aptamer_predictor/`.
+This installs the `aptgent` app dependencies listed in `pyproject.toml` (Textual, Pydantic, httpx, numpy, psutil, meeko). The heavier predictor stack remains isolated in a separate runtime environment.
 
-### 7. Install the predictor environment
+### 7. Install the predictor runtime environment
 
 ```bash
-cd ../aptamer_predictor
-pip install -r requirements.txt
+conda create -n aptamer-predictor python=3.9 -y
+conda activate aptamer-predictor
+conda install -c conda-forge rdkit=2023.9 -y
+pip install numpy pandas scikit-learn xgboost torch matplotlib
 ```
 
-`aptgent` calls `aptamer_predictor` through a subprocess adapter. Keep that environment separate if you want to avoid installing the full ML stack into the TUI environment.
+`aptgent` calls its internal predictor runtime through a subprocess adapter. Keep that environment separate if you want to avoid installing the full ML stack into the TUI environment.
 
 ### 8. Configure LLM API key
 
@@ -166,7 +168,7 @@ At minimum, verify:
 ### 10. Verify installation
 
 ```bash
-cd ../aptgent
+cd /path/to/Aptgent/aptgent
 python -m aptgent
 ```
 
@@ -222,32 +224,19 @@ You can close the TUI and resume later from the Welcome screen.
 .
 ├── aptgent/
 │   ├── aptgent/
-│   │   ├── tui/
-│   │   │   ├── app.py
-│   │   │   ├── screens/
-│   │   │   │   ├── welcome.py
-│   │   │   │   ├── chat.py
-│   │   │   │   ├── resume.py
-│   │   │   │   └── quit_confirm.py
-│   │   │   └── widgets/
-│   │   │       ├── step_handlers.py
-│   │   │       ├── chat_widgets.py
-│   │   │       ├── structured_input.py
-│   │   │       └── common.py
-│   │   ├── workflow/
 │   │   ├── adapters/
+│   │   │   ├── predictor.py
+│   │   ├── predictor_runtime/
+│   │   ├── resources/
+│   │   │   └── predictor_models/
+│   │   ├── tui/
+│   │   ├── workflow/
 │   │   ├── llm/
 │   │   ├── domain/
 │   │   └── config/
 │   ├── tests/
 │   ├── pyproject.toml
 │   └── README.md
-└── aptamer_predictor/
-    ├── aptamer_predictor/
-    ├── models/
-    ├── data/
-    ├── requirements.txt
-    └── README.md
 ```
 
 The current UI is chat-first: `AptgentApp` registers `welcome` and `chat`, and the per-step workflow logic lives in `aptgent/aptgent/tui/widgets/step_handlers.py`.
@@ -284,7 +273,7 @@ top_k_strategy = "auto"
 
 ## Tested Dependency Versions
 
-These are the app-side dependencies for `aptgent`. Predictor-specific ML stack versions are documented in `aptamer_predictor/README.md`.
+These are the app-side dependencies for `aptgent`. The predictor runtime still needs RDKit, scikit-learn, xgboost, torch, and related scientific packages in its own environment.
 
 | Package      | Version    |
 |--------------|------------|

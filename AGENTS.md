@@ -4,10 +4,10 @@
 
 ## 1. 仓库概览
 
-本仓库包含两个相关但独立的 Python 项目：
+本仓库当前只有一个 Python 项目：
 
 - `aptgent/`：主项目，一个基于 Textual 的 TUI（终端界面）工作流应用。
-- `aptamer_predictor/`：独立 CLI 工具，提供适配体-小分子结合预测能力，由 `aptgent` 通过子进程调用。
+- 预测器能力已经深度整合进 `aptgent`，由内部 predictor runtime 通过子进程运行，以保留重依赖隔离。
 
 `aptgent` 的主流程是一个状态驱动的多步骤工作流，LLM 只用于自然语言解析、解释和建议，不应成为确定性评分、排序或状态流转的事实来源。
 
@@ -114,18 +114,19 @@ LLM 输出是辅助信息，不应覆盖确定性计算结果。涉及评分、�
 
 `ChatScreen.advance_to_step()` 会调用 `WorkflowEngine.transition_to()` 并保存状态；如果你看到状态推进异常，优先沿这条链检查。
 
-## 6. `aptamer_predictor` 集成事实
+## 6. Predictor 集成事实
 
-`aptamer_predictor/` 是仓库内的独立 CLI 包，不是通过 wheel 依赖引入。`aptgent` 通过 prediction adapter 调用它。
+预测能力不再位于顶层 `aptamer_predictor/` 独立项目中，而是内聚到 `aptgent` 包内。`aptgent` 仍通过 prediction adapter 调用独立运行时，以隔离 RDKit、torch、xgboost 等重依赖。
 
 对预测功能做修改时，通常需要同时检查：
 
 - `aptgent/aptgent/adapters/predictor.py`
-- `aptamer_predictor/aptamer_predictor/cli.py`
-- `aptamer_predictor/aptamer_predictor/predictor.py`
-- `aptamer_predictor/aptamer_predictor/features.py`
+- `aptgent/aptgent/predictor_runtime/runner.py`
+- `aptgent/aptgent/predictor_runtime/predictor.py`
+- `aptgent/aptgent/predictor_runtime/features.py`
+- `aptgent/aptgent/resources/predictor_models/`
 
-当前 `aptamer_predictor` 中的 ensemble 规则是严格规则：只有所有模型都预测为 `1`，ensemble label 才为 `1`。不要把 README 中更宽泛的措辞当作真实实现来源，真实行为以代码为准。
+当前 predictor runtime 中的 ensemble 规则是严格规则：只有所有模型都预测为 `1`，ensemble label 才为 `1`。不要把旧文档或历史措辞当作真实实现来源，真实行为以代码为准。
 
 ## 7. 配置与环境注意事项
 
@@ -154,17 +155,17 @@ python -m aptgent
 pytest
 ```
 
-预测器单独检查：
+预测器运行时单独检查：
 
 ```bash
-cd aptamer_predictor
-python -m aptamer_predictor predict --help
+cd aptgent
+python -m aptgent.predictor_runtime.runner predict --help
 ```
 
 说明：
 
 - `aptgent` 依赖 Textual、Pydantic、httpx 等。
-- `aptamer_predictor` 依赖 RDKit、scikit-learn、xgboost、torch 等更重的科学计算栈。
+- predictor runtime 依赖 RDKit、scikit-learn、xgboost、torch 等更重的科学计算栈。
 - `workflow.toml` 当前默认 `runs_dir = "./runs"`，这是相对路径，效果取决于进程工作目录。
 
 ## 9. 测试位置
@@ -182,7 +183,7 @@ python -m aptamer_predictor predict --help
 - spatial ranking
 - predictor adapter 行为
 
-如果你修改的是 `aptamer_predictor/` 内部逻辑，还需要额外做 CLI 或模块级验证；仓库当前没有看到与 `aptamer_predictor` 对称的完整 pytest 目录。
+如果你修改的是 predictor runtime 内部逻辑，还需要额外做 adapter 级或模块级验证；仓库当前没有与其完全对称的独立 pytest 子目录。
 
 ## 10. 推荐修改策略
 
@@ -204,11 +205,11 @@ python -m aptamer_predictor predict --help
 - 模型子进程集成
 - 分子解析、空间打分、对接调用
 
-### 适合改在 `aptamer_predictor` 的问题
+### 适合改在 predictor runtime 的问题
 
 - 特征提取
 - 单模型/ensemble 预测逻辑
-- CLI 输入输出行为
+- 内部 runner 输入输出行为
 
 ## 11. 不要这样改
 

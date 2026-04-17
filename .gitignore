@@ -44,3 +44,8 @@ plan.md
 *.jpg
 *.png
 *.jpeg
+
+# Claude Code / local tools
+.claude/
+.superpowers/
+docs/

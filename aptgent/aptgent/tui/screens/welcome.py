@@ -21,11 +21,11 @@ class WelcomeScreen(Screen):
 
     LOGO = "\n".join(
         [
-            "╭──────╮",
-            "│╲╱╲╱│",
-            "│╱╳╲╱│",
-            "│╲╱╲╱│",
-            "╰──────╯",
+            " /\\/\\ ",
+            " \\\\// ",
+            " //\\\\ ",
+            " \\\\// ",
+            " /\\/\\ ",
         ]
     )
 
@@ -73,6 +73,7 @@ class WelcomeScreen(Screen):
         border: round $primary 30%;
         padding: 1 1;
         margin-right: 3;
+        content-align: center middle;
     }
     #welcome-wordmark {
         color: $primary-lighten-2;
