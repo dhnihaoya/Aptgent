@@ -14,6 +14,7 @@ from aptgent.domain.models import (
     SecondaryStructure,
     TargetMolecule,
 )
+from aptgent.tui.commands import THEME_PRESETS
 from aptgent.tui.app import AptgentApp
 from aptgent.tui.screens.quit_confirm import QuitConfirmScreen
 from aptgent.tui.screens.resume import _overview, _timestamp_label
@@ -23,6 +24,7 @@ from aptgent.tui.widgets.chat_widgets import (
     InputBar,
     SystemBubble,
     ThinkingBubble,
+    UserBubble,
 )
 from aptgent.tui.widgets.structured_input import (
     ActionMenuPanel,
@@ -196,8 +198,26 @@ async def test_welcome_screen_starts_without_active_run(tmp_path):
         assert app._state is None
         assert app.persistence.list_runs() == []
         assert app.status_panel.run_id == ""
-        assert app.theme == "aptgent-dark"
-        assert app.get_theme("aptgent-dark").name == "aptgent-dark"
+        assert app.theme == "clear-lanes"
+        assert app.get_theme("clear-lanes").name == "clear-lanes"
+
+
+def test_theme_presets_only_expose_refresh_options():
+    assert [(preset.label, preset.theme_name) for preset in THEME_PRESETS] == [
+        ("Clear Lanes", "clear-lanes"),
+        ("Clean Minimal Light", "clean-minimal-light"),
+        ("Warm Industrial", "warm-industrial"),
+    ]
+
+
+def test_chat_bubble_default_css_enforces_lane_distinction():
+    assert "margin: 0 4 1 0;" in SystemBubble.DEFAULT_CSS
+    assert "width: 84%;" in SystemBubble.DEFAULT_CSS
+    assert "border-left: wide $chat-system-accent;" in SystemBubble.DEFAULT_CSS
+    assert "margin: 0 0 1 18;" in UserBubble.DEFAULT_CSS
+    assert "width: 72%;" in UserBubble.DEFAULT_CSS
+    assert "border-right: wide $chat-user-accent;" in UserBubble.DEFAULT_CSS
+    assert "border-left: wide $chat-activity-accent;" in ActivityBubble.DEFAULT_CSS
 
 
 @pytest.mark.anyio
@@ -580,9 +600,9 @@ def test_activity_bubble_animates_text_and_icon_together():
     bubble._update_render()
     bubble.finalize()
 
-    assert seen[0] == "[bold #94a3b8]run[/] [#6b7280]· Testing activity[/]"
-    assert seen[1] == "[bold #94a3b8]run[/] [bold #facc15]✦ Testing activity[/]"
-    assert seen[2] == "[bold #94a3b8]run[/] [bold #facc15]•[/] Testing activity"
+    assert seen[0] == "[bold #a9bad1]run[/] [#5f6b7a]· Testing activity[/]"
+    assert seen[1] == "[bold #a9bad1]run[/] [bold #f1c15b]✦ Testing activity[/]"
+    assert seen[2] == "[bold #a9bad1]run[/] [bold #f1c15b]•[/] Testing activity"
 
 
 @pytest.mark.anyio
@@ -1011,6 +1031,12 @@ async def test_theme_command_opens_picker_from_welcome(tmp_path):
         await pilot.pause()
 
         assert isinstance(app.screen, ThemePickerScreen)
+        options = app.screen.query_one("#theme-option-list", OptionList)
+        assert [options.get_option_at_index(index).id for index in range(len(options.options))] == [
+            "clear-lanes",
+            "clean-minimal-light",
+            "warm-industrial",
+        ]
 
 
 @pytest.mark.anyio

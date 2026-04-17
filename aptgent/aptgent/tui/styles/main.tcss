@@ -8,65 +8,65 @@ Screen {
 
 #progress-bar {
     height: 1;
-    color: #92a6bc;
-    background: #0b1016;
+    color: $chat-progress-foreground;
+    background: $chat-progress-background;
     padding: 0 1;
-    border-bottom: tall #21456d;
+    border-bottom: tall $chat-progress-border;
 }
 
 /* ── Status Panel ── */
 
 #status-panel {
     height: 1;
-    background: #0e1319;
-    color: #8fa2b6;
+    background: $chat-status-background;
+    color: $chat-status-foreground;
     padding: 0 1;
-    border-bottom: tall #182d44;
+    border-bottom: tall $chat-status-border;
 }
 
 SystemBubble {
-    background: #d7dbe1;
-    color: #18212b;
-    border-left: wide #24527f;
+    background: $chat-system-background;
+    color: $chat-system-foreground;
+    border-left: wide $chat-system-accent;
 }
 
 StreamingBubble {
-    background: #dde1e6;
-    color: #18212b;
-    border-left: wide #3c82c9;
+    background: $chat-stream-background;
+    color: $chat-stream-foreground;
+    border-left: wide $chat-stream-accent;
 }
 
 SystemBubble.tool-bubble {
-    background: #d4d8dd;
-    color: #1c252e;
-    border-left: wide #5f6f84;
+    background: $chat-tool-background;
+    color: $chat-tool-foreground;
+    border-left: wide $chat-tool-accent;
 }
 
 ActivityBubble {
-    background: #d4d8dd;
-    border-left: wide #5f6f84;
-    color: #1c252e;
+    background: $chat-activity-background;
+    color: $chat-activity-foreground;
+    border-left: wide $chat-activity-accent;
 }
 
 ThinkingBubble {
-    background: #d9dde2;
-    color: #364250;
-    border-left: wide #8d9aae;
+    background: $chat-thinking-background;
+    color: $chat-thinking-foreground;
+    border-left: wide $chat-thinking-accent;
 }
 
 UserBubble {
-    background: #dfe2e6;
-    color: #16202a;
-    border-right: wide #5d90c6;
+    background: $chat-user-background;
+    color: $chat-user-foreground;
+    border-right: wide $chat-user-accent;
 }
 
 ProgressBubble {
-    background: #d7dbe0;
-    color: #1b2430;
+    background: $chat-stream-background;
+    color: $chat-stream-foreground;
 }
 
 StepDivider {
-    color: #8fc7ff;
+    color: $chat-divider-color;
     background: transparent;
 }
 
@@ -84,7 +84,7 @@ StepDivider {
 
 .panel-title {
     text-style: bold;
-    color: #8fc7ff;
+    color: $chat-divider-color;
 }
 
 .panel-help {
@@ -92,13 +92,13 @@ StepDivider {
 }
 
 .error-text {
-    color: #d78c98;
+    color: $error;
 }
 
 .success-text {
-    color: #73b889;
+    color: $success;
 }
 
 .warning-text {
-    color: #dfbb69;
+    color: $warning;
 }

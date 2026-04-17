@@ -32,22 +32,201 @@ from aptgent.adapters.structure_services import (
 )
 from aptgent.llm.skills import IntakeSkill, PdbReviewSkill
 
-APTGENT_DARK_THEME = Theme(
-    name="aptgent-dark",
-    primary="#4C9DFF",
-    secondary="#2D5B8E",
-    warning="#F0B64E",
-    error="#C86B7A",
-    success="#63B58C",
-    accent="#72C3FF",
-    foreground="#D7E1EC",
-    background="#05080D",
-    surface="#0E141B",
-    panel="#151D26",
+_THEME_VARIABLE_DEFAULTS = {
+    "button-color-foreground": "#071018",
+    "input-selection-background": "#5D95D633",
+    "chat-system-background": "#121922",
+    "chat-system-foreground": "#DFE7F0",
+    "chat-system-accent": "#5D95D6",
+    "chat-stream-background": "#18212C",
+    "chat-stream-foreground": "#E6EDF7",
+    "chat-stream-accent": "#78B7F2",
+    "chat-tool-background": "#10161E",
+    "chat-tool-foreground": "#AFBDCD",
+    "chat-tool-accent": "#4F667F",
+    "chat-user-background": "#102238",
+    "chat-user-foreground": "#EEF4FB",
+    "chat-user-accent": "#78B7F2",
+    "chat-thinking-background": "#10161E",
+    "chat-thinking-foreground": "#AEBBCB",
+    "chat-thinking-accent": "#D3A751",
+    "chat-thinking-frame-muted": "#718198",
+    "chat-thinking-frame-soft": "#9BAABD",
+    "chat-thinking-frame-bright": "#D7E2EE",
+    "chat-thinking-frame-hot": "#F1C15B",
+    "chat-activity-background": "#111821",
+    "chat-activity-foreground": "#D5DEE9",
+    "chat-activity-accent": "#F1C15B",
+    "chat-activity-label": "#A9BAD1",
+    "chat-activity-frame-muted": "#5F6B7A",
+    "chat-activity-frame-soft": "#8795A7",
+    "chat-activity-frame-bright": "#D7DEEA",
+    "chat-activity-frame-hot": "#F1C15B",
+    "chat-activity-final-icon": "#F1C15B",
+    "chat-progress-background": "#0D131B",
+    "chat-progress-foreground": "#9AACBF",
+    "chat-progress-border": "#254A72",
+    "chat-status-background": "#10161D",
+    "chat-status-foreground": "#8B9EB0",
+    "chat-status-border": "#1A314A",
+    "chat-divider-color": "#84BCF3",
+}
+
+
+def _build_theme(
+    *,
+    name: str,
+    primary: str,
+    secondary: str,
+    warning: str,
+    error: str,
+    success: str,
+    accent: str,
+    foreground: str,
+    background: str,
+    surface: str,
+    panel: str,
+    dark: bool,
+    variables: dict[str, str],
+) -> Theme:
+    return Theme(
+        name=name,
+        primary=primary,
+        secondary=secondary,
+        warning=warning,
+        error=error,
+        success=success,
+        accent=accent,
+        foreground=foreground,
+        background=background,
+        surface=surface,
+        panel=panel,
+        dark=dark,
+        variables={**_THEME_VARIABLE_DEFAULTS, **variables},
+    )
+
+
+CLEAR_LANES_THEME = _build_theme(
+    name="clear-lanes",
+    primary="#5D95D6",
+    secondary="#274A73",
+    warning="#F1C15B",
+    error="#C97C8B",
+    success="#6DB28C",
+    accent="#78B7F2",
+    foreground="#DFE7F0",
+    background="#060A0F",
+    surface="#0D131A",
+    panel="#121A23",
+    dark=True,
+    variables={},
+)
+
+CLEAN_MINIMAL_LIGHT_THEME = _build_theme(
+    name="clean-minimal-light",
+    primary="#376FA8",
+    secondary="#D7E4F0",
+    warning="#C58A1F",
+    error="#B55F6B",
+    success="#4C8A65",
+    accent="#5F90C3",
+    foreground="#1D2732",
+    background="#F5F7FA",
+    surface="#E9EEF3",
+    panel="#FFFFFF",
+    dark=False,
+    variables={
+        "button-color-foreground": "#FFFFFF",
+        "input-selection-background": "#5F90C333",
+        "chat-system-background": "#FFFFFF",
+        "chat-system-foreground": "#1E2935",
+        "chat-system-accent": "#3F78AF",
+        "chat-stream-background": "#F4F8FC",
+        "chat-stream-foreground": "#24303C",
+        "chat-stream-accent": "#5F90C3",
+        "chat-tool-background": "#EDF2F6",
+        "chat-tool-foreground": "#4A5A6B",
+        "chat-tool-accent": "#7A8FA3",
+        "chat-user-background": "#EAF2FA",
+        "chat-user-foreground": "#203040",
+        "chat-user-accent": "#5F90C3",
+        "chat-thinking-background": "#EFF3F7",
+        "chat-thinking-foreground": "#536475",
+        "chat-thinking-accent": "#C58A1F",
+        "chat-thinking-frame-muted": "#8A98A7",
+        "chat-thinking-frame-soft": "#AAB6C2",
+        "chat-thinking-frame-bright": "#D6DEE7",
+        "chat-thinking-frame-hot": "#C58A1F",
+        "chat-activity-background": "#F4ECDD",
+        "chat-activity-foreground": "#5A4721",
+        "chat-activity-accent": "#C58A1F",
+        "chat-activity-label": "#8C7232",
+        "chat-activity-frame-muted": "#B3A07A",
+        "chat-activity-frame-soft": "#D0C09B",
+        "chat-activity-frame-bright": "#E8DBBA",
+        "chat-activity-frame-hot": "#C58A1F",
+        "chat-activity-final-icon": "#C58A1F",
+        "chat-progress-background": "#E8EEF4",
+        "chat-progress-foreground": "#486276",
+        "chat-progress-border": "#B4C7D8",
+        "chat-status-background": "#F0F4F8",
+        "chat-status-foreground": "#5C6E80",
+        "chat-status-border": "#C8D6E3",
+        "chat-divider-color": "#3F78AF",
+    },
+)
+
+WARM_INDUSTRIAL_THEME = _build_theme(
+    name="warm-industrial",
+    primary="#C68A3A",
+    secondary="#4A3A2D",
+    warning="#E0B56A",
+    error="#B97567",
+    success="#688E74",
+    accent="#5EA5A3",
+    foreground="#E7DDD0",
+    background="#120E0B",
+    surface="#1C1511",
+    panel="#261C17",
     dark=True,
     variables={
-        "button-color-foreground": "#05080D",
-        "input-selection-background": "#4C9DFF33",
+        "button-color-foreground": "#1B140F",
+        "input-selection-background": "#C68A3A33",
+        "chat-system-background": "#211914",
+        "chat-system-foreground": "#E8DDD0",
+        "chat-system-accent": "#C68A3A",
+        "chat-stream-background": "#241D17",
+        "chat-stream-foreground": "#F0E6DB",
+        "chat-stream-accent": "#5EA5A3",
+        "chat-tool-background": "#171411",
+        "chat-tool-foreground": "#B9C5BF",
+        "chat-tool-accent": "#5EA5A3",
+        "chat-user-background": "#3A261B",
+        "chat-user-foreground": "#F7EEE3",
+        "chat-user-accent": "#E0B56A",
+        "chat-thinking-background": "#191410",
+        "chat-thinking-foreground": "#C5B8AA",
+        "chat-thinking-accent": "#D2A15B",
+        "chat-thinking-frame-muted": "#7F7064",
+        "chat-thinking-frame-soft": "#A89584",
+        "chat-thinking-frame-bright": "#D7C9B7",
+        "chat-thinking-frame-hot": "#E0B56A",
+        "chat-activity-background": "#2B2018",
+        "chat-activity-foreground": "#F0E1CD",
+        "chat-activity-accent": "#E0B56A",
+        "chat-activity-label": "#D8C0A2",
+        "chat-activity-frame-muted": "#8D775E",
+        "chat-activity-frame-soft": "#B39A7B",
+        "chat-activity-frame-bright": "#E0CEB5",
+        "chat-activity-frame-hot": "#E0B56A",
+        "chat-activity-final-icon": "#E0B56A",
+        "chat-progress-background": "#1B1511",
+        "chat-progress-foreground": "#BCA898",
+        "chat-progress-border": "#4A3A2D",
+        "chat-status-background": "#221913",
+        "chat-status-foreground": "#AD9988",
+        "chat-status-border": "#3B2C23",
+        "chat-divider-color": "#D2A15B",
     },
 )
 
@@ -58,7 +237,7 @@ class AptgentApp(App):
     TITLE = "Aptgent"
     SUB_TITLE = "Aptamer Design Assistant"
     CSS_PATH = "styles/main.tcss"
-    DEFAULT_THEME = "aptgent-dark"
+    DEFAULT_THEME = "clear-lanes"
 
     SCREENS = {
         "welcome": WelcomeScreen,
@@ -163,8 +342,13 @@ class AptgentApp(App):
 
         self.progress_bar = StepProgressBar(Step.INTAKE, id="progress-bar")
         self.status_panel = StatusPanel("", "", id="status-panel")
-        self.register_theme(APTGENT_DARK_THEME)
+        self.register_theme(CLEAR_LANES_THEME)
+        self.register_theme(CLEAN_MINIMAL_LIGHT_THEME)
+        self.register_theme(WARM_INDUSTRIAL_THEME)
         self.theme = self.DEFAULT_THEME
+
+    def get_theme_variable_defaults(self) -> dict[str, str]:
+        return dict(_THEME_VARIABLE_DEFAULTS)
 
     @property
     def current_state(self) -> RunState:

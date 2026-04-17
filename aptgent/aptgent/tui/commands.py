@@ -45,29 +45,19 @@ THEME_COMMAND = SlashCommand(
 
 THEME_PRESETS = (
     ThemePreset(
-        label="Aptgent Dark",
-        theme_name="aptgent-dark",
-        description="Near-black default theme with cool blue accents.",
+        label="Clear Lanes",
+        theme_name="clear-lanes",
+        description="Serious dark theme with strong left and right chat separation.",
     ),
     ThemePreset(
-        label="Textual Dark",
-        theme_name="textual-dark",
-        description="The stock Textual dark palette with restrained contrast.",
+        label="Clean Minimal Light",
+        theme_name="clean-minimal-light",
+        description="Bright low-noise light theme tuned for long sessions.",
     ),
     ThemePreset(
-        label="Tokyo Night",
-        theme_name="tokyo-night",
-        description="Deep blue-black panels with higher contrast accents.",
-    ),
-    ThemePreset(
-        label="Gruvbox",
-        theme_name="gruvbox",
-        description="Warmer earthy contrast with muted amber highlights.",
-    ),
-    ThemePreset(
-        label="Rose Pine Dawn",
-        theme_name="rose-pine-dawn",
-        description="Soft light mode with muted borders and less glare.",
+        label="Warm Industrial",
+        theme_name="warm-industrial",
+        description="Warm instrument-like dark theme with amber and teal accents.",
     ),
 )
 

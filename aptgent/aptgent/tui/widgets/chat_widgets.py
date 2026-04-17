@@ -13,14 +13,51 @@ from aptgent.domain.enums import Step
 from aptgent.tui.commands import DEFAULT_SLASH_COMMANDS, SlashCommand
 
 _BREATH_INTERVAL_SECONDS = 0.42
-_BREATHING_HEADER_FRAMES = [
-    ("#6b7280", False, "·"),
-    ("#9ca3af", False, "•"),
-    ("#d1d5db", False, "•"),
-    ("#facc15", True, "✦"),
-    ("#d1d5db", False, "•"),
-    ("#9ca3af", False, "•"),
-]
+_DEFAULT_THEME_VARIABLES = {
+    "chat-thinking-label": "#a9bad1",
+    "chat-thinking-frame-muted": "#718198",
+    "chat-thinking-frame-soft": "#9baabd",
+    "chat-thinking-frame-bright": "#d7e2ee",
+    "chat-thinking-frame-hot": "#f1c15b",
+    "chat-activity-label": "#a9bad1",
+    "chat-activity-frame-muted": "#5f6b7a",
+    "chat-activity-frame-soft": "#8795a7",
+    "chat-activity-frame-bright": "#d7deea",
+    "chat-activity-frame-hot": "#f1c15b",
+    "chat-activity-final-icon": "#f1c15b",
+}
+
+
+def _theme_variable(widget: Static, name: str) -> str:
+    try:
+        return widget.app.current_theme.variables.get(
+            name,
+            widget.app.get_theme_variable_defaults().get(name, _DEFAULT_THEME_VARIABLES[name]),
+        )
+    except Exception:
+        return _DEFAULT_THEME_VARIABLES[name]
+
+
+def _breathing_frames(
+    widget: Static,
+    *,
+    muted_name: str,
+    soft_name: str,
+    bright_name: str,
+    hot_name: str,
+) -> list[tuple[str, bool, str]]:
+    muted = _theme_variable(widget, muted_name)
+    soft = _theme_variable(widget, soft_name)
+    bright = _theme_variable(widget, bright_name)
+    hot = _theme_variable(widget, hot_name)
+    return [
+        (muted, False, "·"),
+        (soft, False, "•"),
+        (bright, False, "•"),
+        (hot, True, "✦"),
+        (bright, False, "•"),
+        (soft, False, "•"),
+    ]
 
 
 def _normalize_markdown_for_chat(text: str) -> str:
@@ -70,11 +107,12 @@ class SystemBubble(_BaseBubble):
 
     DEFAULT_CSS = """
     SystemBubble {
-        background: $surface-darken-1;
+        background: $chat-system-background;
+        color: $chat-system-foreground;
         padding: 1 2;
         margin: 0 4 1 0;
-        width: 95%;
-        border-left: wide $surface-lighten-1;
+        width: 84%;
+        border-left: wide $chat-system-accent;
     }
     """
 
@@ -87,11 +125,12 @@ class StreamingBubble(Static):
 
     DEFAULT_CSS = """
     StreamingBubble {
-        background: $surface-darken-1;
+        background: $chat-stream-background;
+        color: $chat-stream-foreground;
         padding: 1 2;
         margin: 0 4 1 0;
-        width: 95%;
-        border-left: wide $surface-lighten-1;
+        width: 84%;
+        border-left: wide $chat-stream-accent;
     }
     """
 
@@ -115,16 +154,14 @@ class StreamingBubble(Static):
 class ThinkingBubble(Static):
     """A collapsible bubble for model reasoning content."""
 
-    _FRAMES = _BREATHING_HEADER_FRAMES
-
     DEFAULT_CSS = """
     ThinkingBubble {
-        background: $surface-darken-2;
-        color: $text-muted;
+        background: $chat-thinking-background;
+        color: $chat-thinking-foreground;
         padding: 1 2;
         margin: 0 4 1 0;
-        width: 95%;
-        border-left: wide $warning-darken-2;
+        width: 84%;
+        border-left: wide $chat-thinking-accent;
     }
     """
 
@@ -182,16 +219,24 @@ class ThinkingBubble(Static):
 
     def _header_style(self) -> str:
         if not self._streaming:
-            return "bold #facc15", "✦"
-        color, bold, icon = self._FRAMES[self._frame_idx % len(self._FRAMES)]
+            return f"bold {_theme_variable(self, 'chat-thinking-frame-hot')}", "✦"
+        frames = _breathing_frames(
+            self,
+            muted_name="chat-thinking-frame-muted",
+            soft_name="chat-thinking-frame-soft",
+            bright_name="chat-thinking-frame-bright",
+            hot_name="chat-thinking-frame-hot",
+        )
+        color, bold, icon = frames[self._frame_idx % len(frames)]
         return (f"bold {color}" if bold else color), icon
 
     def _refresh_display(self) -> None:
         arrow = "▲" if self._expanded else "▼"
         style, icon = self._header_style()
         action_label = "collapse" if self._expanded else "expand"
+        label_color = _theme_variable(self, "chat-thinking-label")
         header = (
-            f"[{style}]{icon} Thinking[/] "
+            f"[{style}]{icon}[/] [bold {label_color}]Thinking[/] "
             f"[dim]{self.estimated_tokens} tokens {arrow} (ctrl+o to {action_label})[/dim]"
         )
         if not self._expanded:
@@ -207,13 +252,13 @@ class UserBubble(Static):
 
     DEFAULT_CSS = """
     UserBubble {
-        background: $primary-darken-2;
-        color: $text;
+        background: $chat-user-background;
+        color: $chat-user-foreground;
         padding: 1 2;
-        margin: 0 0 1 0;
-        width: 95%;
+        margin: 0 0 1 18;
+        width: 72%;
         text-align: right;
-        border-right: wide $primary-lighten-1;
+        border-right: wide $chat-user-accent;
     }
     """
 
@@ -226,11 +271,12 @@ class ProgressBubble(Static):
 
     DEFAULT_CSS = """
     ProgressBubble {
-        background: $surface-darken-1;
+        background: $chat-stream-background;
+        color: $chat-stream-foreground;
         padding: 1 2;
         margin: 0 4 1 0;
-        width: 95%;
-        border-left: wide $primary;
+        width: 84%;
+        border-left: wide $chat-stream-accent;
     }
     """
 
@@ -273,9 +319,9 @@ class StepDivider(Static):
 
     DEFAULT_CSS = """
     StepDivider {
-        color: $primary-lighten-1;
+        color: $chat-divider-color;
         text-style: bold;
-        background: $surface-darken-2;
+        background: transparent;
         padding: 0 1;
         margin: 1 0;
     }
@@ -301,11 +347,12 @@ class ActivityBubble(Static):
 
     DEFAULT_CSS = """
     ActivityBubble {
-        background: $surface-darken-1;
-        border-left: wide $warning;
+        background: $chat-activity-background;
+        color: $chat-activity-foreground;
+        border-left: wide $chat-activity-accent;
         padding: 1 2;
         margin: 0 4 1 0;
-        width: 95%;
+        width: 84%;
         height: auto;
     }
     """
@@ -335,16 +382,26 @@ class ActivityBubble(Static):
         if self._timer is not None:
             self._timer.stop()
             self._timer = None
-        self.update(f"[bold #94a3b8]run[/] [bold #facc15]•[/] {self._text}")
+        label = _theme_variable(self, "chat-activity-label")
+        icon = _theme_variable(self, "chat-activity-final-icon")
+        self.update(f"[bold {label}]run[/] [bold {icon}]•[/] {self._text}")
 
     def _tick(self) -> None:
         self._update_render()
         self._frame_idx += 1
 
     def _update_render(self) -> None:
-        color, bold, icon = self._FRAMES[self._frame_idx % len(self._FRAMES)]
+        frames = _breathing_frames(
+            self,
+            muted_name="chat-activity-frame-muted",
+            soft_name="chat-activity-frame-soft",
+            bright_name="chat-activity-frame-bright",
+            hot_name="chat-activity-frame-hot",
+        )
+        color, bold, icon = frames[self._frame_idx % len(frames)]
         style = f"bold {color}" if bold else color
-        self.update(f"[bold #94a3b8]run[/] [{style}]{icon} {self._text}[/]")
+        label = _theme_variable(self, "chat-activity-label")
+        self.update(f"[bold {label}]run[/] [{style}]{icon} {self._text}[/]")
 
 
 class InputBar(Vertical):
