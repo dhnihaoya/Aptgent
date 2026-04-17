@@ -21,11 +21,11 @@ class WelcomeScreen(Screen):
 
     LOGO = "\n".join(
         [
-            "╭────╮",
-            "│╲╱╲│",
-            "│╱╲╱│",
-            "│╲╱╲│",
-            "╰────╯",
+            "╭──────╮",
+            "│╲╱╲╱│",
+            "│╱╳╲╱│",
+            "│╲╱╲╱│",
+            "╰──────╯",
         ]
     )
 
@@ -50,44 +50,70 @@ class WelcomeScreen(Screen):
         scrollbar-size: 1 1;
     }
     #welcome-hero {
-        background: #0f151d;
+        background: $panel;
         border: round $primary;
-        padding: 2 3 1 3;
+        padding: 1 3 1 3;
         margin: 1 1 0 1;
         height: auto;
     }
+    #welcome-status {
+        color: $text-muted;
+        margin-bottom: 1;
+        padding-bottom: 1;
+        border-bottom: tall $secondary;
+    }
     #welcome-brand {
         height: auto;
+        margin-top: 1;
     }
     #welcome-logo {
-        width: 8;
+        width: 10;
         color: $primary;
+        background: $background 12%;
+        border: round $primary 30%;
+        padding: 1 1;
         margin-right: 3;
     }
     #welcome-wordmark {
         color: $primary-lighten-2;
         text-style: bold;
     }
+    #welcome-copy {
+        width: 1fr;
+        height: auto;
+    }
     #welcome-tagline {
-        color: #b4c6de;
+        color: $text;
         margin-top: 1;
     }
     #welcome-subtitle {
-        color: #8297b3;
+        color: $text-muted;
         margin-top: 1;
+    }
+    #welcome-meta {
+        color: $primary-lighten-1;
+        margin-top: 1;
+        padding-top: 1;
+        border-top: tall $secondary;
     }
     """
 
     def compose(self) -> ComposeResult:
         with Vertical(id="welcome-hero"):
+            yield Static("Workflow Console                                    Ready", id="welcome-status")
             with Horizontal(id="welcome-brand"):
                 yield Static(self.LOGO, id="welcome-logo")
-                yield Static(self.WORDMARK, id="welcome-wordmark")
-            yield Static("Aptamer design workflow, kept fast and terminal-native.", id="welcome-tagline")
-            yield Static(
-                "Describe the task to start a new run. Type / to open commands.",
-                id="welcome-subtitle",
-            )
+                with Vertical(id="welcome-copy"):
+                    yield Static(self.WORDMARK, id="welcome-wordmark")
+                    yield Static(
+                        "Aptamer design workflow, kept fast and terminal-native.",
+                        id="welcome-tagline",
+                    )
+                    yield Static(
+                        "Describe the task to start a new run. Type / to open commands.",
+                        id="welcome-subtitle",
+                    )
+            yield Static("Sequence  •  Target  •  PDB intake", id="welcome-meta")
         yield VerticalScroll(id="welcome-log")
         yield InputBar(id="input-bar", commands=DEFAULT_SLASH_COMMANDS)
 

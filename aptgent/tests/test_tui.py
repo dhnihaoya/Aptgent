@@ -19,6 +19,7 @@ from aptgent.tui.app import AptgentApp
 from aptgent.tui.screens.quit_confirm import QuitConfirmScreen
 from aptgent.tui.screens.resume import _overview, _timestamp_label
 from aptgent.tui.screens.theme_picker import ThemePickerScreen
+from aptgent.tui.screens.welcome import WelcomeScreen
 from aptgent.tui.widgets.chat_widgets import (
     ActivityBubble,
     InputBar,
@@ -210,6 +211,13 @@ def test_theme_presets_only_expose_refresh_options():
     ]
 
 
+def test_welcome_hero_css_uses_theme_tokens():
+    assert "#welcome-hero {\n        background: $panel;" in WelcomeScreen.CSS
+    assert "#welcome-tagline {\n        color: $text;" in WelcomeScreen.CSS
+    assert "#welcome-subtitle {\n        color: $text-muted;" in WelcomeScreen.CSS
+    assert "#welcome-meta {" in WelcomeScreen.CSS
+
+
 def test_chat_bubble_default_css_enforces_lane_distinction():
     assert "margin: 0 4 1 0;" in SystemBubble.DEFAULT_CSS
     assert "width: 84%;" in SystemBubble.DEFAULT_CSS
@@ -242,6 +250,19 @@ async def test_welcome_screen_has_chat_input_not_name_prompt(tmp_path):
         assert chat_input.placeholder == (
             "e.g. Design an aptamer for theophylline, sequence: GGGAAACCC... or provide a PDB ID"
         )
+
+
+@pytest.mark.anyio
+async def test_welcome_screen_has_refined_hero_elements(tmp_path):
+    app = make_app(tmp_path)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        meta = app.screen.query_one("#welcome-meta")
+        assert meta is not None
+        assert "Sequence" in str(meta.render())
+        assert "╱╳╲" in WelcomeScreen.LOGO
 
 
 @pytest.mark.anyio
