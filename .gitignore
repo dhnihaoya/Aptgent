@@ -34,6 +34,7 @@ runs/
 # Claude Code / local tools
 .claude/
 .superpowers/
+docs/
 
 # Claude Code export / local notes
 CLAUDE.md
