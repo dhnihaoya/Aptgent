@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from aptgent.domain.models import CandidateSequence, PredictionResult, TargetMolecule
+from aptgent.domain.models import CandidateSequence, Mutation, PredictionResult, TargetMolecule
 from aptgent.predictor_runtime.paths import RUNNER_MODULE, default_model_dir
 
 
@@ -171,3 +171,83 @@ class EnsembleAdapter:
             )
 
         return results_by_target
+
+    def search_mutation_space(
+        self,
+        base_sequence: str,
+        target: TargetMolecule,
+        sites: list[int],
+        *,
+        top_k_keep: int,
+    ) -> tuple[list[CandidateSequence], list[PredictionResult], dict[str, Any]]:
+        """Run the accelerated mutation-space scoring path via the runtime CLI."""
+        smiles = target.smiles or ""
+        if not smiles:
+            raise ValueError("Target molecule must have a resolved SMILES string.")
+
+        proc = self._run(
+            [
+                "--model-dir", self.model_dir,
+                "mutation-search",
+                "--sequence", base_sequence,
+                "--smiles", smiles,
+                "--sites", ",".join(str(site) for site in sites),
+                "--top-k", str(top_k_keep),
+            ],
+            timeout=600,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Predictor mutation search failed (exit {proc.returncode}): "
+                f"{proc.stderr[:500]}"
+            )
+
+        try:
+            payload = json.loads(proc.stdout or "{}")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Predictor mutation search returned invalid JSON.") from exc
+
+        results = payload.get("results", [])
+        candidates: list[CandidateSequence] = []
+        predictions: list[PredictionResult] = []
+
+        for index, result in enumerate(results[:top_k_keep]):
+            sequence = str(result.get("sequence", ""))
+            individual = result.get("individual", {})
+            probability = float(result.get("mean_probability", 0.0))
+            candidate_id = f"cand_{index}"
+            mutations: list[Mutation] = []
+            for site in sites:
+                if 0 <= site < len(base_sequence) and site < len(sequence):
+                    original = base_sequence[site]
+                    mutated = sequence[site]
+                    if original != mutated:
+                        mutations.append(
+                            Mutation(position=site, original=original, mutated=mutated)
+                        )
+
+            candidates.append(
+                CandidateSequence(
+                    sequence=sequence,
+                    mutations=mutations,
+                    edit_ratio=(len(mutations) / len(base_sequence)) if base_sequence else 0.0,
+                    candidate_id=candidate_id,
+                )
+            )
+            predictions.append(
+                PredictionResult(
+                    candidate_id=candidate_id,
+                    model_name="ensemble",
+                    target=smiles,
+                    score=probability,
+                    label=int(result.get("ensemble_label", 0)),
+                    probability=probability,
+                    raw_outputs={"individual": individual},
+                )
+            )
+
+        metadata = {
+            "total_processed": int(payload.get("total_processed", 0)),
+            "binding_hit_count": int(payload.get("binding_hit_count", len(results))),
+        }
+        return candidates, predictions, metadata

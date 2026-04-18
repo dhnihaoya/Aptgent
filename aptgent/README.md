@@ -194,7 +194,7 @@ aptgent
 2. **Intake** — Describe your aptamer and target in natural language (e.g., "I have a 20-nt aptamer GGGAAACCC targeting benzene C1=CC=CC=C1"). The LLM extracts the sequence, target molecule, and optional constraints.
 3. **Structure** — RNAfold predicts the secondary structure (dot-bracket + MFE).
 4. **Site Proposal** — The LLM suggests mutation sites based on loop/stem analysis. You confirm or manually specify sites.
-5. **Enumeration** — All possible single-base mutations at confirmed sites are enumerated. Capped at 5,000 candidates.
+5. **Enumeration** — All possible single-base mutations at confirmed sites are enumerated. Large mutation spaces automatically switch to an accelerated predictor-runtime search path, while workflow outputs remain the same.
 6. **Scoring** — Each candidate is scored by the 9-model ensemble predictor. The reported probability is averaged across model outputs, but the ensemble label is `1` only when every model predicts `1`.
 7. **Specificity Filter** — LLM suggests structural analogs of the target. Candidates that bind analogs are removed.
 8. **Docking Selection** — Hardware profile is detected. LLM recommends how many top candidates to dock.
@@ -265,6 +265,9 @@ Keep secrets in environment variables instead of committing them into this file.
 [enumeration]
 max_candidates = 5000
 default_edit_ratio_threshold = 0.3
+batch_size = 1000
+top_k_keep = 500
+acceleration_threshold = 1024
 
 [docking]
 enabled = false

@@ -35,17 +35,27 @@ class EnumerationHandler(StepHandler):
 
         total_space = 4 ** len(sites)
         total_batches = (total_space + batch_size - 1) // batch_size
+        mode_note = (
+            "Large search space detected: accelerated runtime path will be used."
+            if self._use_accelerated_search(total_space)
+            else "Each batch: enumerate -> predict -> save to JSONL"
+        )
 
         self.screen.add_system_message(
             f"Mutation space: 4^{len(sites)} = {total_space:,} candidates\n"
             f"Batch size: {batch_size:,} | Batches: {total_batches:,} | "
             f"Top-K kept: {top_k_keep:,}\n"
-            f"Each batch: enumerate -> predict -> save to JSONL"
+            f"{mode_note}"
         )
         self.run_worker(
             lambda: self._pipeline(seq, sites, total_space, batch_size, top_k_keep),
             activity="Enumerating and scoring candidates...",
         )
+
+    def _use_accelerated_search(self, total_space: int) -> bool:
+        enum_cfg = self.screen.app.config.get("enumeration", {})
+        threshold = int(enum_cfg.get("acceleration_threshold", 1024))
+        return total_space >= threshold
 
     def _pipeline(
         self,
@@ -71,6 +81,17 @@ class EnumerationHandler(StepHandler):
             self._create_progress_bubble,
             total_space,
         )
+
+        if can_score and self._use_accelerated_search(total_space):
+            self._run_accelerated_pipeline(
+                seq=seq,
+                sites=sites,
+                total_space=total_space,
+                top_k_keep=top_k_keep,
+                results_path=results_path,
+                progress=progress,
+            )
+            return
 
         top_heap: list[tuple[float, int, CandidateSequence, Any]] = []
         heap_counter = 0
@@ -174,6 +195,83 @@ class EnumerationHandler(StepHandler):
             )
         if len(top_candidates) > 10:
             preview.append(f"  ... and {len(top_candidates) - 10} more")
+        if preview:
+            self.screen.app.call_from_thread(
+                self.screen.add_system_message, "\n".join(preview)
+            )
+
+        ns = next_step(Step.CANDIDATE_ENUMERATION)
+        if ns:
+            self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
+
+    def _run_accelerated_pipeline(
+        self,
+        *,
+        seq: str,
+        sites: list[int],
+        total_space: int,
+        top_k_keep: int,
+        results_path,
+        progress,
+    ) -> None:
+        state = self.screen.app.current_state
+        target = state.target_molecule
+        assert target is not None
+
+        try:
+            candidates, predictions, metadata = self.screen.app.prediction_adapter.search_mutation_space(
+                seq,
+                target,
+                sites,
+                top_k_keep=top_k_keep,
+            )
+            with open(results_path, "w", encoding="utf-8") as handle:
+                for candidate, prediction in zip(candidates, predictions):
+                    entry = {
+                        "candidate": candidate.model_dump(),
+                        "prediction": prediction.model_dump(),
+                    }
+                    handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+            total_processed = int(metadata.get("total_processed", total_space))
+            total_binding = int(metadata.get("binding_hit_count", len(predictions)))
+            self.screen.app.call_from_thread(
+                progress.set_progress,
+                total_processed,
+                f"Accelerated search | Binding: {total_binding:,}",
+            )
+        except Exception as exc:
+            self.screen.app.call_from_thread(
+                self.screen.add_system_message,
+                f"Accelerated enumeration failed: {exc}",
+                "error-text",
+            )
+            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+            return
+
+        state.candidates = candidates
+        if predictions:
+            state.predictions = predictions
+        self.screen.app.save_state()
+
+        finish_msg = (
+            f"Scored {total_processed:,} candidates, {total_binding:,} binding, "
+            f"top {len(candidates)} kept\nResults: {results_path}"
+        )
+        self.screen.app.call_from_thread(progress.finish, finish_msg)
+
+        preview = []
+        for candidate, pred in zip(candidates[:10], predictions[:10]):
+            label_str = "Bind" if pred.label == 1 else "Non-bind"
+            mut_str = ", ".join(
+                f"{mutation.position}:{mutation.original}>{mutation.mutated}"
+                for mutation in candidate.mutations
+            )
+            preview.append(
+                f"  {candidate.candidate_id}: {label_str} P={pred.probability:.4f} | {mut_str}"
+            )
+        if len(candidates) > 10:
+            preview.append(f"  ... and {len(candidates) - 10} more")
         if preview:
             self.screen.app.call_from_thread(
                 self.screen.add_system_message, "\n".join(preview)

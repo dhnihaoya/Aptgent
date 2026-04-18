@@ -76,6 +76,26 @@ def cmd_predict(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mutation_search(args: argparse.Namespace) -> int:
+    from aptgent.predictor_runtime.predictor import EnsemblePredictor
+
+    model_dir = Path(args.model_dir) if args.model_dir else default_model_dir()
+    predictor = EnsemblePredictor(model_dir)
+    sites = [int(value) for value in args.sites.split(",") if value.strip()]
+    results = predictor.predict_mutation_batch(
+        args.sequence,
+        args.smiles,
+        sites,
+    )
+    payload = {
+        "results": results[: args.top_k],
+        "total_processed": 4 ** len(sites),
+        "binding_hit_count": len(results),
+    }
+    print(json.dumps(payload))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m aptgent.predictor_runtime.runner",
@@ -88,6 +108,15 @@ def build_parser() -> argparse.ArgumentParser:
     predict.add_argument("--input", "-i", required=True)
     predict.add_argument("--output", "-o", required=True)
 
+    mutation = sub.add_parser(
+        "mutation-search",
+        help="Run accelerated mutation-space search for one sequence/target pair.",
+    )
+    mutation.add_argument("--sequence", required=True)
+    mutation.add_argument("--smiles", required=True)
+    mutation.add_argument("--sites", required=True)
+    mutation.add_argument("--top-k", type=int, default=500)
+
     return parser
 
 
@@ -95,6 +124,8 @@ def main() -> int:
     args = build_parser().parse_args()
     if args.command == "predict":
         return cmd_predict(args)
+    if args.command == "mutation-search":
+        return cmd_mutation_search(args)
     raise ValueError(f"Unsupported command: {args.command}")
 
 

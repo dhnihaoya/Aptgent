@@ -95,9 +95,94 @@ MER_K_MAP = {
 }
 
 
+def build_feature_vector_fast(
+    sequence: str,
+    precomputed_desc: list[float],
+    k_list: list[int],
+) -> np.ndarray:
+    """Build one feature vector while reusing precomputed descriptors."""
+    kmer = kmer_features(sequence, k_list)
+    vector = np.array(kmer + precomputed_desc, dtype=np.float64)
+    return np.nan_to_num(vector, nan=0.0)
+
+
+_BASE_MAP = {"A": 0, "T": 1, "G": 2, "C": 3}
+_ENCODE_TABLE = np.zeros(256, dtype=np.int32)
+_ENCODE_TABLE[ord("A")] = 0
+_ENCODE_TABLE[ord("a")] = 0
+_ENCODE_TABLE[ord("T")] = 1
+_ENCODE_TABLE[ord("t")] = 1
+_ENCODE_TABLE[ord("U")] = 1
+_ENCODE_TABLE[ord("u")] = 1
+_ENCODE_TABLE[ord("G")] = 2
+_ENCODE_TABLE[ord("g")] = 2
+_ENCODE_TABLE[ord("C")] = 3
+_ENCODE_TABLE[ord("c")] = 3
+
+
+def _encode_sequence(sequence: str) -> np.ndarray:
+    """Encode a DNA/RNA sequence into A/T/G/C integer classes."""
+    return np.array([_BASE_MAP.get(char, 0) for char in sequence], dtype=np.int32)
+
+
+def _encode_sequences(sequences: list[str]) -> np.ndarray:
+    if not sequences:
+        return np.empty((0, 0), dtype=np.int32)
+
+    length = len(sequences[0])
+    joined = "".join(rna_to_dna(sequence).upper() for sequence in sequences).encode("ascii")
+    encoded = _ENCODE_TABLE[np.frombuffer(joined, dtype=np.uint8)]
+    return encoded.reshape(len(sequences), length)
+
+
+def build_feature_matrix(
+    sequences: list[str] | np.ndarray,
+    precomputed_desc: list[float],
+    k_list: list[int],
+) -> np.ndarray:
+    """Build a feature matrix for many equal-length sequences at once."""
+    if isinstance(sequences, np.ndarray):
+        if sequences.size == 0:
+            return np.empty((0, 0), dtype=np.float64)
+        if sequences.ndim != 2:
+            raise ValueError("Encoded sequence array must be 2-D")
+        if np.issubdtype(sequences.dtype, np.integer):
+            encoded = sequences.astype(np.int32, copy=False)
+        else:
+            encoded = _ENCODE_TABLE[sequences.astype(np.uint8, copy=False)]
+    else:
+        if not sequences:
+            return np.empty((0, 0), dtype=np.float64)
+        encoded = _encode_sequences(sequences)
+
+    batch_size = encoded.shape[0]
+    length = encoded.shape[1]
+    desc_arr = np.array(precomputed_desc, dtype=np.float64)
+    all_kmer: list[np.ndarray] = []
+
+    for k in k_list:
+        dim = 4 ** k
+        n_kmers = length - k + 1
+        if n_kmers <= 0:
+            all_kmer.append(np.zeros((batch_size, dim), dtype=np.float64))
+            continue
+
+        indices = np.zeros((batch_size, n_kmers), dtype=np.int32)
+        for offset in range(k):
+            indices = indices * 4 + encoded[:, offset : offset + n_kmers]
+
+        batch_offsets = np.arange(batch_size, dtype=np.int32)[:, None] * dim
+        flat_indices = (indices + batch_offsets).ravel()
+        counts = np.bincount(flat_indices, minlength=batch_size * dim)
+        counts = counts.reshape(batch_size, dim).astype(np.float64)
+        counts /= n_kmers
+        all_kmer.append(counts)
+
+    kmer_matrix = np.hstack(all_kmer)
+    desc_matrix = np.tile(desc_arr, (batch_size, 1))
+    return np.nan_to_num(np.hstack([kmer_matrix, desc_matrix]), nan=0.0)
+
+
 def build_feature_vector(sequence: str, smiles: str, k_list: list[int]) -> np.ndarray:
     """Build the complete model feature vector for one sequence-target pair."""
-    kmer = kmer_features(sequence, k_list)
-    descriptors = molecular_descriptors(smiles)
-    vector = np.array(kmer + descriptors, dtype=np.float64)
-    return np.nan_to_num(vector, nan=0.0)
+    return build_feature_vector_fast(sequence, molecular_descriptors(smiles), k_list)
