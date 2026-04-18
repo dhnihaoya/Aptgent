@@ -45,3 +45,6 @@ plan.md
 *.jpg
 *.png
 *.jpeg
+
+# Tests
+aptgent/tests/
