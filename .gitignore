@@ -31,9 +31,14 @@ runs/
 # Environment variables
 .env
 
+# Claude Code
+.claude/
+
 # Claude Code export / local notes
 CLAUDE.md
+AGENTS.md
 kimi-export-*.md
+docs/
 plan
 plan.md
 *.jpg
