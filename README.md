@@ -222,6 +222,7 @@ You can close the TUI and resume later from the Welcome screen.
 
 ```
 .
+├── README.md
 ├── aptgent/
 │   ├── aptgent/
 │   │   ├── adapters/
@@ -235,8 +236,7 @@ You can close the TUI and resume later from the Welcome screen.
 │   │   ├── domain/
 │   │   └── config/
 │   ├── tests/
-│   ├── pyproject.toml
-│   └── README.md
+│   └── pyproject.toml
 ```
 
 The current UI is chat-first: `AptgentApp` registers `welcome` and `chat`, and the per-step workflow logic lives in `aptgent/aptgent/tui/widgets/step_handlers.py`.
