@@ -1,6 +1,6 @@
 [rna_fold]
 command = "/home/dh/.conda/envs/aptgent-tools/bin/RNAfold"
-args = ["--noPS", "-d2"]
+args = ["--noPS", "-d2", "--paramFile=/home/dh/.conda/envs/aptgent-tools/share/ViennaRNA/dna_mathews2004.par"]
 
 [docking]
 engine = "vina"

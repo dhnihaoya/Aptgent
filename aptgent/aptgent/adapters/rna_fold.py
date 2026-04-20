@@ -12,7 +12,7 @@ class RNAfoldAdapter:
 
     def __init__(self, executable: str = "RNAfold", extra_args: list[str] | None = None, lazy: bool = False) -> None:
         self.executable = executable
-        self.extra_args = extra_args or ["--noPS", "-d2"]
+        self.extra_args = extra_args or ["--noPS", "-d2", "--paramFile=/home/dh/.conda/envs/aptgent-tools/share/ViennaRNA/dna_mathews2004.par"]
         if not lazy:
             self._check_binary()
 
