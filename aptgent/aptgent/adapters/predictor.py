@@ -4,10 +4,11 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from aptgent.domain.models import CandidateSequence, Mutation, PredictionResult, TargetMolecule
+from aptgent.domain.models import CandidateSequence, PredictionResult, TargetMolecule
 from aptgent.predictor_runtime.paths import RUNNER_MODULE, default_model_dir
 
 
@@ -172,82 +173,103 @@ class EnsembleAdapter:
 
         return results_by_target
 
-    def search_mutation_space(
+    def predict_mutation_batch(
         self,
         base_sequence: str,
         target: TargetMolecule,
         sites: list[int],
         *,
-        top_k_keep: int,
-    ) -> tuple[list[CandidateSequence], list[PredictionResult], dict[str, Any]]:
-        """Run the accelerated mutation-space scoring path via the runtime CLI."""
+        progress_callback: Callable[[int, int, dict], None] | None = None,
+        result_callback: Callable[[dict], None] | None = None,
+        batch_size: int = 2000,
+        cancel_event: threading.Event | None = None,
+    ) -> dict[str, Any]:
+        """Run mutation-batch via subprocess with line-JSON protocol.
+
+        Streams positives-only hits through ``result_callback``.
+        Returns summary dict with total, hits, device, model_order.
+        """
         smiles = target.smiles or ""
         if not smiles:
             raise ValueError("Target molecule must have a resolved SMILES string.")
 
-        proc = self._run(
-            [
-                "--model-dir", self.model_dir,
-                "mutation-search",
-                "--sequence", base_sequence,
-                "--smiles", smiles,
-                "--sites", ",".join(str(site) for site in sites),
-                "--top-k", str(top_k_keep),
-            ],
-            timeout=600,
+        sites_str = ",".join(str(s) for s in sites)
+        cmd = self._build_cmd() + [
+            "--model-dir", self.model_dir,
+            "mutation-batch",
+            "--base-sequence", base_sequence,
+            "--smiles", smiles,
+            "--sites", sites_str,
+            "--progress-every", str(batch_size),
+        ]
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE,
+            bufsize=1,
+            text=True,
+            cwd=self._project_root,
+            env=os.environ.copy(),
         )
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"Predictor mutation search failed (exit {proc.returncode}): "
-                f"{proc.stderr[:500]}"
-            )
 
+        summary: dict[str, Any] = {"total": 0, "hits": 0}
+
+        def _reader() -> None:
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                msg_type = obj.get("type")
+                if msg_type == "progress" and progress_callback:
+                    progress_callback(obj["done"], obj["total"], {})
+                elif msg_type == "hit" and result_callback:
+                    result_callback({
+                        "sequence": obj["sequence"],
+                        "ensemble_label": 1,
+                        "probability": obj["mean_probability"],
+                        "model_probabilities": obj.get("model_probabilities", []),
+                    })
+                elif msg_type == "done":
+                    summary["total"] = obj.get("total", 0)
+                    summary["hits"] = obj.get("hits", 0)
+                    if "device" in obj:
+                        summary["device"] = obj["device"]
+                    if "model_order" in obj:
+                        summary["model_order"] = obj["model_order"]
+                elif msg_type == "ready":
+                    summary["device"] = obj.get("device", "cpu")
+                    summary["model_order"] = obj.get("model_order", [])
+
+        reader_thread = threading.Thread(target=_reader, daemon=True)
+        reader_thread.start()
+
+        # Poll for cancel
         try:
-            payload = json.loads(proc.stdout or "{}")
-        except json.JSONDecodeError as exc:
-            raise RuntimeError("Predictor mutation search returned invalid JSON.") from exc
+            while reader_thread.is_alive():
+                reader_thread.join(timeout=0.5)
+                if cancel_event and cancel_event.is_set():
+                    try:
+                        proc.stdin.write("cancel\n")
+                        proc.stdin.flush()
+                    except Exception:
+                        pass
+                    break
+        finally:
+            proc.wait(timeout=30)
+            reader_thread.join(timeout=5)
 
-        results = payload.get("results", [])
-        candidates: list[CandidateSequence] = []
-        predictions: list[PredictionResult] = []
-
-        for index, result in enumerate(results[:top_k_keep]):
-            sequence = str(result.get("sequence", ""))
-            individual = result.get("individual", {})
-            probability = float(result.get("mean_probability", 0.0))
-            candidate_id = f"cand_{index}"
-            mutations: list[Mutation] = []
-            for site in sites:
-                if 0 <= site < len(base_sequence) and site < len(sequence):
-                    original = base_sequence[site]
-                    mutated = sequence[site]
-                    if original != mutated:
-                        mutations.append(
-                            Mutation(position=site, original=original, mutated=mutated)
-                        )
-
-            candidates.append(
-                CandidateSequence(
-                    sequence=sequence,
-                    mutations=mutations,
-                    edit_ratio=(len(mutations) / len(base_sequence)) if base_sequence else 0.0,
-                    candidate_id=candidate_id,
-                )
-            )
-            predictions.append(
-                PredictionResult(
-                    candidate_id=candidate_id,
-                    model_name="ensemble",
-                    target=smiles,
-                    score=probability,
-                    label=int(result.get("ensemble_label", 0)),
-                    probability=probability,
-                    raw_outputs={"individual": individual},
-                )
+        stderr_output = proc.stderr.read()
+        if proc.returncode != 0 and proc.returncode != 1:
+            raise RuntimeError(
+                f"Predictor mutation-batch failed (exit {proc.returncode}): "
+                f"{stderr_output[:500]}"
             )
 
-        metadata = {
-            "total_processed": int(payload.get("total_processed", 0)),
-            "binding_hit_count": int(payload.get("binding_hit_count", len(results))),
-        }
-        return candidates, predictions, metadata
+        return summary

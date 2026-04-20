@@ -6,19 +6,11 @@ import glob
 import os
 import pickle
 import re
-from itertools import product
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 
-from aptgent.predictor_runtime.features import (
-    _ENCODE_TABLE,
-    MER_K_MAP,
-    build_feature_matrix,
-    build_feature_vector,
-    molecular_descriptors,
-    rna_to_dna,
-)
+from aptgent.predictor_runtime.features import MER_K_MAP, build_feature_vector
 from aptgent.predictor_runtime.paths import default_model_dir
 
 _TORCH_AVAILABLE = False
@@ -56,14 +48,23 @@ class SimpleRNN:
         import torch.nn as nn
 
         class _SimpleRNN(nn.Module):
-            def forward(self, x):
+            def _to_device(self, x):
+                device = next(self.parameters()).device
                 if not isinstance(x, torch.Tensor):
-                    x = torch.FloatTensor(np.asarray(x, dtype=np.float32))
+                    x = torch.tensor(
+                        np.asarray(x, dtype=np.float32), device=device
+                    )
+                elif x.device != device:
+                    x = x.to(device)
+                return x
+
+            def forward(self, x):
+                x = self._to_device(x)
                 if x.dim() == 1:
                     x = x.unsqueeze(0)
-                x = x.unsqueeze(0)
+                x = x.unsqueeze(1)
                 out, _ = self.rnn(x)
-                out = out.squeeze(0)
+                out = out.squeeze(1)
                 out = self.sig1(self.fc1(out))
                 out = self.sig2(self.fc2(out))
                 return out.squeeze(-1)
@@ -85,6 +86,10 @@ class SimpleRNN:
 
         cls._nn_module = _SimpleRNN
         return _SimpleRNN
+
+
+class PredictionCancelled(Exception):
+    """Raised when a long-running mutation search is cancelled."""
 
 
 def _extract_mer_label(filename: str) -> Optional[str]:
@@ -110,17 +115,15 @@ def load_model(filepath: str):
     return model, mer
 
 
-class PredictionCancelled(RuntimeError):
-    """Raised when an accelerated mutation search is cancelled."""
-
-
 class EnsemblePredictor:
     """Load all trained models and run strict ensemble prediction."""
 
     def __init__(self, model_dir: str | os.PathLike[str] | None = None):
         self.model_dir = str(model_dir or default_model_dir())
         self.models: list[tuple[object, str | None, str]] = []
+        self._device: str = "cpu"
         self._load_all()
+        self._setup_cuda()
 
     def _load_all(self) -> None:
         pattern = os.path.join(self.model_dir, "(*mer)*.pkl")
@@ -134,11 +137,50 @@ class EnsemblePredictor:
             model, mer = load_model(filepath)
             self.models.append((model, mer, os.path.basename(filepath)))
 
+    def _setup_cuda(self) -> None:
+        from aptgent.predictor_runtime.cuda import get_device
+
+        self._device = get_device()
+        if self._device != "cuda":
+            return
+
+        import torch
+
+        new_models = []
+        for model, mer, fname in self.models:
+            if isinstance(model, torch.nn.Module):
+                model = model.to("cuda")
+            new_models.append((model, mer, fname))
+        self.models = new_models
+
     @staticmethod
-    def _predict_model_batch(model, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        preds = np.asarray(model.predict(X)).astype(int)
-        probs = np.asarray(model.predict_proba(X))[:, 1].astype(float)
-        return preds, probs
+    def _is_xgboost(model) -> bool:
+        try:
+            from xgboost import Booster, XGBClassifier
+
+            return isinstance(model, (XGBClassifier, Booster))
+        except ImportError:
+            return False
+
+    def _predict_batch(self, model, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Batch prediction with optional CUDA acceleration.
+
+        Returns (predictions, positive_class_probabilities).
+        """
+        if self._device == "cuda" and self._is_xgboost(model):
+            try:
+                import xgboost as xgb
+
+                booster = model.get_booster()
+                dm = xgb.DMatrix(X.astype(np.float32), device="cuda")
+                probs = booster.predict(dm)
+                return (probs >= 0.5).astype(int), probs
+            except Exception:
+                pass
+
+        preds = model.predict(X)
+        probs = model.predict_proba(X)[:, 1]
+        return preds.astype(int), probs
 
     def predict_batch(
         self,
@@ -187,17 +229,32 @@ class EnsemblePredictor:
         *,
         batch_size: int = 2000,
         sub_batch_size: Optional[int] = None,
-        progress_callback=None,
-        should_cancel=None,
-    ) -> list[dict]:
-        """Enumerate and score a mutation space using a vectorized fast path."""
-        sequence = rna_to_dna(base_sequence).upper()
-        sequence_bytes = np.frombuffer(sequence.encode("ascii"), dtype=np.uint8)
-        sequence_chars = list(sequence)
+        progress_callback: Optional[Callable] = None,
+        should_cancel: Optional[Callable[[], bool]] = None,
+        result_callback: Optional[Callable[[dict], None]] = None,
+        collect_results: bool = True,
+    ) -> Optional[list[dict]]:
+        """Enumerate all mutants at selected sites, batch-predict with cascade filtering.
+
+        Collects **only** candidates where all 9 models predict binding
+        (ensemble_label == 1).
+        """
+        from itertools import product as itertools_product
+
+        from aptgent.predictor_runtime.features import (
+            _ENCODE_TABLE,
+            build_feature_matrix,
+            molecular_descriptors,
+            rna_to_dna,
+        )
+
+        seq = rna_to_dna(base_sequence).upper()
+        seq_list = list(seq)
+        seq_bytes = np.frombuffer(seq.encode("ascii"), dtype=np.uint8)
+        bases = ["A", "T", "G", "C"]
         base_bytes = np.frombuffer(b"ATGC", dtype=np.uint8)
         sites_arr = np.array(sites, dtype=np.intp)
-
-        if np.any(sites_arr < 0) or np.any(sites_arr >= len(sequence)):
+        if np.any(sites_arr < 0) or np.any(sites_arr >= len(seq)):
             raise ValueError("Mutation site index out of range")
 
         batch_size = max(1, int(batch_size))
@@ -206,107 +263,115 @@ class EnsemblePredictor:
         sub_batch_size = max(1, int(sub_batch_size))
         total = 4 ** len(sites)
 
-        def check_cancelled() -> None:
+        def _check_cancelled() -> None:
             if should_cancel and should_cancel():
-                raise PredictionCancelled("Mutation search cancelled.")
+                raise PredictionCancelled()
 
-        check_cancelled()
-        descriptors = molecular_descriptors(smiles)
+        # Pre-compute molecular descriptors once
+        _check_cancelled()
+        desc = molecular_descriptors(smiles)
 
-        model_configs: list[tuple[object, str, str, list[int]]] = []
-        for model, mer, filename in self.models:
+        # Collect per-model configs
+        model_configs = []
+        for model, mer, fname in self.models:
             if mer is None or mer not in MER_K_MAP:
                 continue
-            model_configs.append((model, mer, filename, MER_K_MAP[mer]))
+            model_configs.append((model, mer, fname, MER_K_MAP[mer]))
 
-        calibration_sequences: list[str] = []
-        for combo in product(["A", "T", "G", "C"], repeat=len(sites)):
-            check_cancelled()
-            if len(calibration_sequences) >= 64:
+        # Calibrate: determine optimal model order via small sample
+        calib_seqs = []
+        for combo in itertools_product(bases, repeat=len(sites)):
+            _check_cancelled()
+            if len(calib_seqs) >= 64:
                 break
-            mutant = sequence_chars.copy()
-            for position, new_base in zip(sites, combo):
-                mutant[position] = new_base
-            calibration_sequences.append("".join(mutant))
+            mutant = seq_list.copy()
+            for pos, new_base in zip(sites, combo):
+                if 0 <= pos < len(mutant):
+                    mutant[pos] = new_base
+            calib_seqs.append("".join(mutant))
 
-        scored_models: list[tuple[int, object, str, str, list[int]]] = []
-        for model, mer, filename, k_list in model_configs:
-            check_cancelled()
-            X = build_feature_matrix(calibration_sequences, descriptors, k_list)
-            preds, _ = self._predict_model_batch(model, X)
-            scored_models.append((int(preds.sum()), model, mer, filename, k_list))
-        scored_models.sort(key=lambda item: item[0])
-        ordered_models = [(model, mer, filename, k_list) for _, model, mer, filename, k_list in scored_models]
+        scored: list[tuple[int, object, str, str, list[int]]] = []
+        for model, mer, fname, k_list in model_configs:
+            _check_cancelled()
+            X = build_feature_matrix(calib_seqs, desc, k_list)
+            preds, _ = self._predict_batch(model, X)
+            n_pos = int(preds.sum())
+            scored.append((n_pos, model, mer, fname, k_list))
+        scored.sort(key=lambda x: x[0])
 
-        positives: list[dict] = []
-        processed = 0
+        ordered_models = [(m, mer, fn, kl) for _, m, mer, fn, kl in scored]
+
+        # Main enumeration with early-exit filtering
+        positives: Optional[list[dict]] = [] if collect_results else None
+        done = 0
         progress_mark = 0
 
-        def flush_chunk(mutant_bytes: np.ndarray) -> None:
-            nonlocal processed, progress_mark
-            check_cancelled()
+        def _flush_chunk(mutant_bytes: np.ndarray) -> None:
+            nonlocal done, progress_mark
+            _check_cancelled()
             if mutant_bytes.size == 0:
                 return
 
             encoded_mutants = _ENCODE_TABLE[mutant_bytes]
-            batch_len = encoded_mutants.shape[0]
-            surviving = np.arange(batch_len)
-            all_model_probs = np.zeros((batch_len, len(ordered_models)), dtype=np.float64)
-            all_model_outputs: list[dict[str, dict[str, float | int]]] = [
-                {} for _ in range(batch_len)
-            ]
+            B = encoded_mutants.shape[0]
 
-            for model_index, (model, _mer, filename, k_list) in enumerate(ordered_models):
-                check_cancelled()
+            surviving = np.arange(B)
+            all_model_probs = np.zeros((B, len(ordered_models)), dtype=np.float64)
+
+            for m_idx, (model, mer, fname, k_list) in enumerate(ordered_models):
+                _check_cancelled()
                 if len(surviving) == 0:
                     break
 
-                X = build_feature_matrix(encoded_mutants[surviving], descriptors, k_list)
-                preds, probs = self._predict_model_batch(model, X)
-                all_model_probs[surviving, model_index] = probs
+                X = build_feature_matrix(encoded_mutants[surviving], desc, k_list)
+                preds, probs = self._predict_batch(model, X)
 
-                for candidate_idx, pred, prob in zip(surviving, preds, probs):
-                    all_model_outputs[candidate_idx][filename] = {
-                        "label": int(pred),
-                        "probability": round(float(prob), 6),
-                    }
+                all_model_probs[surviving, m_idx] = probs
 
-                surviving = surviving[preds >= 0.5]
+                mask = preds >= 0.5
+                surviving = surviving[mask]
 
-            processed += batch_len
-            progress_mark += batch_len
-            if progress_callback and (progress_mark >= batch_size or processed == total):
-                progress_callback(processed, total, {})
+            done += B
+            progress_mark += B
+            if progress_callback and (progress_mark >= batch_size or done == total):
+                _check_cancelled()
+                progress_callback(done, total, {})
                 progress_mark = 0
 
             for idx in surviving:
-                mean_prob = float(np.mean(all_model_probs[idx]))
-                positives.append(
-                    {
-                        "sequence": mutant_bytes[idx].tobytes().decode("ascii"),
-                        "mean_probability": round(mean_prob, 6),
-                        "ensemble_label": 1,
-                        "individual": all_model_outputs[idx],
-                    }
-                )
+                probs = all_model_probs[idx]
+                mean_prob = float(np.mean(probs))
+                result = {
+                    "sequence": mutant_bytes[idx].tobytes().decode("ascii"),
+                    "mean_probability": round(mean_prob, 6),
+                    "ensemble_label": 1,
+                    "model_probabilities": [round(float(p), 6) for p in probs],
+                }
+                if result_callback:
+                    result_callback(result)
+                if positives is not None:
+                    positives.append(result)
 
         if len(sites) == 0:
-            flush_chunk(sequence_bytes.reshape(1, -1))
+            _flush_chunk(seq_bytes.reshape(1, -1))
         else:
             for start in range(0, total, sub_batch_size):
-                check_cancelled()
+                _check_cancelled()
                 stop = min(start + sub_batch_size, total)
-                chunk_size = stop - start
-                digits = np.empty((chunk_size, len(sites)), dtype=np.int8)
+                batch_len = stop - start
+                digits = np.empty((batch_len, len(sites)), dtype=np.int8)
                 values = np.arange(start, stop, dtype=np.int64)
 
                 for pos in range(len(sites) - 1, -1, -1):
                     digits[:, pos] = values % 4
                     values //= 4
 
-                mutant_bytes = np.tile(sequence_bytes, (chunk_size, 1))
+                mutant_bytes = np.tile(seq_bytes, (batch_len, 1))
                 mutant_bytes[:, sites_arr] = base_bytes[digits]
-                flush_chunk(mutant_bytes)
+                _flush_chunk(mutant_bytes)
 
-        positives.sort(key=lambda item: item["mean_probability"], reverse=True)
+        if positives is None:
+            return None
+
+        positives.sort(key=lambda r: r["mean_probability"], reverse=True)
         return positives
