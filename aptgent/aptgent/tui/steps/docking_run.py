@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from aptgent.domain.enums import Step
 from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.steps.common import next_step
+from aptgent.tui.steps.job_mixin import JobAttachMixin
+
+logger = logging.getLogger(__name__)
 
 
-class DockingRunHandler(StepHandler):
+class DockingRunHandler(JobAttachMixin, StepHandler):
+    """Vina docking, runs as a detached job."""
+
+    JOB_STEP = "docking_run"
+
     def enter(self) -> None:
         state = self.screen.app.current_state
         plan = state.docking_plan
@@ -40,56 +48,60 @@ class DockingRunHandler(StepHandler):
             self.screen.set_input_enabled(True)
             return
 
-        ens_preds = [p for p in state.predictions if p.model_name == "ensemble"]
-        sorted_preds = sorted(
-            ens_preds, key=lambda item: item.probability or 0.0, reverse=True
-        )
-        top_k = plan.recommended_top_k
-        top_cand_ids = {pred.candidate_id for pred in sorted_preds[:top_k]}
-        top_candidates = [
-            candidate for candidate in state.candidates if candidate.candidate_id in top_cand_ids
-        ]
-
         self.screen.add_system_message(
-            f"Running Vina docking on {len(top_candidates)} candidates..."
+            f"Running Vina docking on top {plan.recommended_top_k} candidates..."
         )
-        self.run_worker(
-            lambda: self._dock_worker(top_candidates, target),
+
+        self.attach_or_spawn_job(
+            on_event=lambda evt: self._on_job_event(evt),
+            on_done=lambda summary: self._on_job_done(summary),
+            on_error=lambda msg: self._on_job_error(msg),
             activity="Running docking jobs...",
         )
 
-    def _dock_worker(self, candidates, target) -> None:
+    def _on_job_event(self, evt: dict) -> None:
+        etype = evt.get("type", "")
+        if etype == "progress":
+            done = evt.get("done", 0)
+            total = evt.get("total", 0)
+            extra = evt.get("extra", {})
+            resumed = extra.get("resumed", 0)
+            if resumed:
+                self.screen.add_system_message(
+                    f"Resuming: {resumed} already docked, {total - resumed} remaining",
+                    "success-text",
+                )
+            self.screen.update_activity(f"Docking: {done}/{total} completed")
+        elif etype == "hit":
+            cand_id = evt.get("candidate_id", "?")
+            score = evt.get("extra", {}).get("docking_score")
+            score_str = f"{score:.3f}" if score is not None else "N/A"
+            self.screen.add_system_message(f"  {cand_id}: {score_str}")
+
+    def _on_job_done(self, summary: dict) -> None:
+        # Reload state (the job runner saves it)
         state = self.screen.app.current_state
-        plan = state.docking_plan
-        try:
-            work_dir = Path(state.run_id) / "docking"
-            results = self.screen.app.vina_adapter.run_batch(
-                candidates=candidates,
-                target=target,
-                receptor_pdbqt=plan.receptor_path,
-                center=plan.grid_center,
-                size=plan.grid_size,
-                work_dir=work_dir,
-            )
-            state.docking_results = results
-            self.screen.app.save_state()
+        self.screen.app._state = self.screen.app.engine.load_run(state.run_id)
+        state = self.screen.app.current_state
 
-            lines = [f"Docking complete. {len(results)} results:"]
-            sorted_results = sorted(results, key=lambda result: result.docking_score or 0.0)
-            for result in sorted_results[:10]:
-                score_str = f"{result.docking_score:.3f}" if result.docking_score is not None else "N/A"
-                lines.append(f"  {result.candidate_id}: {score_str} ({result.status})")
-            if len(sorted_results) > 10:
-                lines.append(f"  ... and {len(sorted_results) - 10} more")
+        results = state.docking_results
+        lines = [f"Docking complete. {len(results)} results:"]
+        sorted_results = sorted(results, key=lambda r: r.docking_score or 0.0)
+        for result in sorted_results[:10]:
+            score_str = f"{result.docking_score:.3f}" if result.docking_score is not None else "N/A"
+            lines.append(f"  {result.candidate_id}: {score_str} ({result.status})")
+        if len(sorted_results) > 10:
+            lines.append(f"  ... and {len(sorted_results) - 10} more")
 
-            self.screen.app.call_from_thread(
-                self.screen.add_system_message, "\n".join(lines)
-            )
-            ns = next_step(Step.DOCKING_RUN)
-            if ns:
-                self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
-        except Exception as exc:
-            self.screen.app.call_from_thread(
-                self.screen.add_system_message, f"Docking failed: {exc}", "error-text"
-            )
-            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+        self.screen.add_system_message("\n".join(lines))
+
+        if summary.get("cancelled"):
+            self.screen.add_system_message("Docking was cancelled.", "warning-text")
+
+        ns = next_step(Step.DOCKING_RUN)
+        if ns:
+            self.screen.advance_to_step(ns)
+
+    def _on_job_error(self, msg: str) -> None:
+        self.screen.add_system_message(f"Docking failed: {msg}", "error-text")
+        self.screen.set_input_enabled(True)
