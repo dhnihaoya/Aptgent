@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from aptgent.domain.enums import Status, Step
@@ -21,8 +22,15 @@ TRANSITIONS: dict[Step, list[Step]] = {
 
 
 class WorkflowEngine:
-    def __init__(self, persistence: Persistence) -> None:
+    def __init__(
+        self,
+        persistence: Persistence,
+        tools_config: dict[str, Any] | None = None,
+        llm_config: dict[str, Any] | None = None,
+    ) -> None:
         self.persistence = persistence
+        self.tools_config = tools_config
+        self.llm_config = llm_config
 
     def create_run(self, run_id: str | None = None) -> RunState:
         if run_id is None:
@@ -49,6 +57,7 @@ class WorkflowEngine:
         state.current_step = next_step
         state.status = Status.RUNNING
         state.error_info = None
+        state.step_timestamps[next_step.value] = datetime.now(timezone.utc).isoformat()
         self.persistence.save(state)
         self.persistence.append_log(
             state.run_id,
@@ -86,8 +95,19 @@ class WorkflowEngine:
 
     def complete(self, state: RunState) -> RunState:
         state.status = Status.COMPLETED
+        state.step_timestamps["_completed"] = datetime.now(timezone.utc).isoformat()
         self.persistence.save(state)
         self.persistence.append_log(state.run_id, {"event": "complete"})
+        try:
+            from aptgent.workflow.run_card import write_run_card
+            write_run_card(
+                state, self.persistence,
+                tools_config=self.tools_config,
+                llm_config=self.llm_config,
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning("Failed to write run card", exc_info=True)
         return state
 
     def fail(self, state: RunState, error: str) -> RunState:

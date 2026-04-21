@@ -304,10 +304,19 @@ class AptgentApp(App):
             self.status_panel.set_status(self._state.run_id, self._state.status.value)
 
     def create_intake_skill(self):
-        return self.intake_skill_factory()
+        skill = self.intake_skill_factory()
+        self._configure_llm_logging(skill)
+        return skill
 
     def create_pdb_review_skill(self):
-        return self.pdb_review_skill_factory()
+        skill = self.pdb_review_skill_factory()
+        self._configure_llm_logging(skill)
+        return skill
+
+    def _configure_llm_logging(self, skill: Any) -> None:
+        if self._state is not None:
+            log_dir = self.persistence.run_dir(self._state.run_id) / "logs"
+            skill.client.set_log_dir(log_dir)
 
     def on_mount(self) -> None:
         self.push_screen("welcome")
@@ -335,6 +344,18 @@ class AptgentApp(App):
 
 
 def run() -> None:
+    import sys
+
+    if len(sys.argv) >= 2:
+        subcmd = sys.argv[1]
+        if subcmd == "doctor":
+            from aptgent.cli.doctor import run_doctor
+
+            raise SystemExit(run_doctor())
+        if subcmd == "run-job":
+            from aptgent.jobs.runner import main
+
+            raise SystemExit(main())
     app = AptgentApp(runtime=build_runtime())
     app.run()
 

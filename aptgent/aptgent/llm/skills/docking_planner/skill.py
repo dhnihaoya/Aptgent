@@ -23,6 +23,8 @@ class DockingPlannerSkill(BaseSkill):
         computed_top_k: int | None = None,
         computed_time_budget_hours: int | None = None,
         computed_grid_size: list[float] | None = None,
+        target_smiles: str | None = None,
+        target_name: str | None = None,
     ) -> str:
         payload = {
             "candidate_count": candidate_count,
@@ -32,6 +34,10 @@ class DockingPlannerSkill(BaseSkill):
             "computed_time_budget_hours": computed_time_budget_hours,
             "computed_grid_size": computed_grid_size,
         }
+        if target_smiles:
+            payload["target_smiles"] = target_smiles
+        if target_name:
+            payload["target_name"] = target_name
         return "Docking planner context:\n" + json.dumps(
             payload, indent=2, ensure_ascii=False
         )
@@ -45,6 +51,8 @@ class DockingPlannerSkill(BaseSkill):
                 computed_top_k=payload.get("computed_top_k"),
                 computed_time_budget_hours=payload.get("computed_time_budget_hours"),
                 computed_grid_size=payload.get("computed_grid_size"),
+                target_smiles=payload.get("target_smiles"),
+                target_name=payload.get("target_name"),
             )
         return super().build_user_message(payload)
 
@@ -57,6 +65,8 @@ class DockingPlannerSkill(BaseSkill):
         computed_top_k: int | None = None,
         computed_time_budget_hours: int | None = None,
         computed_grid_size: list[float] | None = None,
+        target_smiles: str | None = None,
+        target_name: str | None = None,
     ) -> dict[str, Any]:
         user = self._build_user_message(
             candidate_count,
@@ -65,6 +75,8 @@ class DockingPlannerSkill(BaseSkill):
             computed_top_k,
             computed_time_budget_hours,
             computed_grid_size,
+            target_smiles,
+            target_name,
         )
         return self.client.chat_json(self.system_prompt, user)
 
@@ -77,6 +89,8 @@ class DockingPlannerSkill(BaseSkill):
         computed_top_k: int | None = None,
         computed_time_budget_hours: int | None = None,
         computed_grid_size: list[float] | None = None,
+        target_smiles: str | None = None,
+        target_name: str | None = None,
     ):
         user = self._build_user_message(
             candidate_count,
@@ -85,6 +99,8 @@ class DockingPlannerSkill(BaseSkill):
             computed_top_k,
             computed_time_budget_hours,
             computed_grid_size,
+            target_smiles,
+            target_name,
         )
         return self.client.chat_stream(self.system_prompt, user)
 
@@ -97,6 +113,8 @@ class DockingPlannerSkill(BaseSkill):
         computed_top_k: int | None = None,
         computed_time_budget_hours: int | None = None,
         computed_grid_size: list[float] | None = None,
+        target_smiles: str | None = None,
+        target_name: str | None = None,
     ):
         if self.display_prompt is None:
             raise RuntimeError(
@@ -109,6 +127,8 @@ class DockingPlannerSkill(BaseSkill):
             computed_top_k,
             computed_time_budget_hours,
             computed_grid_size,
+            target_smiles,
+            target_name,
         )
         return self.client.chat_text_stream(self.display_prompt, user)
 

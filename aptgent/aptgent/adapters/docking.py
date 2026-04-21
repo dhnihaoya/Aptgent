@@ -14,6 +14,11 @@ from aptgent.domain.models import CandidateSequence, DockingResult, TargetMolecu
 class VinaAdapter:
     """Real AutoDock Vina adapter via subprocess."""
 
+    @staticmethod
+    def output_path(work_dir: str | Path, candidate_id: str) -> Path:
+        """Canonical output PDBQT path for a docked candidate."""
+        return Path(work_dir) / f"output_{candidate_id}.pdbqt"
+
     def __init__(
         self,
         executable: str = "vina",
@@ -141,6 +146,8 @@ class VinaAdapter:
         size: list[float],
         work_dir: str | Path | None = None,
         cpu: int | None = None,
+        seed: int | None = None,
+        per_ligand_timeout: int | None = None,
     ) -> list[DockingResult]:
         """Run Vina for each candidate against the target molecule.
 
@@ -155,6 +162,8 @@ class VinaAdapter:
             size: Grid box size [x, y, z].
             work_dir: Directory for temp files (default: system temp).
             cpu: Number of CPUs per Vina run.
+            seed: Random seed for reproducibility.
+            per_ligand_timeout: Max seconds per ligand (default: 1800).
 
         Returns:
             List of DockingResult, one per candidate.
@@ -178,7 +187,7 @@ class VinaAdapter:
             results: list[DockingResult] = []
             for i, cand in enumerate(candidates):
                 cand_id = cand.candidate_id or f"cand_{i}"
-                out_path = work_dir / f"output_{cand_id}.pdbqt"
+                out_path = self.output_path(work_dir, cand_id)
                 try:
                     result = self.run_single(
                         receptor_pdbqt=receptor_pdbqt,
@@ -187,6 +196,8 @@ class VinaAdapter:
                         size=size,
                         output_pdbqt=out_path,
                         cpu=cpu,
+                        seed=seed,
+                        timeout=per_ligand_timeout or 1800,
                     )
                     result.candidate_id = cand_id
                     results.append(result)

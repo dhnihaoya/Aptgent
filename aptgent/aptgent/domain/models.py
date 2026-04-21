@@ -63,6 +63,9 @@ class PdbAnalysisResult(BaseModel):
     needs_user_selection: bool = False
     semantic_status: str = "unknown"
     semantic_note: str = ""
+    semantic_category: str = "uncertain"
+    semantic_target_match: str = "unknown"
+    semantic_confidence: str = "medium"
     error: str = ""
 
 
@@ -84,6 +87,8 @@ class DockingPlan(BaseModel):
     receptor_path: Optional[str] = None
     grid_center: Optional[list[float]] = None  # [x, y, z] in Angstroms
     grid_size: Optional[list[float]] = None    # [x, y, z] in Angstroms
+    exhaustiveness: Optional[int] = None
+    seed: Optional[int] = None
 
 
 class DockingResult(BaseModel):

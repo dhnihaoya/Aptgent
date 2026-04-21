@@ -15,10 +15,13 @@ class DockingPlannerInput(BaseModel):
 
 
 class DockingPlannerOutput(BaseModel):
-    """Only the free-text fields the LLM is allowed to contribute."""
+    """LLM docking recommendations: numeric suggestions + explanatory notes."""
 
     model_config = ConfigDict(extra="ignore")
 
+    recommended_grid_size: list[float] | None = None
+    recommended_exhaustiveness: int | None = None
+    recommended_top_k: int | None = None
     receptor_path_note: str = ""
     grid_center_note: str = ""
     reason: str = ""

@@ -71,6 +71,7 @@ class DockingSelectionHandler(StepHandler):
             receptor_path=data.get("receptor_path"),
             grid_center=data.get("grid_center"),
             grid_size=data.get("grid_size"),
+            exhaustiveness=data.get("exhaustiveness"),
         )
         record_tertiary_structure_context(
             state,
@@ -151,14 +152,21 @@ class DockingSelectionHandler(StepHandler):
         profile = HardwareProbeAdapter().probe()
 
         candidate_count = len(state.candidates)
+        target_smiles = state.target_molecule.smiles if state.target_molecule else None
+        target_name = (
+            state.target_molecule.resolved_name or state.target_molecule.input_text
+            if state.target_molecule else None
+        )
         deterministic_plan = compute_deterministic_docking_plan(
             candidate_count=candidate_count,
             machine_profile=profile,
             time_budget_hours=time_budget,
+            target_smiles=target_smiles,
         )
         computed_top_k = deterministic_plan["recommended_top_k"]
         computed_time_budget = deterministic_plan["recommended_time_budget_hours"]
         computed_grid_size = deterministic_plan["recommended_grid_size"]
+        computed_exhaustiveness = deterministic_plan["recommended_exhaustiveness"]
 
         try:
             skill = DockingPlannerSkill()
@@ -171,6 +179,8 @@ class DockingSelectionHandler(StepHandler):
                     computed_top_k=computed_top_k,
                     computed_time_budget_hours=computed_time_budget,
                     computed_grid_size=computed_grid_size,
+                    target_smiles=target_smiles,
+                    target_name=target_name,
                 ),
                 structured_call=lambda: validate_docking_recommendation_result(
                     skill.plan(
@@ -180,15 +190,19 @@ class DockingSelectionHandler(StepHandler):
                         computed_top_k=computed_top_k,
                         computed_time_budget_hours=computed_time_budget,
                         computed_grid_size=computed_grid_size,
+                        target_smiles=target_smiles,
+                        target_name=target_name,
                     ),
                     candidate_count=candidate_count,
                     machine_profile=profile,
                     time_budget_hours=time_budget,
+                    target_smiles=target_smiles,
                 ),
             )
             recommended_time_budget = result.get("recommended_time_budget_hours")
             top_k = result.get("recommended_top_k", 0)
             grid_size = result.get("recommended_grid_size", [])
+            exhaustiveness = result.get("recommended_exhaustiveness") or computed_exhaustiveness
             receptor_path_note = result.get("receptor_path_note", "")
             grid_center_note = result.get("grid_center_note", "")
             reason = result.get("reason", "")
@@ -198,6 +212,7 @@ class DockingSelectionHandler(StepHandler):
                 time_budget_hours=recommended_time_budget,
                 recommended_top_k=top_k,
                 recommended_grid_size=grid_size,
+                recommended_exhaustiveness=exhaustiveness,
                 receptor_path_note=receptor_path_note,
                 grid_center_note=grid_center_note,
                 reason=reason,
@@ -210,6 +225,7 @@ class DockingSelectionHandler(StepHandler):
                 recommended_time_budget_hours=recommended_time_budget,
                 recommended_top_k=top_k,
                 recommended_grid_size=grid_size,
+                recommended_exhaustiveness=exhaustiveness,
                 receptor_path_note=receptor_path_note,
                 grid_center_note=grid_center_note,
                 reason=reason,
@@ -284,6 +300,11 @@ class DockingSelectionHandler(StepHandler):
                 ),
                 recommended_top_k=recommendation.recommended_top_k,
                 recommended_grid_size=recommendation.recommended_grid_size,
+                recommended_exhaustiveness=(
+                    state.docking_plan.exhaustiveness
+                    if state.docking_plan and state.docking_plan.exhaustiveness is not None
+                    else recommendation.recommended_exhaustiveness
+                ),
                 recommendation_reason=recommendation.reason,
                 receptor_path_note=recommendation.receptor_path_note,
                 grid_center_note=recommendation.grid_center_note,

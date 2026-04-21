@@ -1,10 +1,25 @@
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
+from pathlib import Path
 
 from aptgent.domain.models import SecondaryStructure
+
+
+def _find_param_file(name: str) -> str | None:
+    """Locate a ViennaRNA parameter file via ``$CONDA_PREFIX`` or common paths."""
+    candidates: list[Path] = []
+    prefix = os.environ.get("CONDA_PREFIX")
+    if prefix:
+        candidates.append(Path(prefix) / "share" / "ViennaRNA" / name)
+    candidates.append(Path.home() / ".conda" / "envs" / "aptgent" / "share" / "ViennaRNA" / name)
+    for c in candidates:
+        if c.is_file():
+            return str(c)
+    return None
 
 
 class RNAfoldAdapter:
@@ -12,9 +27,36 @@ class RNAfoldAdapter:
 
     def __init__(self, executable: str = "RNAfold", extra_args: list[str] | None = None, lazy: bool = False) -> None:
         self.executable = executable
-        self.extra_args = extra_args or ["--noPS", "-d2", "--paramFile=/home/dh/.conda/envs/aptgent-tools/share/ViennaRNA/dna_mathews2004.par"]
+        self.extra_args = list(extra_args) if extra_args else ["--noPS", "-d2"]
+        self._resolve_param_file()
         if not lazy:
             self._check_binary()
+
+    def _resolve_param_file(self) -> None:
+        """Auto-resolve bare parameter file names in ``--paramFile`` args."""
+        resolved: list[str] = []
+        i = 0
+        while i < len(self.extra_args):
+            arg = self.extra_args[i]
+            if arg == "--paramFile" and i + 1 < len(self.extra_args):
+                i += 1
+                path = self.extra_args[i]
+                if not Path(path).is_file():
+                    found = _find_param_file(Path(path).name)
+                    if found:
+                        path = str(found)
+                resolved.extend(["--paramFile", path])
+            elif arg.startswith("--paramFile="):
+                path = arg.split("=", 1)[1]
+                if not Path(path).is_file():
+                    found = _find_param_file(Path(path).name)
+                    if found:
+                        arg = f"--paramFile={found}"
+                resolved.append(arg)
+            else:
+                resolved.append(arg)
+            i += 1
+        self.extra_args = resolved
 
     def _check_binary(self) -> None:
         if shutil.which(self.executable) is None:

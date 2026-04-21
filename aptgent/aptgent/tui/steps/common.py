@@ -317,6 +317,45 @@ def format_specificity_recommendation_markdown(
     return "\n".join(lines)
 
 
+def _grid_size_from_heavy_atoms(heavy_count: int) -> list[float]:
+    """Map heavy-atom count to a per-axis grid size in Angstroms."""
+    if heavy_count <= 15:
+        side = 18.0
+    elif heavy_count <= 30:
+        side = 22.0
+    else:
+        side = 26.0
+    return [side, side, side]
+
+
+def _heavy_atom_count(smiles: str | None) -> int | None:
+    """Return the number of heavy atoms for a SMILES string, or None."""
+    if not smiles:
+        return None
+    try:
+        from rdkit import Chem
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return None
+        return mol.GetNumHeavyAtoms()
+    except Exception:
+        return None
+
+
+def _pick_exhaustiveness(
+    cpu_count: int,
+    time_budget_hours: int | None,
+) -> int:
+    """Choose exhaustiveness from {8, 16, 32} based on CPU budget."""
+    budget = time_budget_hours if time_budget_hours is not None else 4
+    capacity = cpu_count * budget
+    if capacity >= 64:
+        return 32
+    if capacity >= 16:
+        return 16
+    return 8
+
+
 def default_top_k(
     candidate_count: int,
     machine_profile: dict[str, Any],
@@ -341,7 +380,7 @@ def default_time_budget_hours(
     cpu_count = coerce_int(machine_profile.get("cpu_count")) or 1
     target = max(recommended_top_k or candidate_count or 1, 1)
     estimated = (target + (cpu_count * 4) - 1) // (cpu_count * 4)
-    return max(1, min(8, estimated or 1))
+    return max(1, min(24, estimated or 1))
 
 
 def compute_deterministic_docking_plan(
@@ -349,12 +388,13 @@ def compute_deterministic_docking_plan(
     candidate_count: int,
     machine_profile: dict[str, Any],
     time_budget_hours: int | None,
+    target_smiles: str | None = None,
 ) -> dict[str, Any]:
-    """Return the deterministic docking plan (top_k / time / grid) for a run.
+    """Return the deterministic docking plan (top_k / time / grid / exhaustiveness).
 
-    This is the single source of truth for these fields. The LLM is only
-    allowed to annotate them (notes + reason); the numbers themselves come
-    from here.
+    If *target_smiles* is provided and RDKit is available, the grid size is
+    derived from the heavy-atom count of the target; otherwise a default of
+    ``[20, 20, 20]`` is used.
     """
     top_k = default_top_k(candidate_count, machine_profile, time_budget_hours)
     recommended_time_budget = default_time_budget_hours(
@@ -363,12 +403,35 @@ def compute_deterministic_docking_plan(
         top_k,
         time_budget_hours,
     )
-    grid_size = [20.0, 20.0, 20.0]
+    heavy = _heavy_atom_count(target_smiles)
+    if heavy is not None:
+        grid_size = _grid_size_from_heavy_atoms(heavy)
+    else:
+        grid_size = [20.0, 20.0, 20.0]
+    cpu_count = coerce_int(machine_profile.get("cpu_count")) or 1
+    exhaustiveness = _pick_exhaustiveness(cpu_count, time_budget_hours)
     return {
         "recommended_top_k": top_k,
         "recommended_time_budget_hours": recommended_time_budget,
         "recommended_grid_size": grid_size,
+        "recommended_exhaustiveness": exhaustiveness,
     }
+
+
+def _clamp_grid_axis(value: Any) -> float | None:
+    """Return *value* if it is a float in [12.0, 30.0], else None."""
+    v = coerce_float(value)
+    if v is not None and 12.0 <= v <= 30.0:
+        return v
+    return None
+
+
+def _clamp_exhaustiveness(value: Any) -> int | None:
+    """Return *value* if it is one of {8, 16, 32}, else None."""
+    v = coerce_int(value)
+    if v in (8, 16, 32):
+        return v
+    return None
 
 
 def validate_docking_recommendation_result(
@@ -377,20 +440,50 @@ def validate_docking_recommendation_result(
     candidate_count: int,
     machine_profile: dict[str, Any],
     time_budget_hours: int | None,
+    target_smiles: str | None = None,
 ) -> dict[str, Any]:
-    """Merge deterministic docking values with LLM-provided explanatory text.
+    """Take LLM suggestion if sane, else fall back to deterministic defaults.
 
-    The ``top_k`` / ``time_budget`` / ``grid_size`` come from
-    :func:`compute_deterministic_docking_plan`; the LLM only contributes
-    free-text notes and a rationale. If the LLM response is malformed we
-    still return a valid plan built from defaults.
+    Clamp rules:
+    - ``top_k`` must be in ``[1, candidate_count]``
+    - each grid axis must be in ``[12.0, 30.0]``
+    - ``exhaustiveness`` must be in ``{8, 16, 32}``
+
+    If the LLM output is missing or malformed we still return a valid plan
+    built entirely from deterministic defaults.
     """
     plan = compute_deterministic_docking_plan(
         candidate_count=candidate_count,
         machine_profile=machine_profile,
         time_budget_hours=time_budget_hours,
+        target_smiles=target_smiles,
     )
     llm_obj = result if isinstance(result, dict) else {}
+
+    # --- top_k ---
+    llm_top_k = coerce_int(llm_obj.get("recommended_top_k"))
+    if llm_top_k is not None and 1 <= llm_top_k <= max(candidate_count, 1):
+        top_k = llm_top_k
+    else:
+        top_k = plan["recommended_top_k"]
+
+    # --- grid size ---
+    llm_grid = llm_obj.get("recommended_grid_size")
+    clamped_axes = coerce_float_list(llm_grid, exact_len=3)
+    if clamped_axes:
+        validated = [_clamp_grid_axis(a) for a in clamped_axes]
+        if all(v is not None for v in validated):
+            grid_size = validated
+        else:
+            grid_size = plan["recommended_grid_size"]
+    else:
+        grid_size = plan["recommended_grid_size"]
+
+    # --- exhaustiveness ---
+    llm_exh = _clamp_exhaustiveness(llm_obj.get("recommended_exhaustiveness"))
+    exhaustiveness = llm_exh if llm_exh is not None else plan["recommended_exhaustiveness"]
+
+    # --- notes (free-text, always from LLM or fallback) ---
     receptor_path_note = clean_text(llm_obj.get("receptor_path_note")) or (
         "Provide the receptor PDBQT path from your prepared or downloaded tertiary-structure target."
     )
@@ -402,8 +495,9 @@ def validate_docking_recommendation_result(
     )
     return {
         "recommended_time_budget_hours": plan["recommended_time_budget_hours"],
-        "recommended_top_k": plan["recommended_top_k"],
-        "recommended_grid_size": plan["recommended_grid_size"],
+        "recommended_top_k": top_k,
+        "recommended_grid_size": grid_size,
+        "recommended_exhaustiveness": exhaustiveness,
         "receptor_path_note": receptor_path_note,
         "grid_center_note": grid_center_note,
         "reason": reason,
@@ -429,9 +523,10 @@ def format_docking_recommendation_markdown(
     time_budget_hours: int | None,
     recommended_top_k: int,
     recommended_grid_size: list[float],
-    receptor_path_note: str,
-    grid_center_note: str,
-    reason: str,
+    recommended_exhaustiveness: int | None = None,
+    receptor_path_note: str = "",
+    grid_center_note: str = "",
+    reason: str = "",
 ) -> str:
     cpu_count = machine_profile.get("cpu_count", "?")
     memory_gb = machine_profile.get("memory_gb")
@@ -441,12 +536,14 @@ def format_docking_recommendation_markdown(
         if time_budget_hours is not None
         else "not specified"
     )
+    exh_text = str(recommended_exhaustiveness) if recommended_exhaustiveness is not None else "auto"
     return (
         f"{section_heading('Recommended Docking Setup')}\n\n"
         f"- Candidates available: **{candidate_count}**\n"
         f"- Time budget: **{budget_text}**\n"
         f"- Suggested batch: **top {recommended_top_k}**\n"
         f"- Suggested grid box size: **{', '.join(f'{value:.1f}' for value in recommended_grid_size)}**\n"
+        f"- Exhaustiveness: **{exh_text}**\n"
         f"- Receptor path: {receptor_path_note}\n"
         f"- Grid center: {grid_center_note}\n"
         f"- Machine profile: **{cpu_count} CPU(s)**, **{memory_text}** memory\n\n"

@@ -1,21 +1,26 @@
 [rna_fold]
-command = "/home/dh/.conda/envs/aptgent-tools/bin/RNAfold"
-args = ["--noPS", "-d2", "--paramFile=/home/dh/.conda/envs/aptgent-tools/share/ViennaRNA/dna_mathews2004.par"]
+command = "${APTGENT_RNAFOLD:-RNAfold}"
+args = [
+    "--noPS",
+    "-d2",
+    "--paramFile=${APTGENT_RNAFOLD_PARAMS:-dna_mathews2004.par}",
+]
 
 [docking]
 engine = "vina"
-command = "/home/dh/.conda/envs/aptgent-tools/bin/vina"
+command = "${APTGENT_VINA:-vina}"
 exhaustiveness = 8
 num_modes = 9
 energy_range = 3.0
 
 [predictor]
-model_dir = "/home/dh/Aptgent/aptgent/aptgent/resources/predictor_models"
-conda_env = "aptamer-predictor"
-conda_python = "/home/dh/.conda/envs/aptamer-predictor/bin/python"
-# Optional: kill the predictor subprocess if it emits no stdout for this many seconds.
-# Leave unset to disable the watchdog.
-mutation_batch_timeout_seconds = 3600
+# model_dir defaults to the bundled predictor models inside the package.
+# Override with APTGENT_MODEL_DIR if using external models.
+# conda_env / conda_python are only needed when the predictor runs in
+# a separate conda environment.  In the default single-env setup they
+# should remain empty so the current Python is used directly.
+conda_env = "${APTGENT_CONDA_ENV:-}"
+conda_python = "${APTGENT_CONDA_PYTHON:-}"
 
 [pdb_analysis]
 # `wget` is preferred when available, but the adapter falls back to `urllib`

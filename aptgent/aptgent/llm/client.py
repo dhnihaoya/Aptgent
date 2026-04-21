@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -54,6 +56,47 @@ class LLMClient:
         self.timeout = self.config.get("timeout_seconds", 60)
         self.max_retries = self.config.get("max_retries", 2)
         self._thinking_enabled = True
+
+        # LLM call logging
+        self._log_dir: Path | None = None
+        self._redact = os.environ.get("APTGENT_LLM_REDACT", "1") != "0"
+
+    def set_log_dir(self, log_dir: str | Path) -> None:
+        self._log_dir = Path(log_dir)
+        self._log_dir.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _redact_text(text: str) -> str:
+        return "sha256:" + hashlib.sha256(text.encode()).hexdigest()[:16]
+
+    def _log_call(
+        self,
+        *,
+        method: str,
+        system_prompt: str,
+        user_prompt: str,
+        response: Any = None,
+    ) -> None:
+        if self._log_dir is None:
+            return
+        entry: dict[str, Any] = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "method": method,
+            "provider": "openai",
+            "model": self.model,
+            "system_prompt": system_prompt[:200] if len(system_prompt) > 200 else system_prompt,
+            "user_message": (
+                self._redact_text(user_prompt) if self._redact else user_prompt
+            ),
+        }
+        if response is not None:
+            entry["response"] = response
+        log_file = self._log_dir / "llm_calls.jsonl"
+        try:
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            _log.debug("Failed to write LLM log entry", exc_info=True)
 
     def _uses_kimi_k25(self) -> bool:
         return self.model.startswith("kimi-k2.5")
@@ -211,7 +254,14 @@ class LLMClient:
                 content = "".join(collected)
                 if not content:
                     raise ValueError("LLM returned empty content")
-                return json.loads(content)
+                parsed = json.loads(content)
+                self._log_call(
+                    method="chat_json",
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    response=parsed,
+                )
+                return parsed
             except LLMCancelled:
                 raise
             except Exception as exc:
@@ -237,42 +287,53 @@ class LLMClient:
     ):
         """Stream LLM response as text chunks (generator)."""
         timeout = self._stream_timeout()
-        for attempt in range(self.max_retries + 1):
-            if should_cancel is not None and should_cancel():
-                raise LLMCancelled()
-            try:
-                with httpx.stream(
-                    "POST",
-                    f"{self.base_url}/chat/completions",
-                    headers=self._headers(),
-                    json=self._payload(
-                        system_prompt,
-                        user_prompt,
-                        temperature=self.json_temperature,
-                        stream=True,
-                        response_format={"type": "json_object"},
-                        enable_thinking=False,
-                    ),
-                    timeout=timeout,
-                ) as resp:
-                    resp.raise_for_status()
-                    for event in self._iter_sse_events(resp, should_cancel):
-                        if event.get("type") == "content":
-                            text = event.get("text", "")
-                            if text:
-                                yield text
-                return
-            except LLMCancelled:
-                raise
-            except Exception as exc:
-                if not _is_retryable(exc) or attempt == self.max_retries:
-                    self._raise_after_retries("streaming request", exc)
-                _log.warning(
-                    "LLM chat_stream attempt %d/%d failed (retryable): %s",
-                    attempt + 1,
-                    self.max_retries + 1,
-                    exc,
-                )
+        chunks: list[str] = []
+        try:
+            for attempt in range(self.max_retries + 1):
+                chunks = []
+                if should_cancel is not None and should_cancel():
+                    raise LLMCancelled()
+                try:
+                    with httpx.stream(
+                        "POST",
+                        f"{self.base_url}/chat/completions",
+                        headers=self._headers(),
+                        json=self._payload(
+                            system_prompt,
+                            user_prompt,
+                            temperature=self.json_temperature,
+                            stream=True,
+                            response_format={"type": "json_object"},
+                            enable_thinking=False,
+                        ),
+                        timeout=timeout,
+                    ) as resp:
+                        resp.raise_for_status()
+                        for event in self._iter_sse_events(resp, should_cancel):
+                            if event.get("type") == "content":
+                                text = event.get("text", "")
+                                if text:
+                                    chunks.append(text)
+                                    yield text
+                    return
+                except LLMCancelled:
+                    raise
+                except Exception as exc:
+                    if not _is_retryable(exc) or attempt == self.max_retries:
+                        self._raise_after_retries("streaming request", exc)
+                    _log.warning(
+                        "LLM chat_stream attempt %d/%d failed (retryable): %s",
+                        attempt + 1,
+                        self.max_retries + 1,
+                        exc,
+                    )
+        finally:
+            self._log_call(
+                method="chat_stream",
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response="".join(chunks)[:500] if chunks else None,
+            )
 
     def chat_text_stream(
         self,
@@ -283,33 +344,50 @@ class LLMClient:
     ):
         """Stream plain-language text for direct user display."""
         timeout = self._stream_timeout()
-        for attempt in range(self.max_retries + 1):
-            if should_cancel is not None and should_cancel():
-                raise LLMCancelled()
-            try:
-                with httpx.stream(
-                    "POST",
-                    f"{self.base_url}/chat/completions",
-                    headers=self._headers(),
-                    json=self._payload(
-                        system_prompt,
-                        user_prompt,
-                        temperature=self.temperature,
-                        stream=True,
-                    ),
-                    timeout=timeout,
-                ) as resp:
-                    resp.raise_for_status()
-                    yield from self._iter_sse_events(resp, should_cancel)
-                return
-            except LLMCancelled:
-                raise
-            except Exception as exc:
-                if not _is_retryable(exc) or attempt == self.max_retries:
-                    self._raise_after_retries("text streaming request", exc)
-                _log.warning(
-                    "LLM chat_text_stream attempt %d/%d failed (retryable): %s",
-                    attempt + 1,
-                    self.max_retries + 1,
-                    exc,
-                )
+        events: list[dict] = []
+        try:
+            for attempt in range(self.max_retries + 1):
+                events = []
+                if should_cancel is not None and should_cancel():
+                    raise LLMCancelled()
+                try:
+                    with httpx.stream(
+                        "POST",
+                        f"{self.base_url}/chat/completions",
+                        headers=self._headers(),
+                        json=self._payload(
+                            system_prompt,
+                            user_prompt,
+                            temperature=self.temperature,
+                            stream=True,
+                        ),
+                        timeout=timeout,
+                    ) as resp:
+                        resp.raise_for_status()
+                        for event in self._iter_sse_events(resp, should_cancel):
+                            events.append(event)
+                            yield event
+                    return
+                except LLMCancelled:
+                    raise
+                except Exception as exc:
+                    if not _is_retryable(exc) or attempt == self.max_retries:
+                        self._raise_after_retries("text streaming request", exc)
+                    _log.warning(
+                        "LLM chat_text_stream attempt %d/%d failed (retryable): %s",
+                        attempt + 1,
+                        self.max_retries + 1,
+                        exc,
+                    )
+        finally:
+            self._log_call(
+                method="chat_text_stream",
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response={
+                    "event_count": len(events),
+                    "preview": "".join(
+                        e.get("text", "") for e in events if e.get("type") == "content"
+                    )[:200],
+                },
+            )

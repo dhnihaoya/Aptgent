@@ -481,6 +481,7 @@ class DockingParamPanel(_BaseStructuredPanel):
         time_budget: int | None = None,
         recommended_top_k: int = 0,
         recommended_grid_size: list[float] | None = None,
+        recommended_exhaustiveness: int | None = None,
         recommendation_reason: str = "",
         receptor_path_note: str = "",
         grid_center_note: str = "",
@@ -496,6 +497,7 @@ class DockingParamPanel(_BaseStructuredPanel):
         self.time_budget = time_budget
         self.recommended_top_k = recommended_top_k
         self.recommended_grid_size = recommended_grid_size or []
+        self.recommended_exhaustiveness = recommended_exhaustiveness
         self.recommendation_reason = recommendation_reason
         self.receptor_path_note = receptor_path_note
         self.grid_center_note = grid_center_note
@@ -567,6 +569,11 @@ class DockingParamPanel(_BaseStructuredPanel):
             yield sx_input
             yield sy_input
             yield sz_input
+        yield Static("Exhaustiveness (8, 16, or 32):")
+        exh_input = Input(id="dock-exhaustiveness", placeholder="8")
+        if self.recommended_exhaustiveness is not None:
+            exh_input.value = str(self.recommended_exhaustiveness)
+        yield exh_input
         yield Button("Submit & Continue", id="btn-submit-dock", variant="success")
 
     def _machine_info(self) -> str:
@@ -608,6 +615,12 @@ class DockingParamPanel(_BaseStructuredPanel):
             except (ValueError, AttributeError):
                 return None
 
+        def iv(widget_id: str) -> int | None:
+            try:
+                return int(self.query_one(f"#{widget_id}", Input).value.strip())
+            except (ValueError, AttributeError):
+                return None
+
         cx, cy, cz = fv("dock-cx"), fv("dock-cy"), fv("dock-cz")
         sx, sy, sz = fv("dock-sx"), fv("dock-sy"), fv("dock-sz")
 
@@ -617,12 +630,17 @@ class DockingParamPanel(_BaseStructuredPanel):
         top_k_str = self.query_one("#dock-top-k", Input).value.strip()
         receptor = self.query_one("#dock-receptor", Input).value.strip()
 
+        exh_raw = iv("dock-exhaustiveness")
+        if exh_raw not in (8, 16, 32):
+            exh_raw = self.recommended_exhaustiveness
+
         return {
             "time_budget": int(budget_str) if budget_str.isdigit() else self.time_budget,
             "top_k": int(top_k_str) if top_k_str.isdigit() else self.recommended_top_k,
             "receptor_path": receptor or None,
             "grid_center": [cx, cy, cz] if all(v is not None for v in (cx, cy, cz)) else None,
             "grid_size": [sx, sy, sz] if all(v is not None for v in (sx, sy, sz)) else None,
+            "exhaustiveness": exh_raw,
             "recommendation_reason": self.recommendation_reason,
             "uses_recommendation": self.mode == "llm",
             "accepted_recommendation": self.accepted_recommendation,

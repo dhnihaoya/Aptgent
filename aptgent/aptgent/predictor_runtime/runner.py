@@ -103,6 +103,7 @@ def cmd_mutation_batch(args: argparse.Namespace) -> int:
     smiles = args.smiles
     progress_every = args.progress_every or 10000
     sub_batch_size = args.sub_batch_size or 65536
+    skip_first = args.skip_first or 0
 
     # Parse sites
     if args.sites_json:
@@ -169,6 +170,7 @@ def cmd_mutation_batch(args: argparse.Namespace) -> int:
             should_cancel=_check_stdin_cancel,
             result_callback=_counting_callback,
             collect_results=False,
+            skip_first=skip_first,
         )
 
         _emit({"type": "done", "total": total, "hits": hits})
@@ -216,6 +218,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Emit a progress message after roughly this many candidates.",
     )
     mut_batch.add_argument("--output", default=None, help="Optional CSV output for hits")
+    mut_batch.add_argument("--skip-first", type=int, default=0,
+                           help="Skip the first N candidates (for resume)")
 
     return parser
 

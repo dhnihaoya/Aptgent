@@ -14,63 +14,22 @@ class StructureHandler(StepHandler):
             self.screen.add_system_message("Error: no sequence available.", "error-text")
             self.screen.set_input_enabled(True)
             return
-        strategy = "- Strategy: check lookup adapter, then fall back to RNAfold."
         self.screen.add_tool_message(
             "\n".join(
                 [
-                    "**Secondary-structure source selection**",
+                    "**Secondary-structure prediction**",
                     "",
                     f"- Sequence length: **{len(seq)}**",
-                    strategy,
+                    "- Method: RNAfold",
                 ]
             )
         )
-        self.run_worker(self._prepare_secondary_structure, activity="Preparing secondary structure...")
+        self.run_worker(self._run_rnafold, activity="Running RNAfold...")
 
-    def _prepare_secondary_structure(self) -> None:
-        self._run_lookup_and_rnafold()
-
-    def _run_lookup_and_rnafold(self) -> None:
+    def _run_rnafold(self) -> None:
         state = self.screen.app.current_state
         seq = get_sequence(state) or ""
         try:
-            lookup_result = self.screen.app.structure_lookup_adapter.lookup(seq)
-            lookup_note = (
-                lookup_result.note if lookup_result.status != "not_configured" else None
-            )
-            record_secondary_structure_context(
-                state,
-                lookup_status=lookup_result.status,
-                query_sequence=seq,
-                match_ids=[match.structure_id for match in lookup_result.matches],
-                note=lookup_note,
-            )
-            if lookup_result.status == "found":
-                self.screen.app.call_from_thread(
-                    self.screen.add_tool_message,
-                    "\n".join(
-                        [
-                            "**Solved-structure lookup**",
-                            "",
-                            f"- Matches: {', '.join(match.structure_id for match in lookup_result.matches)}",
-                            "- Automatic fetch/derivation is not enabled yet in this workflow.",
-                            "- Falling back to `RNAfold` for this run.",
-                        ]
-                    ),
-                )
-            elif lookup_note:
-                self.screen.app.call_from_thread(
-                    self.screen.add_tool_message,
-                    "\n".join(
-                        [
-                            "**Solved-structure lookup**",
-                            "",
-                            f"- Status: `{lookup_result.status}`",
-                            f"- Note: {lookup_note}",
-                        ]
-                    ),
-                )
-
             self.screen.app.call_from_thread(
                 self.screen.add_tool_message,
                 "\n".join(

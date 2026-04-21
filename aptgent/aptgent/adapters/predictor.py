@@ -19,9 +19,10 @@ _log = logging.getLogger(__name__)
 class EnsembleAdapter:
     """Adapter wrapping the internal 9-model ensemble predictor via subprocess.
 
-    Calls the internal predictor runner in its own conda environment so that
-    heavy dependencies (rdkit, torch, xgboost, …) need not be installed in
-    the main aptgent environment.
+    In the default single-environment setup all dependencies live in the
+    same conda env and ``conda_env`` / ``conda_python`` are left empty,
+    so the predictor runs under ``sys.executable`` directly.  Set these
+    fields only when the predictor runtime is isolated in a separate env.
     """
 
     def __init__(
@@ -33,8 +34,8 @@ class EnsembleAdapter:
         if model_dir is None:
             model_dir = str(default_model_dir())
         self.model_dir = model_dir
-        self.conda_env = conda_env
-        self.conda_python = conda_python
+        self.conda_env = conda_env or None
+        self.conda_python = conda_python or None
 
         self._project_root = str(Path(__file__).resolve().parents[2])
 
@@ -53,7 +54,8 @@ class EnsembleAdapter:
                 "-n", self.conda_env,
                 "python", "-m", RUNNER_MODULE,
             ]
-        return ["python", "-m", RUNNER_MODULE]
+        import sys
+        return [sys.executable, "-m", RUNNER_MODULE]
 
     def _run(self, extra_args: list[str], timeout: int = 600) -> subprocess.CompletedProcess[str]:
         """Invoke the predictor CLI with the given extra arguments."""
@@ -216,8 +218,7 @@ class EnsembleAdapter:
         progress_every: int = 10000,
         cancel_event: threading.Event | None = None,
         timeout_seconds: int | None = 3600,
-        # Back-compat alias: older callers passed ``batch_size`` to control the
-        # progress-emit cadence. Treat it as ``progress_every`` if supplied.
+        skip_first: int = 0,
         batch_size: int | None = None,
     ) -> dict[str, Any]:
         """Run mutation-batch via subprocess with line-JSON protocol.
@@ -250,6 +251,8 @@ class EnsembleAdapter:
             "--sites", sites_str,
             "--progress-every", str(int(effective_progress_every)),
         ]
+        if skip_first > 0:
+            cmd.extend(["--skip-first", str(skip_first)])
 
         proc = subprocess.Popen(
             cmd,

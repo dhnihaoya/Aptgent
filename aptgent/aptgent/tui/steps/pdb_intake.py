@@ -5,7 +5,7 @@ from typing import Any, Callable
 from aptgent.domain.enums import Step
 from aptgent.domain.models import PdbAnalysisResult, PdbChainCandidate, PdbLigandCandidate
 from aptgent.tui.steps.common import clean_text
-from aptgent.tui.widgets.structured_input import PdbSelectionPanel
+from aptgent.tui.widgets.structured_input import ActionMenuPanel, PdbSelectionPanel
 from aptgent.workflow.context import record_intake_context, record_pdb_intake_context
 
 
@@ -54,7 +54,17 @@ class PdbIntakeHelper:
                 label="agent:pdb",
             )
             analysis = self.screen.app.pdb_analysis_adapter.analyze(pdb_id, artifact_path)
-            analysis = self.review_pdb_analysis(analysis)
+
+            target_smiles: str | None = None
+            if state.target_molecule and state.target_molecule.smiles:
+                target_smiles = state.target_molecule.smiles
+
+            analysis = self.review_pdb_analysis(
+                analysis,
+                user_target_text=user_target_text,
+                user_target_smiles=target_smiles,
+                user_sequence=user_sequence,
+            )
             record_pdb_intake_context(
                 state,
                 analysis_status="completed",
@@ -65,6 +75,9 @@ class PdbIntakeHelper:
                 recommended_ligand_key=analysis.recommended_ligand_key,
                 semantic_validation_status=analysis.semantic_status,
                 semantic_note=analysis.semantic_note,
+                review_category=analysis.semantic_category,
+                review_target_match=analysis.semantic_target_match,
+                review_confidence=analysis.semantic_confidence,
                 error=analysis.error,
             )
         except Exception as exc:
@@ -83,6 +96,201 @@ class PdbIntakeHelper:
                 f"PDB `{analysis.pdb_id}` did not contain a usable nucleic-acid chain."
             )
             return
+
+        if self._needs_review_gate(analysis):
+            self._show_review_gate(analysis)
+            self.screen.app.save_state()
+            return
+
+        self._continue_after_review(
+            analysis=analysis,
+            user_sequence=user_sequence,
+            user_target_text=user_target_text,
+            user_brief=user_brief,
+            modification_region=modification_region,
+            analogs=analogs,
+            time_budget_hours=time_budget_hours,
+        )
+
+    def review_pdb_analysis(
+        self,
+        analysis: PdbAnalysisResult,
+        *,
+        user_target_text: str | None = None,
+        user_target_smiles: str | None = None,
+        user_sequence: str | None = None,
+    ) -> PdbAnalysisResult:
+        if not analysis.nucleic_acid_chains:
+            return analysis
+
+        chains_sequences = [
+            {
+                "chain_id": c.chain_id,
+                "molecule_type": c.molecule_type,
+                "residue_count": c.residue_count,
+                "sequence": c.sequence,
+            }
+            for c in analysis.nucleic_acid_chains
+        ]
+
+        ligand_display_names = [lig.display_name for lig in analysis.ligands]
+
+        hetnam_map: dict[str, str] = {}
+        for lig in analysis.ligands:
+            if lig.identifier and lig.display_name:
+                hetnam_map[lig.identifier] = lig.display_name
+
+        payload: dict[str, Any] = {
+            "title": analysis.title or None,
+            "hetnam_map": hetnam_map or None,
+            "chains_sequences": chains_sequences,
+            "ligand_display_names": ligand_display_names or None,
+        }
+        if user_target_text:
+            payload["user_target_text"] = user_target_text
+        if user_target_smiles:
+            payload["user_target_smiles"] = user_target_smiles
+        if user_sequence:
+            payload["user_sequence"] = user_sequence
+
+        try:
+            review = self.screen.app.create_pdb_review_skill().review(payload)
+        except Exception:
+            return analysis
+
+        category = clean_text(review.get("category")) or "uncertain"
+        target_match = clean_text(review.get("target_match")) or "unknown"
+        confidence = clean_text(review.get("confidence")) or "medium"
+        note = clean_text(review.get("note")) or ""
+
+        _APTAMER = {"aptamer_small_molecule", "aptamer_protein"}
+        _NOT = {"not_nucleic_acid", "structural_rna", "other_nucleic_acid"}
+        if category in _APTAMER:
+            semantic_status = "aptamer_like"
+        elif category in _NOT:
+            semantic_status = "not_aptamer"
+        else:
+            semantic_status = "uncertain"
+
+        return analysis.model_copy(
+            update={
+                "semantic_status": semantic_status,
+                "semantic_note": note,
+                "semantic_category": category,
+                "semantic_target_match": target_match,
+                "semantic_confidence": confidence,
+            }
+        )
+
+    _NOT_RELEVANT_CATEGORIES = {"not_nucleic_acid", "structural_rna", "other_nucleic_acid"}
+
+    def _needs_review_gate(self, analysis: PdbAnalysisResult) -> bool:
+        cat = analysis.semantic_category
+        conf = analysis.semantic_confidence
+        tmatch = analysis.semantic_target_match
+
+        if cat in self._NOT_RELEVANT_CATEGORIES and conf == "high":
+            return True
+        if tmatch == "mismatches" and conf in {"high", "medium"}:
+            return True
+        return False
+
+    def _show_review_gate(self, analysis: PdbAnalysisResult) -> None:
+        cat = analysis.semantic_category
+        tmatch = analysis.semantic_target_match
+        note = analysis.semantic_note
+
+        lines = [
+            "**PDB Semantic Review**",
+            "",
+            f"- Category: `{cat}`",
+            f"- Target match: `{tmatch}`",
+            f"- Confidence: `{analysis.semantic_confidence}`",
+        ]
+        if note:
+            lines.append(f"- Note: {note}")
+
+        if cat in self._NOT_RELEVANT_CATEGORIES:
+            lines.append("")
+            lines.append(
+                "This structure does not appear to be an aptamer-ligand complex. "
+                "Proceeding may produce unreliable results."
+            )
+        if tmatch == "mismatches":
+            lines.append("")
+            lines.append(
+                "The ligand(s) in this PDB do not match your specified target molecule."
+            )
+
+        self.screen.app.call_from_thread(
+            self.screen.add_tool_message,
+            "\n".join(lines),
+            label="agent:pdb",
+        )
+
+        state = self.screen.app.current_state
+        record_intake_context(
+            state,
+            phase="awaiting_pdb_review_gate",
+            last_resolution_error="PDB semantic review flagged a concern.",
+        )
+
+        self.screen.app.call_from_thread(
+            self.screen.add_structured_widget,
+            ActionMenuPanel(
+                step=Step.INTAKE,
+                title="PDB Review Confirmation",
+                choices=[
+                    (
+                        "proceed-pdb-review",
+                        "Proceed anyway",
+                        "Continue with this PDB structure despite the review finding.",
+                    ),
+                    (
+                        "back-pdb-review",
+                        "Back to intake",
+                        "Return to intake and provide a different PDB or sequence.",
+                    ),
+                ],
+                help_text="Use Up/Down to choose and Enter to confirm.",
+            ),
+        )
+
+    def _continue_after_review(
+        self,
+        *,
+        analysis: PdbAnalysisResult | None = None,
+        user_sequence: str | None = None,
+        user_target_text: str | None = None,
+        user_brief: str | None = None,
+        modification_region: str | None = None,
+        analogs: list[str] | None = None,
+        time_budget_hours: int | None = None,
+    ) -> None:
+        state = self.screen.app.current_state
+
+        if analysis is None:
+            pdb_ctx = state.context.pdb_intake
+            analysis = PdbAnalysisResult(
+                pdb_id=pdb_ctx.pdb_id or "unknown",
+                title=pdb_ctx.title or "",
+                artifact_path=pdb_ctx.artifact_path or "",
+                nucleic_acid_chains=pdb_ctx.chains,
+                ligands=pdb_ctx.ligands,
+                recommended_chain_id=pdb_ctx.recommended_chain_id,
+                recommended_ligand_key=pdb_ctx.recommended_ligand_key,
+                semantic_status=pdb_ctx.semantic_validation_status,
+                semantic_note=pdb_ctx.semantic_note or "",
+                semantic_category=pdb_ctx.review_category or "uncertain",
+                semantic_target_match=pdb_ctx.review_target_match or "unknown",
+                semantic_confidence=pdb_ctx.review_confidence or "medium",
+            )
+            user_target_text = state.context.intake.target_input
+            user_brief = state.context.intake.user_brief
+            user_sequence = pdb_ctx.user_sequence
+            modification_region = state.input_payload.get("modification_region")
+            analogs = state.input_payload.get("analogs", [])
+            time_budget_hours = state.time_budget
 
         selected_chain = self.choose_chain(analysis, user_sequence)
         sequence_match_status = self.compare_sequence(
@@ -148,47 +356,21 @@ class PdbIntakeHelper:
             target_text=user_target_text or target_from_pdb,
             user_brief=user_brief,
             modification_region=modification_region,
-            analogs=analogs,
+            analogs=analogs or [],
             time_budget_hours=time_budget_hours,
         )
 
-    def review_pdb_analysis(self, analysis: PdbAnalysisResult) -> PdbAnalysisResult:
-        if not analysis.nucleic_acid_chains:
-            return analysis
-
-        summary_lines = [
-            f"PDB ID: {analysis.pdb_id}",
-            f"Title: {analysis.title or 'unknown'}",
-            "Nucleic-acid chains:",
-        ]
-        for chain in analysis.nucleic_acid_chains:
-            summary_lines.append(
-                f"- chain {chain.chain_id}: {chain.molecule_type}, length {chain.residue_count}"
+    def resume_after_review_gate(self, proceed: bool) -> None:
+        if not proceed:
+            record_intake_context(
+                self.screen.app.current_state,
+                phase="awaiting_general_retry",
+                last_resolution_error="PDB import was not confirmed after semantic review.",
             )
-        if analysis.ligands:
-            summary_lines.append("Ligands:")
-            for ligand in analysis.ligands[:8]:
-                summary_lines.append(
-                    f"- {ligand.display_name} ({ligand.identifier}) in chain {ligand.chain_id}"
-                )
-        else:
-            summary_lines.append("Ligands: none detected")
-
-        try:
-            review = self.screen.app.create_pdb_review_skill().review_summary(
-                "\n".join(summary_lines)
-            )
-        except Exception:
-            return analysis
-
-        semantic_status = clean_text(review.get("semantic_status")) or "unknown"
-        note = clean_text(review.get("note")) or ""
-        return analysis.model_copy(
-            update={
-                "semantic_status": semantic_status,
-                "semantic_note": note,
-            }
-        )
+            self.screen.app.save_state()
+            self.screen.app.call_from_thread(self.screen.advance_to_step, Step.INTAKE)
+            return
+        self._continue_after_review()
 
     def choose_chain(
         self,

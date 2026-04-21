@@ -64,6 +64,9 @@ class PdbIntakeContext(BaseModel):
     sequence_match_status: str = "unknown"
     semantic_validation_status: str = "unknown"
     semantic_note: Optional[str] = None
+    review_category: Optional[str] = None
+    review_target_match: Optional[str] = None
+    review_confidence: Optional[str] = None
     needs_user_selection: bool = False
     error: Optional[str] = None
 
@@ -93,6 +96,7 @@ class DockingRecommendationContext(BaseModel):
     recommended_time_budget_hours: Optional[int] = None
     recommended_top_k: int = 0
     recommended_grid_size: list[float] = Field(default_factory=list)
+    recommended_exhaustiveness: Optional[int] = None
     receptor_path_note: str = ""
     grid_center_note: str = ""
     reason: str = ""
@@ -160,6 +164,9 @@ class RunState(BaseModel):
     pending_input: Optional[dict[str, Any]] = None
     error_info: Optional[dict[str, Any]] = None
     context: WorkflowContext = Field(default_factory=WorkflowContext)
+
+    # Per-step wall-clock timestamps (step.value -> ISO timestamp)
+    step_timestamps: dict[str, str] = Field(default_factory=dict)
 
     def touch(self) -> None:
         self.updated_at = datetime.now(timezone.utc).isoformat()

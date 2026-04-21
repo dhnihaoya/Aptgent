@@ -34,8 +34,12 @@ def create_persistence(config: dict[str, Any]) -> Persistence:
     return Persistence(runs_dir)
 
 
-def create_engine(persistence: Persistence) -> WorkflowEngine:
-    return WorkflowEngine(persistence)
+def create_engine(
+    persistence: Persistence,
+    tools_config: dict[str, Any] | None = None,
+    llm_config: dict[str, Any] | None = None,
+) -> WorkflowEngine:
+    return WorkflowEngine(persistence, tools_config=tools_config, llm_config=llm_config)
 
 
 def create_rna_fold_adapter(tools_config: dict[str, Any]) -> Any:
@@ -60,6 +64,15 @@ def create_vina_adapter(tools_config: dict[str, Any]) -> Any:
         energy_range=dock_cfg.get("energy_range", 3.0),
         lazy=True,
     )
+
+
+def _ensure_model_dir(tools_config: dict[str, Any]) -> dict[str, Any]:
+    """Populate predictor.model_dir with the bundled default if not set."""
+    from aptgent.predictor_runtime.paths import default_model_dir
+    pred_cfg = tools_config.setdefault("predictor", {})
+    if not pred_cfg.get("model_dir"):
+        pred_cfg["model_dir"] = str(default_model_dir())
+    return tools_config
 
 
 def create_prediction_adapter(tools_config: dict[str, Any]) -> Any:
@@ -105,10 +118,10 @@ def build_runtime(config_bundle: AppConfigBundle | None = None) -> AppRuntime:
 
     bundle = config_bundle or load_config()
     config = bundle.workflow
-    tools_config = bundle.tools
+    tools_config = _ensure_model_dir(bundle.tools)
 
     persistence = create_persistence(config)
-    engine = create_engine(persistence)
+    engine = create_engine(persistence, tools_config=tools_config, llm_config=bundle.llm)
 
     return AppRuntime(
         config=config,

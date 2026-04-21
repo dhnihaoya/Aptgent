@@ -104,6 +104,9 @@ def record_pdb_intake_context(
     sequence_match_status: str | None = None,
     semantic_validation_status: str | None = None,
     semantic_note: str | None = None,
+    review_category: str | None = None,
+    review_target_match: str | None = None,
+    review_confidence: str | None = None,
     needs_user_selection: bool | None = None,
     error: str | None = None,
     clear: bool = False,
@@ -149,6 +152,12 @@ def record_pdb_intake_context(
         context.semantic_validation_status = semantic_validation_status
     if semantic_note is not None:
         context.semantic_note = _clean_text(semantic_note)
+    if review_category is not None:
+        context.review_category = review_category
+    if review_target_match is not None:
+        context.review_target_match = review_target_match
+    if review_confidence is not None:
+        context.review_confidence = review_confidence
     if needs_user_selection is not None:
         context.needs_user_selection = needs_user_selection
     if error is not None:
@@ -293,9 +302,10 @@ def record_docking_recommendation_context(
     recommended_time_budget_hours: int | None,
     recommended_top_k: int,
     recommended_grid_size: list[float] | None,
-    receptor_path_note: str,
-    grid_center_note: str,
-    reason: str,
+    recommended_exhaustiveness: int | None = None,
+    receptor_path_note: str = "",
+    grid_center_note: str = "",
+    reason: str = "",
     display_markdown: str = "",
     strategy: str = "",
     phase: str = "initial",
@@ -308,6 +318,7 @@ def record_docking_recommendation_context(
     context.recommended_time_budget_hours = recommended_time_budget_hours
     context.recommended_top_k = recommended_top_k
     context.recommended_grid_size = list(recommended_grid_size or [])
+    context.recommended_exhaustiveness = recommended_exhaustiveness
     context.receptor_path_note = _clean_text(receptor_path_note) or ""
     context.grid_center_note = _clean_text(grid_center_note) or ""
     context.reason = reason

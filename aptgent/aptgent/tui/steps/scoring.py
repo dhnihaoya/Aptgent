@@ -8,6 +8,14 @@ from aptgent.tui.steps.common import next_step
 
 
 class ScoringHandler(StepHandler):
+    """Fallback scoring step.
+
+    When the fast enumeration path is used, predictions are produced
+    during enumeration and this step becomes a pure display (no worker).
+    The ``_score`` worker only runs when ``state.predictions`` is empty,
+    i.e. the degraded / legacy path without integrated scoring.
+    """
+
     def enter(self) -> None:
         state = self.screen.app.current_state
         candidates = state.candidates

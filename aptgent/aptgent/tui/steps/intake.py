@@ -106,6 +106,50 @@ class IntakeHandler(StepHandler):
             self.screen.set_input_placeholder(
                 "Use the PDB selection panel, or paste a new intake brief."
             )
+        elif intake.phase == "awaiting_pdb_review_gate":
+            cat = pdb_ctx.review_category or "uncertain"
+            tmatch = pdb_ctx.review_target_match or "unknown"
+            conf = pdb_ctx.review_confidence or "medium"
+            note = pdb_ctx.semantic_note or ""
+            lines = [
+                section_heading("Step 1: PDB Semantic Review"),
+                "",
+                f"- **PDB ID**: `{pdb_ctx.pdb_id or 'unknown'}`",
+                f"- **Category**: `{cat}`",
+                f"- **Target match**: `{tmatch}`",
+                f"- **Confidence**: `{conf}`",
+            ]
+            if note:
+                lines.append(f"- **Note**: {note}")
+            lines.append("")
+            lines.append("Use the panel below to proceed or go back.")
+            self.screen.add_system_message(
+                "\n".join(lines),
+                markdown=True,
+            )
+            from aptgent.tui.widgets.structured_input import ActionMenuPanel as _AMP
+            self.screen.add_structured_widget(
+                _AMP(
+                    step=Step.INTAKE,
+                    title="PDB Review Confirmation",
+                    choices=[
+                        (
+                            "proceed-pdb-review",
+                            "Proceed anyway",
+                            "Continue with this PDB structure despite the review finding.",
+                        ),
+                        (
+                            "back-pdb-review",
+                            "Back to intake",
+                            "Return to intake and provide a different PDB or sequence.",
+                        ),
+                    ],
+                    help_text="Use Up/Down to choose and Enter to confirm.",
+                ),
+            )
+            self.screen.set_input_placeholder(
+                "Use the panel above, or paste a new intake brief."
+            )
         elif intake.phase == "awaiting_general_retry":
             error_text = intake.last_resolution_error or "The previous intake attempt could not be used."
             self.screen.add_system_message(
@@ -158,6 +202,16 @@ class IntakeHandler(StepHandler):
             )
             return
 
+        if phase == "awaiting_pdb_review_gate":
+            if looks_like_full_intake(text):
+                self._start_full_extract(text)
+                return
+            self.screen.add_system_message(
+                "Use the review panel above, or paste a new full intake brief.",
+                "warning-text",
+            )
+            return
+
         self._start_full_extract(text)
 
     def handle_structured_input(self, data: dict) -> None:
@@ -178,6 +232,16 @@ class IntakeHandler(StepHandler):
                 last_resolution_error="PDB import was not confirmed.",
             )
             self.screen.advance_to_step(Step.INTAKE)
+        elif action == "proceed-pdb-review":
+            self.run_worker(
+                lambda: self._pdb_helper.resume_after_review_gate(proceed=True),
+                activity="Continuing PDB import...",
+            )
+        elif action == "back-pdb-review":
+            self.run_worker(
+                lambda: self._pdb_helper.resume_after_review_gate(proceed=False),
+                activity="Returning to intake...",
+            )
 
     def _start_full_extract(self, text: str) -> None:
         state = self.screen.app.current_state

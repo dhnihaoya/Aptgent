@@ -243,11 +243,15 @@ class EnsemblePredictor:
         should_cancel: Optional[Callable[[], bool]] = None,
         result_callback: Optional[Callable[[dict], None]] = None,
         collect_results: bool = True,
+        skip_first: int = 0,
     ) -> Optional[list[dict]]:
         """Enumerate all mutants at selected sites, batch-predict with cascade filtering.
 
         Collects **only** candidates where all 9 models predict binding
         (ensemble_label == 1).
+
+        If *skip_first* > 0, the first *skip_first* candidates in the
+        enumeration order are skipped (used for resume after partial run).
         """
         from itertools import product as itertools_product
 
@@ -313,7 +317,7 @@ class EnsemblePredictor:
 
         # Main enumeration with early-exit filtering
         positives: Optional[list[dict]] = [] if collect_results else None
-        done = 0
+        done = skip_first
         progress_mark = 0
 
         def _flush_chunk(mutant_bytes: np.ndarray) -> None:
@@ -363,14 +367,21 @@ class EnsemblePredictor:
                     positives.append(result)
 
         if len(sites) == 0:
-            _flush_chunk(seq_bytes.reshape(1, -1))
+            if skip_first == 0:
+                _flush_chunk(seq_bytes.reshape(1, -1))
         else:
-            for start in range(0, total, sub_batch_size):
+            enum_start = (skip_first // sub_batch_size) * sub_batch_size
+            for start in range(enum_start, total, sub_batch_size):
                 _check_cancelled()
                 stop = min(start + sub_batch_size, total)
-                batch_len = stop - start
+
+                actual_start = max(start, skip_first)
+                if actual_start >= stop:
+                    continue
+                batch_len = stop - actual_start
+
                 digits = np.empty((batch_len, len(sites)), dtype=np.int8)
-                values = np.arange(start, stop, dtype=np.int64)
+                values = np.arange(actual_start, stop, dtype=np.int64)
 
                 for pos in range(len(sites) - 1, -1, -1):
                     digits[:, pos] = values % 4
