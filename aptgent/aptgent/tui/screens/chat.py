@@ -57,6 +57,7 @@ class ChatScreen(Screen):
         registry.register("/theme", lambda screen, _arg: screen._cmd_theme())
         registry.register("/resume", lambda screen, arg: screen._cmd_resume(arg))
         registry.register("/quit", lambda screen, _arg: screen._cmd_quit())
+        registry.register("/cancel", lambda screen, _arg: screen._cmd_cancel())
         registry.register("/export", lambda screen, _arg: screen._cmd_final_report("export"))
         registry.register("/finish", lambda screen, _arg: screen._cmd_final_report("finish"))
         return registry
@@ -79,6 +80,33 @@ class ChatScreen(Screen):
 
     def _cmd_quit(self) -> bool:
         self.app.open_quit_dialog()
+        return True
+
+    def _cmd_cancel(self) -> bool:
+        state = self.app.current_state
+        step_name = None
+        if state.current_step == Step.CANDIDATE_ENUMERATION:
+            step_name = "candidate_enumeration"
+        elif state.current_step == Step.DOCKING_RUN:
+            step_name = "docking_run"
+
+        if step_name is None:
+            self.add_system_message("No detachable job is running on this step.")
+            return True
+
+        persistence = self.app.persistence
+        cmd_file = persistence.job_cmd_file(state.run_id, step_name)
+
+        try:
+            cmd_file.parent.mkdir(parents=True, exist_ok=True)
+            cmd_file.write_text("cancel")
+            self.add_system_message(
+                f"Cancel signal sent to {step_name} job. "
+                "It will stop after the current batch completes.",
+                "warning-text",
+            )
+        except OSError as exc:
+            self.add_system_message(f"Failed to send cancel: {exc}", "error-text")
         return True
 
     def _cmd_final_report(self, action: str) -> bool:
@@ -267,7 +295,11 @@ class ChatScreen(Screen):
         self._start_step(step)
 
     def resume_run(self, run_id: str) -> None:
-        """Load a saved run into the current chat screen."""
+        """Load a saved run into the current chat screen.
+
+        If the run has a running detached job (enumeration or docking),
+        skip directly to that step and attach.
+        """
         self.app.save_state()
         self.clear_structured_widget()
         self.clear_activity()
@@ -275,8 +307,42 @@ class ChatScreen(Screen):
         self.app.set_run_id(run_id)
         self.query_one("#chat-log", VerticalScroll).remove_children()
         self.set_input_enabled(True)
-        self._start_step(self.app.current_state.current_step)
+
+        state = self.app.current_state
+        target_step = self._detect_resume_target(state)
+        if target_step is not None:
+            self.add_system_message(
+                f"Resuming run — jumping to active step: {target_step.value}"
+            )
+            self._start_step(target_step)
+        else:
+            self._start_step(state.current_step)
+
         self._focus_input()
+
+    def _detect_resume_target(self, state) -> Step | None:
+        """Detect which step to resume at, considering detached jobs."""
+        from aptgent.tui.steps.job_mixin import is_job_alive, is_job_done
+
+        persistence = self.app.persistence
+        run_id = state.run_id
+        current = state.current_step
+
+        # Check enumeration job status
+        if current.value in ("candidate_enumeration", "primary_scoring",
+                             "specificity_filter", "docking_selection", "docking_run",
+                             "spatial_rank", "final_report"):
+            if is_job_alive(persistence, run_id, "candidate_enumeration"):
+                self.add_system_message("Enumeration job is still running, attaching...")
+                return Step.CANDIDATE_ENUMERATION
+
+        # Check docking job status
+        if current.value in ("docking_run", "spatial_rank", "final_report"):
+            if is_job_alive(persistence, run_id, "docking_run"):
+                self.add_system_message("Docking job is still running, attaching...")
+                return Step.DOCKING_RUN
+
+        return None
 
     # -- Internal --
 
