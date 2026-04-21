@@ -99,3 +99,28 @@ class Persistence:
         log_file = log_dir / "workflow.jsonl"
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    # -- Job helpers for detached workers --
+
+    def job_dir(self, run_id: str, step: str) -> Path:
+        """Return the job directory for a given run+step combination."""
+        rd = self.run_dir(run_id)
+        return rd / "jobs" / step
+
+    def job_pid_file(self, run_id: str, step: str) -> Path:
+        return self.job_dir(run_id, step) / "pid"
+
+    def job_events_file(self, run_id: str, step: str) -> Path:
+        return self.job_dir(run_id, step) / "events.jsonl"
+
+    def job_cmd_file(self, run_id: str, step: str) -> Path:
+        return self.job_dir(run_id, step) / "cmd.jsonl"
+
+    def job_status_file(self, run_id: str, step: str) -> Path:
+        return self.job_dir(run_id, step) / "status"
+
+    def ensure_job_dir(self, run_id: str, step: str) -> Path:
+        """Create and return the job directory."""
+        jd = self.job_dir(run_id, step)
+        jd.mkdir(parents=True, exist_ok=True)
+        return jd
