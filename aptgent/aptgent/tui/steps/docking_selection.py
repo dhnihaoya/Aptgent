@@ -6,6 +6,7 @@ from aptgent.domain.models import DockingPlan
 from aptgent.llm.skills import DockingPlannerSkill
 from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.steps.common import (
+    compute_deterministic_docking_plan,
     format_docking_recommendation_markdown,
     next_step,
     run_llm_interaction,
@@ -149,22 +150,38 @@ class DockingSelectionHandler(StepHandler):
         state = self.screen.app.current_state
         profile = HardwareProbeAdapter().probe()
 
+        candidate_count = len(state.candidates)
+        deterministic_plan = compute_deterministic_docking_plan(
+            candidate_count=candidate_count,
+            machine_profile=profile,
+            time_budget_hours=time_budget,
+        )
+        computed_top_k = deterministic_plan["recommended_top_k"]
+        computed_time_budget = deterministic_plan["recommended_time_budget_hours"]
+        computed_grid_size = deterministic_plan["recommended_grid_size"]
+
         try:
             skill = DockingPlannerSkill()
             result = run_llm_interaction(
                 self.screen,
                 display_stream=lambda: skill.explain_plan_stream(
-                    candidate_count=len(state.candidates),
+                    candidate_count=candidate_count,
                     machine_profile=profile,
                     time_budget_hours=time_budget,
+                    computed_top_k=computed_top_k,
+                    computed_time_budget_hours=computed_time_budget,
+                    computed_grid_size=computed_grid_size,
                 ),
                 structured_call=lambda: validate_docking_recommendation_result(
                     skill.plan(
-                        candidate_count=len(state.candidates),
+                        candidate_count=candidate_count,
                         machine_profile=profile,
                         time_budget_hours=time_budget,
+                        computed_top_k=computed_top_k,
+                        computed_time_budget_hours=computed_time_budget,
+                        computed_grid_size=computed_grid_size,
                     ),
-                    candidate_count=len(state.candidates),
+                    candidate_count=candidate_count,
                     machine_profile=profile,
                     time_budget_hours=time_budget,
                 ),

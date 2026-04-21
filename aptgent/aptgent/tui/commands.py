@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Callable
 
 from aptgent.domain.enums import Step
+
+SlashHandler = Callable[[Any, str], bool]
+"""Signature: ``handler(screen, argument)`` -> ``True`` if handled."""
 
 
 @dataclass(frozen=True)
@@ -81,3 +85,38 @@ def get_theme_preset(theme_name: str) -> ThemePreset | None:
         if preset.theme_name == theme_name:
             return preset
     return None
+
+
+class SlashCommandRegistry:
+    """Central dispatcher for chat ``/commands``.
+
+    Keeps command wiring out of :class:`ChatScreen` so new commands can
+    be added by registering a handler rather than editing a large
+    if/elif chain. Handlers return ``True`` when they fully handled the
+    input; otherwise the caller treats the text as a regular message.
+    """
+
+    def __init__(self) -> None:
+        self._handlers: dict[str, SlashHandler] = {}
+
+    def register(self, name: str, handler: SlashHandler) -> None:
+        if not name.startswith("/"):
+            raise ValueError(f"Slash command must start with '/': {name!r}")
+        self._handlers[name] = handler
+
+    def dispatch(self, screen: Any, raw_text: str) -> bool | None:
+        """Dispatch ``raw_text`` on behalf of ``screen``.
+
+        Returns:
+            - ``True`` if a handler consumed the input.
+            - ``False`` if ``raw_text`` looks like an unknown slash
+              command (caller should render an error).
+            - ``None`` if ``raw_text`` is not a slash command.
+        """
+        if not raw_text.startswith("/"):
+            return None
+        command, _, argument = raw_text.partition(" ")
+        handler = self._handlers.get(command)
+        if handler is None:
+            return False
+        return bool(handler(screen, argument))

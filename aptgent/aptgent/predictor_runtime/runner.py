@@ -23,10 +23,13 @@ def _write_batch_results(results: list[dict], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["sequence", "smiles", "ensemble_label", "individual"])
+        writer.writerow(
+            ["candidate_id", "sequence", "smiles", "ensemble_label", "individual"]
+        )
         for result in results:
             writer.writerow(
                 [
+                    result.get("id", ""),
                     result.get("sequence", ""),
                     result.get("smiles", ""),
                     result.get("ensemble_label", ""),
@@ -53,6 +56,7 @@ def cmd_predict(args: argparse.Namespace) -> int:
         header_lower = [value.strip().lower() for value in header]
         seq_col = _find_col(header_lower, ["aptamer", "sequence", "seq", "aptamer sequence"])
         smiles_col = _find_col(header_lower, ["smiles"])
+        id_col = _find_col(header_lower, ["candidate_id", "id"])
 
         if seq_col is None or smiles_col is None:
             raise ValueError(
@@ -62,6 +66,7 @@ def cmd_predict(args: argparse.Namespace) -> int:
 
         sequences: list[str] = []
         smiles_list: list[str] = []
+        ids: list[str] = []
         for row in reader:
             if len(row) <= max(seq_col, smiles_col):
                 continue
@@ -71,8 +76,15 @@ def cmd_predict(args: argparse.Namespace) -> int:
                 continue
             sequences.append(sequence)
             smiles_list.append(smiles)
+            if id_col is not None and len(row) > id_col:
+                ids.append(row[id_col].strip())
+            else:
+                ids.append("")
 
-    results = predictor.predict_batch(sequences, smiles_list)
+    predict_kwargs: dict[str, object] = {}
+    if any(ids):
+        predict_kwargs["ids"] = ids
+    results = predictor.predict_batch(sequences, smiles_list, **predict_kwargs)
     _write_batch_results(results, output_path)
     return 0
 
@@ -89,7 +101,6 @@ def cmd_mutation_batch(args: argparse.Namespace) -> int:
 
     base_seq = args.base_sequence
     smiles = args.smiles
-    batch_size = args.batch_size or 2000
     progress_every = args.progress_every or 10000
     sub_batch_size = args.sub_batch_size or 65536
 
@@ -197,9 +208,13 @@ def build_parser() -> argparse.ArgumentParser:
     mut_batch.add_argument("--smiles", required=True)
     mut_batch.add_argument("--sites", default=None, help="Comma-separated 0-indexed sites")
     mut_batch.add_argument("--sites-json", default=None, help="JSON file with sites array")
-    mut_batch.add_argument("--batch-size", type=int, default=None)
     mut_batch.add_argument("--sub-batch-size", type=int, default=None)
-    mut_batch.add_argument("--progress-every", type=int, default=None)
+    mut_batch.add_argument(
+        "--progress-every",
+        type=int,
+        default=None,
+        help="Emit a progress message after roughly this many candidates.",
+    )
     mut_batch.add_argument("--output", default=None, help="Optional CSV output for hits")
 
     return parser

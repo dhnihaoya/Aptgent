@@ -22,7 +22,6 @@ _HANDLER_MAP: dict[Step, type[StepHandler]] = {
     Step.CANDIDATE_ENUMERATION: EnumerationHandler,
     Step.PRIMARY_SCORING: ScoringHandler,
     Step.SPECIFICITY_FILTER: SpecificityHandler,
-    Step.DOCKING_PREP: DockingSelectionHandler,
     Step.DOCKING_SELECTION: DockingSelectionHandler,
     Step.DOCKING_RUN: DockingRunHandler,
     Step.SPATIAL_RANK: SpatialRankHandler,

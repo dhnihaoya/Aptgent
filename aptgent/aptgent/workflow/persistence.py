@@ -26,12 +26,20 @@ class Persistence:
                 "alphanumeric characters, hyphens, or underscores."
             )
 
-    def _run_dir(self, run_id: str) -> Path:
+    def run_dir(self, run_id: str) -> Path:
+        """Public: return the on-disk directory for ``run_id``.
+
+        Raises :class:`ValueError` if the id is malformed. The directory
+        is not created by this call; use :meth:`init_run` for that.
+        """
         self._validate_run_id(run_id)
         return self.runs_dir / run_id
 
+    # Kept as an internal alias for legacy callers; prefer ``run_dir``.
+    _run_dir = run_dir
+
     def get_artifact_dir(self, run_id: str) -> Path:
-        run_dir = self._run_dir(run_id)
+        run_dir = self.run_dir(run_id)
         artifact_dir = run_dir / "artifacts"
         artifact_dir.mkdir(parents=True, exist_ok=True)
         return artifact_dir

@@ -13,6 +13,9 @@ energy_range = 3.0
 model_dir = "/home/dh/Aptgent/aptgent/aptgent/resources/predictor_models"
 conda_env = "aptamer-predictor"
 conda_python = "/home/dh/.conda/envs/aptamer-predictor/bin/python"
+# Optional: kill the predictor subprocess if it emits no stdout for this many seconds.
+# Leave unset to disable the watchdog.
+mutation_batch_timeout_seconds = 3600
 
 [pdb_analysis]
 # `wget` is preferred when available, but the adapter falls back to `urllib`

@@ -5,6 +5,7 @@ batch_size = 1000
 top_k_keep = 500
 sub_batch_size = 65536
 progress_every = 10000
+mutation_batch_timeout_seconds = 3600
 
 [docking]
 enabled = false

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import logging
 import re
 
 from rich.markdown import Markdown
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from aptgent.domain.enums import Step
 from aptgent.tui.commands import DEFAULT_SLASH_COMMANDS, SlashCommand
+
+_log = logging.getLogger(__name__)
 
 _BREATH_INTERVAL_SECONDS = 0.42
 _DEFAULT_THEME_VARIABLES = {
@@ -473,29 +477,29 @@ class InputBar(Vertical):
             btn = self.query_one("#btn-send", Button)
             inp.disabled = not enabled
             btn.disabled = not enabled
-        except Exception:
-            pass
+        except NoMatches:
+            _log.debug("InputBar widgets not yet mounted", exc_info=True)
         self.set_class(not enabled, "-disabled")
 
     def set_placeholder(self, text: str) -> None:
         try:
             self.query_one("#chat-input", Input).placeholder = text
-        except Exception:
-            pass
+        except NoMatches:
+            _log.debug("chat-input not yet mounted", exc_info=True)
 
     def set_commands(self, commands: tuple[SlashCommand, ...]) -> None:
         self._commands = commands
         try:
             current_value = self.query_one("#chat-input", Input).value
-        except Exception:
+        except NoMatches:
             current_value = ""
         self._update_command_palette(current_value)
 
     def clear_input(self) -> None:
         try:
             self.query_one("#chat-input", Input).value = ""
-        except Exception:
-            pass
+        except NoMatches:
+            _log.debug("chat-input not yet mounted", exc_info=True)
 
     def command_palette_open(self) -> bool:
         return self.has_class("-commands-visible")
@@ -506,8 +510,8 @@ class InputBar(Vertical):
         try:
             option_list = self.query_one("#command-list", OptionList)
             option_list.clear_options()
-        except Exception:
-            pass
+        except NoMatches:
+            _log.debug("command-list not mounted", exc_info=True)
 
     def _submit(self) -> None:
         if not self._enabled:

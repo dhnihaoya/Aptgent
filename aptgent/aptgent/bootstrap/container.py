@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Callable
 
 from aptgent.bootstrap.config import AppConfigBundle, load_config
 from aptgent.workflow.engine import WorkflowEngine
@@ -21,6 +21,12 @@ class AppRuntime:
     molecule_resolver: Any
     spatial_rank_adapter: Any
     pdb_analysis_adapter: Any
+    structure_lookup_adapter: Any = None
+    structure_fetch_adapter: Any = None
+    tertiary_structure_adapter: Any = None
+    intake_skill_factory: Callable[[], Any] | None = None
+    pdb_review_skill_factory: Callable[[], Any] | None = None
+    extras: dict[str, Any] = field(default_factory=dict)
 
 
 def create_persistence(config: dict[str, Any]) -> Persistence:
@@ -90,6 +96,13 @@ def create_pdb_analysis_adapter(tools_config: dict[str, Any]) -> Any:
 
 
 def build_runtime(config_bundle: AppConfigBundle | None = None) -> AppRuntime:
+    from aptgent.adapters.structure_services import (
+        NoopStructureFetchAdapter,
+        NoopStructureLookupAdapter,
+        NoopTertiaryStructureAdapter,
+    )
+    from aptgent.llm.skills import IntakeSkill, PdbReviewSkill
+
     bundle = config_bundle or load_config()
     config = bundle.workflow
     tools_config = bundle.tools
@@ -109,4 +122,9 @@ def build_runtime(config_bundle: AppConfigBundle | None = None) -> AppRuntime:
         molecule_resolver=create_molecule_resolver(),
         spatial_rank_adapter=create_spatial_rank_adapter(),
         pdb_analysis_adapter=create_pdb_analysis_adapter(tools_config),
+        structure_lookup_adapter=NoopStructureLookupAdapter(),
+        structure_fetch_adapter=NoopStructureFetchAdapter(),
+        tertiary_structure_adapter=NoopTertiaryStructureAdapter(),
+        intake_skill_factory=IntakeSkill,
+        pdb_review_skill_factory=PdbReviewSkill,
     )

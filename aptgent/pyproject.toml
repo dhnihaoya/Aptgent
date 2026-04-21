@@ -26,4 +26,9 @@ where = ["."]
 include = ["aptgent*"]
 
 [tool.setuptools.package-data]
-aptgent = ["resources/predictor_models/*.pkl"]
+aptgent = [
+    "resources/predictor_models/*.pkl",
+    "config/*.toml",
+    "config/*.csv",
+    "llm/skills/**/*.md",
+]

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-
 from aptgent.adapters.pdb_analysis import normalize_pdb_id
 from aptgent.domain.enums import Step
 from aptgent.domain.models import TargetMolecule
@@ -16,15 +14,14 @@ from aptgent.tui.steps.common import (
     run_llm_interaction,
     validate_intake_result,
 )
+from aptgent.tui.steps.intake_heuristics import looks_like_full_intake
+from aptgent.tui.steps.intake_resolver import resolve_target_text
 from aptgent.tui.steps.pdb_intake import PdbIntakeHelper
 from aptgent.workflow.context import (
     get_sequence,
     record_intake_context,
     record_pdb_intake_context,
 )
-
-_EXPLICIT_SEQUENCE_FIELD = re.compile(r"\b(sequence|seq)\b\s*[:=]?\s*[ACGTU]", re.IGNORECASE)
-_INLINE_SEQUENCE_TOKEN = re.compile(r"\b[ACGTU]{4,}\b", re.IGNORECASE)
 
 
 class IntakeHandler(StepHandler):
@@ -142,7 +139,7 @@ class IntakeHandler(StepHandler):
         phase = state.context.intake.phase
 
         if phase in {"awaiting_target_retry", "awaiting_missing_target"}:
-            if self._looks_like_full_intake(text):
+            if looks_like_full_intake(text):
                 self._start_full_extract(text)
                 return
             self.run_worker(
@@ -152,7 +149,7 @@ class IntakeHandler(StepHandler):
             return
 
         if phase == "awaiting_pdb_selection":
-            if self._looks_like_full_intake(text):
+            if looks_like_full_intake(text):
                 self._start_full_extract(text)
                 return
             self.screen.add_system_message(
@@ -199,48 +196,6 @@ class IntakeHandler(StepHandler):
         )
         state.input_payload["user_text"] = text
         self.run_worker(self._extract, activity="Extracting intake details...")
-
-    def _looks_like_full_intake(self, text: str) -> bool:
-        lowered = text.lower()
-        has_multiline_brief = len([line for line in text.splitlines() if line.strip()]) > 1
-        has_explicit_sequence_field = bool(_EXPLICIT_SEQUENCE_FIELD.search(text))
-        has_inline_sequence = bool(_INLINE_SEQUENCE_TOKEN.search(text))
-        has_target_signal = any(token in lowered for token in ("target", "smiles", "ligand", "molecule"))
-        has_brief_signal = any(
-            token in lowered
-            for token in (
-                "design an aptamer",
-                "aptamer for",
-                "screening",
-                "preference",
-                "analog",
-                "budget",
-                "modification",
-            )
-        )
-        explicit_field_count = sum(
-            1
-            for present in (
-                has_explicit_sequence_field,
-                "target" in lowered,
-                "smiles" in lowered,
-                "analog" in lowered,
-                "budget" in lowered,
-                "preference" in lowered,
-                "modification" in lowered,
-            )
-            if present
-        )
-
-        if has_multiline_brief and (has_explicit_sequence_field or has_target_signal or has_brief_signal):
-            return True
-        if has_explicit_sequence_field:
-            return True
-        if has_inline_sequence and (has_target_signal or has_brief_signal):
-            return True
-        if explicit_field_count >= 2:
-            return True
-        return any(phrase in lowered for phrase in ("design an aptamer", "aptamer for"))
 
     def _extract(self) -> None:
         state = self.screen.app.current_state
@@ -376,39 +331,11 @@ class IntakeHandler(StepHandler):
         self,
         target_text: str,
     ) -> tuple[str, TargetMolecule | None]:
-        resolved = self.screen.app.molecule_resolver.resolve(target_text)
-        if resolved.resolution_status == "resolved":
-            return target_text, resolved
-
-        if any("\u4e00" <= ch <= "\u9fff" for ch in target_text):
-            try:
-                translate_prompt = (
-                    "Translate the following molecule name to its standard English common name. "
-                    'Return ONLY a JSON object: {"english_name": "<english name>"}.'
-                )
-                translated = self.screen.app.create_intake_skill().client.chat_json(
-                    translate_prompt,
-                    target_text,
-                )
-                english_name = None
-                if isinstance(translated, dict):
-                    english_name = clean_text(
-                        translated.get("english_name")
-                        or translated.get("name")
-                        or translated.get("translation")
-                    )
-                    if english_name is None and translated:
-                        english_name = clean_text(next(iter(translated.values())))
-                elif isinstance(translated, str):
-                    english_name = clean_text(translated)
-                if english_name:
-                    resolved = self.screen.app.molecule_resolver.resolve(english_name)
-                    if resolved.resolution_status == "resolved":
-                        return english_name, resolved
-            except Exception:
-                pass
-
-        return target_text, None
+        return resolve_target_text(
+            target_text,
+            molecule_resolver=self.screen.app.molecule_resolver,
+            intake_skill_factory=self.screen.app.create_intake_skill,
+        )
 
     def _resolve_and_complete(
         self,

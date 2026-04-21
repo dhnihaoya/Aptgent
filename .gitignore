@@ -36,15 +36,9 @@ runs/
 .superpowers/
 docs/
 
-# Claude Code export / local notes
-CLAUDE.md
-AGENTS.md
+# Local scratch / export notes
 kimi-export-*.md
 plan
-plan.md
 *.jpg
 *.png
 *.jpeg
-
-# Tests
-aptgent/tests/

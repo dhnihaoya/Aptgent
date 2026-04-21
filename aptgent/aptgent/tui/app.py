@@ -6,18 +6,7 @@ from textual.app import App
 from textual.binding import Binding
 from textual.theme import Theme
 
-from aptgent.bootstrap import (
-    build_runtime,
-    create_engine,
-    create_molecule_resolver,
-    create_pdb_analysis_adapter,
-    create_persistence,
-    create_prediction_adapter,
-    create_rna_fold_adapter,
-    create_spatial_rank_adapter,
-    create_vina_adapter,
-    load_config,
-)
+from aptgent.bootstrap import AppRuntime, build_runtime
 from aptgent.domain.enums import Step
 from aptgent.tui.commands import get_theme_preset
 from aptgent.tui.screens.chat import ChatScreen
@@ -25,12 +14,6 @@ from aptgent.tui.screens.quit_confirm import QuitConfirmScreen
 from aptgent.tui.screens.welcome import WelcomeScreen
 from aptgent.tui.widgets import StatusPanel, StepProgressBar
 from aptgent.workflow.state import RunState
-from aptgent.adapters.structure_services import (
-    NoopStructureFetchAdapter,
-    NoopStructureLookupAdapter,
-    NoopTertiaryStructureAdapter,
-)
-from aptgent.llm.skills import IntakeSkill, PdbReviewSkill
 
 _THEME_VARIABLE_DEFAULTS = {
     "button-color-foreground": "#071018",
@@ -250,92 +233,30 @@ class AptgentApp(App):
 
     def __init__(
         self,
-        *,
-        config: dict[str, Any] | None = None,
-        tools_config: dict[str, Any] | None = None,
-        persistence: Any | None = None,
-        engine: Any | None = None,
-        rna_fold_adapter: Any | None = None,
-        vina_adapter: Any | None = None,
-        prediction_adapter: Any | None = None,
-        molecule_resolver: Any | None = None,
-        spatial_rank_adapter: Any | None = None,
-        pdb_analysis_adapter: Any | None = None,
-        structure_lookup_adapter: Any | None = None,
-        structure_fetch_adapter: Any | None = None,
-        tertiary_structure_adapter: Any | None = None,
-        intake_skill_factory: Any | None = None,
-        pdb_review_skill_factory: Any | None = None,
+        runtime: AppRuntime | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-        config_bundle = None
-        if config is None or tools_config is None:
-            config_bundle = load_config()
+        if runtime is None:
+            runtime = build_runtime()
+        self.runtime = runtime
 
-        self.config = config if config is not None else config_bundle.workflow
-        self.tools_config = (
-            tools_config if tools_config is not None else config_bundle.tools
-        )
-        self.llm_config = config_bundle.llm if config_bundle is not None else {}
-        self.persistence = (
-            persistence if persistence is not None else create_persistence(self.config)
-        )
-        self.engine = engine if engine is not None else create_engine(self.persistence)
-
-        self.rna_fold_adapter = (
-            rna_fold_adapter
-            if rna_fold_adapter is not None
-            else create_rna_fold_adapter(self.tools_config)
-        )
-        self.vina_adapter = (
-            vina_adapter
-            if vina_adapter is not None
-            else create_vina_adapter(self.tools_config)
-        )
-        self.prediction_adapter = (
-            prediction_adapter
-            if prediction_adapter is not None
-            else create_prediction_adapter(self.tools_config)
-        )
-        self.molecule_resolver = (
-            molecule_resolver
-            if molecule_resolver is not None
-            else create_molecule_resolver()
-        )
-        self.spatial_rank_adapter = (
-            spatial_rank_adapter
-            if spatial_rank_adapter is not None
-            else create_spatial_rank_adapter()
-        )
-        self.pdb_analysis_adapter = (
-            pdb_analysis_adapter
-            if pdb_analysis_adapter is not None
-            else create_pdb_analysis_adapter(self.tools_config)
-        )
-        self.structure_lookup_adapter = (
-            structure_lookup_adapter
-            if structure_lookup_adapter is not None
-            else NoopStructureLookupAdapter()
-        )
-        self.structure_fetch_adapter = (
-            structure_fetch_adapter
-            if structure_fetch_adapter is not None
-            else NoopStructureFetchAdapter()
-        )
-        self.tertiary_structure_adapter = (
-            tertiary_structure_adapter
-            if tertiary_structure_adapter is not None
-            else NoopTertiaryStructureAdapter()
-        )
-        self.intake_skill_factory = (
-            intake_skill_factory if intake_skill_factory is not None else IntakeSkill
-        )
-        self.pdb_review_skill_factory = (
-            pdb_review_skill_factory
-            if pdb_review_skill_factory is not None
-            else PdbReviewSkill
-        )
+        self.config = runtime.config
+        self.tools_config = runtime.tools_config
+        self.llm_config = runtime.llm_config
+        self.persistence = runtime.persistence
+        self.engine = runtime.engine
+        self.rna_fold_adapter = runtime.rna_fold_adapter
+        self.vina_adapter = runtime.vina_adapter
+        self.prediction_adapter = runtime.prediction_adapter
+        self.molecule_resolver = runtime.molecule_resolver
+        self.spatial_rank_adapter = runtime.spatial_rank_adapter
+        self.pdb_analysis_adapter = runtime.pdb_analysis_adapter
+        self.structure_lookup_adapter = runtime.structure_lookup_adapter
+        self.structure_fetch_adapter = runtime.structure_fetch_adapter
+        self.tertiary_structure_adapter = runtime.tertiary_structure_adapter
+        self.intake_skill_factory = runtime.intake_skill_factory
+        self.pdb_review_skill_factory = runtime.pdb_review_skill_factory
 
         self._state: RunState | None = None
         self._pending_start_message: str | None = None
@@ -414,19 +335,7 @@ class AptgentApp(App):
 
 
 def run() -> None:
-    runtime = build_runtime()
-    app = AptgentApp(
-        config=runtime.config,
-        tools_config=runtime.tools_config,
-        persistence=runtime.persistence,
-        engine=runtime.engine,
-        rna_fold_adapter=runtime.rna_fold_adapter,
-        vina_adapter=runtime.vina_adapter,
-        prediction_adapter=runtime.prediction_adapter,
-        molecule_resolver=runtime.molecule_resolver,
-        spatial_rank_adapter=runtime.spatial_rank_adapter,
-        pdb_analysis_adapter=runtime.pdb_analysis_adapter,
-    )
+    app = AptgentApp(runtime=build_runtime())
     app.run()
 
 

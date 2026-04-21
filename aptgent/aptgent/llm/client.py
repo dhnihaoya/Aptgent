@@ -1,12 +1,33 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
+import logging
 import os
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
+
+_log = logging.getLogger(__name__)
+
+
+class LLMCancelled(Exception):
+    """Raised when a caller's ``should_cancel`` hook signals cancellation."""
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Retry on transient network failures and 5xx; never on 4xx client errors.
+
+    Keeping this narrow is important: retrying a 400 (malformed request) or
+    401 (bad credentials) only delays a permanent failure and wastes quota.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status >= 500 or status == 429
+    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+        return True
+    return False
 
 
 class LLMClient:
@@ -119,9 +140,20 @@ class LLMClient:
             pool=30.0,
         )
 
-    def _iter_sse_events(self, resp: httpx.Response):
-        """Yield reasoning/content events from an SSE stream response."""
+    def _iter_sse_events(
+        self,
+        resp: httpx.Response,
+        should_cancel: Callable[[], bool] | None = None,
+    ):
+        """Yield reasoning/content events from an SSE stream response.
+
+        If ``should_cancel`` is supplied, the stream is polled between
+        lines and :class:`LLMCancelled` is raised when it returns True so
+        workers can abort without waiting for the full ``read`` timeout.
+        """
         for line in resp.iter_lines():
+            if should_cancel is not None and should_cancel():
+                raise LLMCancelled()
             if not line.startswith("data: "):
                 continue
             data = line[6:]
@@ -139,13 +171,23 @@ class LLMClient:
             except Exception:
                 continue
 
+    def _raise_after_retries(self, label: str, exc: BaseException) -> None:
+        raise RuntimeError(
+            f"LLM {label} failed after {self.max_retries} retries: {exc}"
+        ) from exc
+
     def chat_json(
         self,
         system_prompt: str,
         user_prompt: str,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         timeout = self._stream_timeout()
+        last_exc: BaseException | None = None
         for attempt in range(self.max_retries + 1):
+            if should_cancel is not None and should_cancel():
+                raise LLMCancelled()
             try:
                 collected: list[str] = []
                 with httpx.stream(
@@ -163,26 +205,41 @@ class LLMClient:
                     timeout=timeout,
                 ) as resp:
                     resp.raise_for_status()
-                    for event in self._iter_sse_events(resp):
+                    for event in self._iter_sse_events(resp, should_cancel):
                         if event.get("type") == "content":
                             collected.append(event.get("text", ""))
                 content = "".join(collected)
                 if not content:
                     raise ValueError("LLM returned empty content")
                 return json.loads(content)
-            except Exception as e:
-                if attempt == self.max_retries:
-                    raise RuntimeError(f"LLM request failed after {self.max_retries} retries: {e}")
-        raise RuntimeError(f"LLM request failed after {self.max_retries} retries")
+            except LLMCancelled:
+                raise
+            except Exception as exc:
+                last_exc = exc
+                if not _is_retryable(exc) or attempt == self.max_retries:
+                    self._raise_after_retries("request", exc)
+                _log.warning(
+                    "LLM chat_json attempt %d/%d failed (retryable): %s",
+                    attempt + 1,
+                    self.max_retries + 1,
+                    exc,
+                )
+        assert last_exc is not None
+        self._raise_after_retries("request", last_exc)
+        raise AssertionError("unreachable")
 
     def chat_stream(
         self,
         system_prompt: str,
         user_prompt: str,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
     ):
         """Stream LLM response as text chunks (generator)."""
         timeout = self._stream_timeout()
         for attempt in range(self.max_retries + 1):
+            if should_cancel is not None and should_cancel():
+                raise LLMCancelled()
             try:
                 with httpx.stream(
                     "POST",
@@ -199,24 +256,36 @@ class LLMClient:
                     timeout=timeout,
                 ) as resp:
                     resp.raise_for_status()
-                    for event in self._iter_sse_events(resp):
+                    for event in self._iter_sse_events(resp, should_cancel):
                         if event.get("type") == "content":
                             text = event.get("text", "")
                             if text:
                                 yield text
                 return
-            except Exception as e:
-                if attempt == self.max_retries:
-                    raise RuntimeError(f"LLM streaming request failed after {self.max_retries} retries: {e}")
+            except LLMCancelled:
+                raise
+            except Exception as exc:
+                if not _is_retryable(exc) or attempt == self.max_retries:
+                    self._raise_after_retries("streaming request", exc)
+                _log.warning(
+                    "LLM chat_stream attempt %d/%d failed (retryable): %s",
+                    attempt + 1,
+                    self.max_retries + 1,
+                    exc,
+                )
 
     def chat_text_stream(
         self,
         system_prompt: str,
         user_prompt: str,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
     ):
         """Stream plain-language text for direct user display."""
         timeout = self._stream_timeout()
         for attempt in range(self.max_retries + 1):
+            if should_cancel is not None and should_cancel():
+                raise LLMCancelled()
             try:
                 with httpx.stream(
                     "POST",
@@ -231,10 +300,16 @@ class LLMClient:
                     timeout=timeout,
                 ) as resp:
                     resp.raise_for_status()
-                    yield from self._iter_sse_events(resp)
+                    yield from self._iter_sse_events(resp, should_cancel)
                 return
-            except Exception as e:
-                if attempt == self.max_retries:
-                    raise RuntimeError(
-                        f"LLM text streaming request failed after {self.max_retries} retries: {e}"
-                    )
+            except LLMCancelled:
+                raise
+            except Exception as exc:
+                if not _is_retryable(exc) or attempt == self.max_retries:
+                    self._raise_after_retries("text streaming request", exc)
+                _log.warning(
+                    "LLM chat_text_stream attempt %d/%d failed (retryable): %s",
+                    attempt + 1,
+                    self.max_retries + 1,
+                    exc,
+                )

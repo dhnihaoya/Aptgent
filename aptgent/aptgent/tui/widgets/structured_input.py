@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import logging
+
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Input, OptionList, SelectionList, Static
 from textual.widgets.option_list import Option
 
 from aptgent.domain.enums import Step
+
+_log = logging.getLogger(__name__)
 
 
 class StructuredInputSubmitted(Message):
@@ -27,11 +32,16 @@ class StructuredActionRequested(Message):
         self.action = action
 
 
-class ActionMenuPanel(Vertical):
-    """Keyboard-first action chooser for a workflow step."""
+class _BaseStructuredPanel(Vertical):
+    """Shared chrome for structured input panels.
+
+    Each panel subclass inherits this base to avoid repeating the surface/
+    border/padding block and the common ``.panel-title`` / ``.panel-help``
+    typography.
+    """
 
     DEFAULT_CSS = """
-    ActionMenuPanel {
+    _BaseStructuredPanel {
         background: $surface-darken-2;
         border: round $primary;
         padding: 1 2;
@@ -39,14 +49,21 @@ class ActionMenuPanel(Vertical):
         width: 95%;
         height: auto;
     }
-    ActionMenuPanel > .panel-title {
+    _BaseStructuredPanel > .panel-title {
         text-style: bold;
         margin-bottom: 1;
     }
-    ActionMenuPanel > .panel-help {
+    _BaseStructuredPanel > .panel-help {
         color: $text-muted;
         margin-bottom: 1;
     }
+    """
+
+
+class ActionMenuPanel(_BaseStructuredPanel):
+    """Keyboard-first action chooser for a workflow step."""
+
+    DEFAULT_CSS = """
     ActionMenuPanel > OptionList {
         height: auto;
         max-height: 10;
@@ -84,8 +101,8 @@ class ActionMenuPanel(Vertical):
     def on_mount(self) -> None:
         try:
             self.query_one("#action-menu", OptionList).focus()
-        except Exception:
-            pass
+        except NoMatches:
+            _log.debug("Focus target missing during on_mount", exc_info=True)
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
@@ -94,26 +111,13 @@ class ActionMenuPanel(Vertical):
             self.post_message(StructuredActionRequested(self.step, option_id))
 
 
-class MutationSitePanel(Vertical):
+class MutationSitePanel(_BaseStructuredPanel):
     """Keyboard-friendly mutation-site selector."""
 
     DEFAULT_CSS = """
     MutationSitePanel {
-        background: $surface-darken-2;
-        border: round $primary;
-        padding: 1 2;
-        margin: 1 0;
-        width: 95%;
         height: 22;
         max-height: 24;
-    }
-    MutationSitePanel > .panel-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-    MutationSitePanel > .panel-help {
-        color: $text-muted;
-        margin-bottom: 1;
     }
     MutationSitePanel > SelectionList {
         height: 1fr;
@@ -172,23 +176,11 @@ class MutationSitePanel(Vertical):
         event.stop()
 
 
-class PdbSelectionPanel(Vertical):
+class PdbSelectionPanel(_BaseStructuredPanel):
     """Select a chain and optional ligand from a parsed PDB structure."""
 
     DEFAULT_CSS = """
-    PdbSelectionPanel {
-        background: $surface-darken-2;
-        border: round $primary;
-        padding: 1 2;
-        margin: 1 0;
-        width: 95%;
-        height: auto;
-    }
-    PdbSelectionPanel > .panel-title {
-        text-style: bold;
-    }
     PdbSelectionPanel > .panel-help {
-        color: $text-muted;
         margin: 1 0;
     }
     PdbSelectionPanel > .panel-section {
@@ -256,8 +248,8 @@ class PdbSelectionPanel(Vertical):
     def on_mount(self) -> None:
         try:
             self.query_one("#pdb-chain-menu", OptionList).focus()
-        except Exception:
-            pass
+        except NoMatches:
+            _log.debug("Focus target missing during on_mount", exc_info=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-confirm-pdb-selection":
@@ -295,23 +287,11 @@ class PdbSelectionPanel(Vertical):
             )
 
 
-class SpecificityPanel(Vertical):
+class SpecificityPanel(_BaseStructuredPanel):
     """Inline widget for specificity filter input."""
 
     DEFAULT_CSS = """
-    SpecificityPanel {
-        background: $surface-darken-2;
-        border: round $primary;
-        padding: 1 2;
-        margin: 1 0;
-        width: 95%;
-        height: auto;
-    }
-    SpecificityPanel > .panel-title {
-        text-style: bold;
-    }
     SpecificityPanel > .panel-help {
-        color: $text-muted;
         margin: 1 0;
     }
     SpecificityPanel > Input {
@@ -358,8 +338,8 @@ class SpecificityPanel(Vertical):
     def on_mount(self) -> None:
         try:
             self.query_one("#analog-input", Input).focus()
-        except Exception:
-            pass
+        except NoMatches:
+            _log.debug("Focus target missing during on_mount", exc_info=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         btn_id = event.button.id
@@ -380,23 +360,11 @@ class SpecificityPanel(Vertical):
             )
 
 
-class DockingStrategyPanel(Vertical):
+class DockingStrategyPanel(_BaseStructuredPanel):
     """Initial planner for docking strategy and optional time budget."""
 
     DEFAULT_CSS = """
-    DockingStrategyPanel {
-        background: $surface-darken-2;
-        border: round $primary;
-        padding: 1 2;
-        margin: 1 0;
-        width: 95%;
-        height: auto;
-    }
-    DockingStrategyPanel > .panel-title {
-        text-style: bold;
-    }
     DockingStrategyPanel > .panel-help {
-        color: $text-muted;
         margin: 1 0;
     }
     DockingStrategyPanel > Input {
@@ -451,8 +419,8 @@ class DockingStrategyPanel(Vertical):
     def on_mount(self) -> None:
         try:
             self.query_one("#dock-plan-budget", Input).focus()
-        except Exception:
-            pass
+        except NoMatches:
+            _log.debug("Focus target missing during on_mount", exc_info=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         budget = self.query_one("#dock-plan-budget", Input).value.strip()
@@ -479,23 +447,11 @@ class DockingStrategyPanel(Vertical):
             )
 
 
-class DockingParamPanel(Vertical):
+class DockingParamPanel(_BaseStructuredPanel):
     """Inline widget for docking configuration parameters."""
 
     DEFAULT_CSS = """
-    DockingParamPanel {
-        background: $surface-darken-2;
-        border: round $primary;
-        padding: 1 2;
-        margin: 1 0;
-        width: 95%;
-        height: auto;
-    }
-    DockingParamPanel > .panel-title {
-        text-style: bold;
-    }
     DockingParamPanel > .panel-help {
-        color: $text-muted;
         margin: 1 0;
     }
     DockingParamPanel > .panel-note {
@@ -635,8 +591,8 @@ class DockingParamPanel(Vertical):
         try:
             focus_id = "#dock-receptor" if self.mode == "llm" else "#dock-time-budget"
             self.query_one(focus_id, Input).focus()
-        except Exception:
-            pass
+        except NoMatches:
+            _log.debug("Focus target missing during on_mount", exc_info=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-submit-dock":

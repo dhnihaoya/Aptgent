@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Optional
 
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Center, Vertical
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import OptionList, Static
 from textual.widgets.option_list import Option
 
 from aptgent.workflow.context import build_run_overview
 from aptgent.workflow.state import RunState
+
+_log = logging.getLogger(__name__)
 
 
 def _step_label(state: RunState) -> str:
@@ -127,8 +131,8 @@ class ResumePickerScreen(ModalScreen[Optional[str]]):
     def _focus_default(self) -> None:
         try:
             self.query_one("#resume-run-list", OptionList).focus()
-        except Exception:
-            pass
+        except NoMatches:
+            _log.debug("resume-run-list not mounted", exc_info=True)
 
     def action_cancel(self) -> None:
         self.dismiss(None)

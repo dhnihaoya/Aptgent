@@ -344,6 +344,33 @@ def default_time_budget_hours(
     return max(1, min(8, estimated or 1))
 
 
+def compute_deterministic_docking_plan(
+    *,
+    candidate_count: int,
+    machine_profile: dict[str, Any],
+    time_budget_hours: int | None,
+) -> dict[str, Any]:
+    """Return the deterministic docking plan (top_k / time / grid) for a run.
+
+    This is the single source of truth for these fields. The LLM is only
+    allowed to annotate them (notes + reason); the numbers themselves come
+    from here.
+    """
+    top_k = default_top_k(candidate_count, machine_profile, time_budget_hours)
+    recommended_time_budget = default_time_budget_hours(
+        candidate_count,
+        machine_profile,
+        top_k,
+        time_budget_hours,
+    )
+    grid_size = [20.0, 20.0, 20.0]
+    return {
+        "recommended_top_k": top_k,
+        "recommended_time_budget_hours": recommended_time_budget,
+        "recommended_grid_size": grid_size,
+    }
+
+
 def validate_docking_recommendation_result(
     result: Any,
     *,
@@ -351,34 +378,32 @@ def validate_docking_recommendation_result(
     machine_profile: dict[str, Any],
     time_budget_hours: int | None,
 ) -> dict[str, Any]:
-    if not isinstance(result, dict):
-        raise RuntimeError("Invalid docking recommendation response.")
-    top_k = coerce_int(result.get("recommended_top_k"))
-    if top_k is None or top_k <= 0:
-        top_k = default_top_k(candidate_count, machine_profile, time_budget_hours)
-    top_k = min(top_k, candidate_count)
-    recommended_time_budget = coerce_int(result.get("recommended_time_budget_hours"))
-    if recommended_time_budget is None or recommended_time_budget <= 0:
-        recommended_time_budget = default_time_budget_hours(
-            candidate_count,
-            machine_profile,
-            top_k,
-            time_budget_hours,
-        )
-    grid_size = coerce_float_list(result.get("recommended_grid_size"), exact_len=3)
-    if not grid_size:
-        grid_size = [20.0, 20.0, 20.0]
-    receptor_path_note = clean_text(result.get("receptor_path_note")) or (
+    """Merge deterministic docking values with LLM-provided explanatory text.
+
+    The ``top_k`` / ``time_budget`` / ``grid_size`` come from
+    :func:`compute_deterministic_docking_plan`; the LLM only contributes
+    free-text notes and a rationale. If the LLM response is malformed we
+    still return a valid plan built from defaults.
+    """
+    plan = compute_deterministic_docking_plan(
+        candidate_count=candidate_count,
+        machine_profile=machine_profile,
+        time_budget_hours=time_budget_hours,
+    )
+    llm_obj = result if isinstance(result, dict) else {}
+    receptor_path_note = clean_text(llm_obj.get("receptor_path_note")) or (
         "Provide the receptor PDBQT path from your prepared or downloaded tertiary-structure target."
     )
-    grid_center_note = clean_text(result.get("grid_center_note")) or (
+    grid_center_note = clean_text(llm_obj.get("grid_center_note")) or (
         "Confirm the grid center manually from the binding region before running docking."
     )
-    reason = clean_text(result.get("reason")) or "Using a conservative docking batch size based on available resources."
+    reason = clean_text(llm_obj.get("reason")) or (
+        "Using a conservative docking batch size based on available resources."
+    )
     return {
-        "recommended_time_budget_hours": recommended_time_budget,
-        "recommended_top_k": top_k,
-        "recommended_grid_size": grid_size,
+        "recommended_time_budget_hours": plan["recommended_time_budget_hours"],
+        "recommended_top_k": plan["recommended_top_k"],
+        "recommended_grid_size": plan["recommended_grid_size"],
         "receptor_path_note": receptor_path_note,
         "grid_center_note": grid_center_note,
         "reason": reason,

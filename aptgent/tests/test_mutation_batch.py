@@ -138,20 +138,44 @@ def test_adapter_mutation_batch_cancel():
     from aptgent.adapters.predictor import EnsembleAdapter
     from aptgent.domain.models import TargetMolecule
 
-    factory = _FakePopenFactory()
+    class _HangingPopen(_FakePopen):
+        """Popen stub that stays alive until a cancel is written on stdin."""
+
+        def __init__(self, cmd, **kwargs):
+            super().__init__(cmd, **kwargs)
+            self._cancel_received = threading.Event()
+            self.stdin = MagicMock()
+            self.stdin.write = MagicMock(side_effect=self._on_write)
+            self.stdin.flush = MagicMock()
+            self.stdin.closed = False
+
+        def _on_write(self, data):
+            if "cancel" in data:
+                self._cancel_received.set()
+
+        def feed_lines(self):
+            self.stdout.put_line(
+                json.dumps({"type": "ready", "model_order": ["m1.pkl"], "device": "cpu"})
+            )
+            self._cancel_received.wait(timeout=5.0)
+            self.stdout.put_line(json.dumps({"type": "done", "total": 0, "hits": 0, "cancelled": True}))
+            self.stdout.close()
+            self.stderr.close()
+
+    factory = _FakePopenFactory(_HangingPopen)
     cancel_event = threading.Event()
 
     adapter = EnsembleAdapter(model_dir="/fake/models")
 
     def _cancel_soon():
         import time
-        time.sleep(0.02)
+        time.sleep(0.1)
         cancel_event.set()
 
     threading.Thread(target=_cancel_soon, daemon=True).start()
 
     with patch("aptgent.adapters.predictor.subprocess.Popen", factory):
-        adapter.predict_mutation_batch(
+        summary = adapter.predict_mutation_batch(
             base_sequence="ATGC",
             target=TargetMolecule(input_text="t", smiles="CCO"),
             sites=[0],
@@ -159,6 +183,7 @@ def test_adapter_mutation_batch_cancel():
         )
 
     factory.proc.stdin.write.assert_called()
+    assert summary.get("cancelled") is True
 
 
 def test_adapter_mutation_batch_error():
@@ -184,7 +209,9 @@ def test_adapter_mutation_batch_error():
     adapter = EnsembleAdapter(model_dir="/fake/models")
 
     with patch("aptgent.adapters.predictor.subprocess.Popen", factory):
-        with pytest.raises(RuntimeError, match="exit 2"):
+        # The adapter now surfaces the JSON {"type": "error"} payload directly, which
+        # is strictly more informative than the numeric exit code that preceded it.
+        with pytest.raises(RuntimeError, match="Something went wrong"):
             adapter.predict_mutation_batch(
                 base_sequence="ATGC",
                 target=TargetMolecule(input_text="t", smiles="CCO"),

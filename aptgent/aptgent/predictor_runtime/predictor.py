@@ -207,16 +207,26 @@ class EnsemblePredictor:
                     continue
 
                 features = build_feature_vector(sequence, smiles, MER_K_MAP[mer])
-                pred = model.predict(features.reshape(1, -1))[0]
-                prob = model.predict_proba(features.reshape(1, -1))[0, 1]
+                # Route through ``_predict_batch`` so XGBoost models can use
+                # the CUDA DMatrix fast path when a GPU is available.
+                preds, probs = self._predict_batch(
+                    model, features.reshape(1, -1)
+                )
+                pred = int(preds[0])
+                prob = float(probs[0])
                 individual[filename] = {
-                    "label": int(pred),
-                    "probability": round(float(prob), 6),
+                    "label": pred,
+                    "probability": round(prob, 6),
                 }
-                model_labels.append(int(pred))
+                model_labels.append(pred)
 
             sample["individual"] = individual
-            sample["ensemble_label"] = 1 if all(label == 1 for label in model_labels) else 0
+            if not model_labels:
+                sample["ensemble_label"] = 0
+            else:
+                sample["ensemble_label"] = (
+                    1 if all(label == 1 for label in model_labels) else 0
+                )
             all_results.append(sample)
 
         return all_results

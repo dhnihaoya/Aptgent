@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import logging
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widgets import Static
 
 from aptgent.tui.commands import DEFAULT_SLASH_COMMANDS
+
+_log = logging.getLogger(__name__)
 from aptgent.tui.screens.theme_picker import ThemePickerScreen
 from aptgent.tui.screens.resume import ResumePickerScreen
 from aptgent.tui.steps.common import (
@@ -132,8 +137,8 @@ class WelcomeScreen(Screen):
     def _focus_input(self) -> None:
         try:
             self.query_one("#chat-input").focus()
-        except Exception:
-            pass
+        except NoMatches:
+            _log.debug("chat-input not mounted", exc_info=True)
 
     def _open_resume_picker(self) -> None:
         if not self.app.persistence.list_runs():

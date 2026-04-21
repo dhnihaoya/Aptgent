@@ -239,7 +239,7 @@ You can close the TUI and resume later from the Welcome screen.
 │   └── pyproject.toml
 ```
 
-The current UI is chat-first: `AptgentApp` registers `welcome` and `chat`, and the per-step workflow logic lives in `aptgent/aptgent/tui/widgets/step_handlers.py`.
+The current UI is chat-first: `AptgentApp` registers `welcome` and `chat`, and the per-step workflow logic lives under `aptgent/aptgent/tui/steps/` (one module per step, dispatched via `aptgent/aptgent/tui/steps/factory.py`).
 
 ## Configuration
 
@@ -267,11 +267,21 @@ max_candidates = 5000
 default_edit_ratio_threshold = 0.3
 batch_size = 1000
 top_k_keep = 500
-acceleration_threshold = 1024
+sub_batch_size = 65536
+progress_every = 10000
+mutation_batch_timeout_seconds = 3600
 
 [docking]
 enabled = false
 top_k_strategy = "auto"
+
+[llm]
+default_provider = "openai"
+timeout_seconds = 60
+max_retries = 2
+
+[paths]
+runs_dir = "./runs"
 ```
 
 ## Tested Dependency Versions

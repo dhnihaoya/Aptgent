@@ -5,11 +5,12 @@ import logging
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
+from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widget import Widget
 
 from aptgent.domain.enums import Step
-from aptgent.tui.commands import commands_for_step
+from aptgent.tui.commands import SlashCommandRegistry, commands_for_step
 from aptgent.tui.screens.resume import ResumePickerScreen
 from aptgent.tui.screens.theme_picker import ThemePickerScreen
 from aptgent.tui.steps import StepHandler, create_handler
@@ -49,6 +50,46 @@ class ChatScreen(Screen):
         self._handler: StepHandler | None = None
         self._activity_bubble: ActivityBubble | None = None
         self._active_structured_widget: Widget | None = None
+        self._slash_commands = self._build_slash_commands()
+
+    def _build_slash_commands(self) -> SlashCommandRegistry:
+        registry = SlashCommandRegistry()
+        registry.register("/theme", lambda screen, _arg: screen._cmd_theme())
+        registry.register("/resume", lambda screen, arg: screen._cmd_resume(arg))
+        registry.register("/quit", lambda screen, _arg: screen._cmd_quit())
+        registry.register("/export", lambda screen, _arg: screen._cmd_final_report("export"))
+        registry.register("/finish", lambda screen, _arg: screen._cmd_final_report("finish"))
+        return registry
+
+    def _cmd_theme(self) -> bool:
+        self._open_theme_picker()
+        return True
+
+    def _cmd_resume(self, arg: str) -> bool:
+        arg = arg.strip()
+        if arg:
+            state = self.app.engine.load_run(arg)
+            if state is None:
+                self.add_system_message(f"Saved run not found: {arg}")
+                return True
+            self.resume_run(state.run_id)
+            return True
+        self._open_resume_picker()
+        return True
+
+    def _cmd_quit(self) -> bool:
+        self.app.open_quit_dialog()
+        return True
+
+    def _cmd_final_report(self, action: str) -> bool:
+        if self.app.current_state.current_step != Step.FINAL_REPORT:
+            return False
+        command = f"/{action}"
+        self.add_user_message(command)
+        self.app.current_state.input_payload["user_text"] = command
+        if self._handler:
+            self._handler.handle_user_input(action)
+        return True
 
     def compose(self) -> ComposeResult:
         yield self.app.progress_bar
@@ -147,7 +188,10 @@ class ChatScreen(Screen):
                 if widget.is_mounted:
                     widget.remove()
             except Exception:
-                pass
+                _log.debug(
+                    "Failed to remove structured widget; treating as already detached",
+                    exc_info=True,
+                )
         self._active_structured_widget = None
 
     def show_activity(self, text: str) -> None:
@@ -176,22 +220,25 @@ class ChatScreen(Screen):
                 if self._activity_bubble.is_mounted:
                     self._activity_bubble.remove()
             except Exception:
-                pass
+                _log.debug(
+                    "Failed to remove activity bubble; treating as already detached",
+                    exc_info=True,
+                )
             self._activity_bubble = None
 
     def set_input_enabled(self, enabled: bool) -> None:
         try:
             self.query_one("#input-bar", InputBar).set_enabled(enabled)
-        except Exception:
-            pass
+        except NoMatches:
+            _log.debug("input-bar not mounted", exc_info=True)
         if enabled:
             self.clear_activity()
 
     def set_input_placeholder(self, text: str) -> None:
         try:
             self.query_one("#input-bar", InputBar).set_placeholder(text)
-        except Exception:
-            pass
+        except NoMatches:
+            _log.debug("input-bar not mounted", exc_info=True)
 
     def advance_to_step(self, step: Step) -> None:
         """Transition to the next step in the chat."""
@@ -246,8 +293,8 @@ class ChatScreen(Screen):
     def _focus_input(self) -> None:
         try:
             self.query_one("#chat-input").focus()
-        except Exception:
-            pass
+        except NoMatches:
+            _log.debug("chat-input not mounted", exc_info=True)
 
     def _focus_initial_target(self) -> None:
         if self._active_structured_widget is not None:
@@ -261,14 +308,14 @@ class ChatScreen(Screen):
                 widget.focus()
                 return
         except Exception:
-            pass
+            _log.debug("Failed to focus widget directly", exc_info=True)
         try:
             for child in widget.query("*"):
                 if getattr(child, "can_focus", False):
                     child.focus()
                     return
         except Exception:
-            pass
+            _log.debug("Failed to focus descendant widget", exc_info=True)
 
     def _should_follow_output(self, chat_log: VerticalScroll) -> bool:
         try:
@@ -342,29 +389,11 @@ class ChatScreen(Screen):
         text = event.value.strip()
         if not text:
             return
-        command, _, arg = text.partition(" ")
-        if command == "/theme":
-            self._open_theme_picker()
+        dispatch_result = self._slash_commands.dispatch(self, text)
+        if dispatch_result is True:
             return
-        if command == "/resume":
-            if arg.strip():
-                state = self.app.engine.load_run(arg.strip())
-                if state is None:
-                    self.add_system_message(f"Saved run not found: {arg.strip()}")
-                    return
-                self.resume_run(state.run_id)
-                return
-            self._open_resume_picker()
-            return
-        if command == "/quit":
-            self.app.open_quit_dialog()
-            return
-        if command in {"/export", "/finish"} and self.app.current_state.current_step == Step.FINAL_REPORT:
-            self.add_user_message(command)
-            self.app.current_state.input_payload["user_text"] = command
-            self._handler.handle_user_input(command[1:])
-            return
-        if command.startswith("/"):
+        if dispatch_result is False:
+            command = text.split(" ", 1)[0]
             self.add_system_message(f"Unknown command: {command}")
             return
         self.add_user_message(text)

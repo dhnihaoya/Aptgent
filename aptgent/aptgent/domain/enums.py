@@ -8,7 +8,6 @@ class Step(str, Enum):
     CANDIDATE_ENUMERATION = "candidate_enumeration"
     PRIMARY_SCORING = "primary_scoring"
     SPECIFICITY_FILTER = "specificity_filter"
-    DOCKING_PREP = "docking_prep"
     DOCKING_SELECTION = "docking_selection"
     DOCKING_RUN = "docking_run"
     SPATIAL_RANK = "spatial_rank"

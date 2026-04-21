@@ -28,6 +28,7 @@ class EnumerationHandler(StepHandler):
         top_k_keep = enum_cfg.get("top_k_keep", 500)
         sub_batch_size = enum_cfg.get("sub_batch_size", 65536)
         progress_every = enum_cfg.get("progress_every", 10000)
+        mutation_batch_timeout = enum_cfg.get("mutation_batch_timeout_seconds", 3600)
 
         if not sites:
             self.screen.add_system_message(
@@ -57,7 +58,13 @@ class EnumerationHandler(StepHandler):
         if can_fast:
             self.run_worker(
                 lambda: self._fast_pipeline(
-                    seq, sites, total_space, top_k_keep, sub_batch_size, progress_every
+                    seq,
+                    sites,
+                    total_space,
+                    top_k_keep,
+                    sub_batch_size,
+                    progress_every,
+                    mutation_batch_timeout,
                 ),
                 activity="Enumerating and scoring candidates (accelerated)...",
             )
@@ -79,6 +86,7 @@ class EnumerationHandler(StepHandler):
         top_k_keep: int,
         sub_batch_size: int,
         progress_every: int,
+        timeout_seconds: int | None,
     ) -> None:
         from textual.worker import get_current_worker
 
@@ -86,7 +94,7 @@ class EnumerationHandler(StepHandler):
         state = self.screen.app.current_state
         target = state.target_molecule
 
-        run_dir = self.screen.app.persistence._run_dir(state.run_id)
+        run_dir = self.screen.app.persistence.run_dir(state.run_id)
         artifact_dir = run_dir / "artifacts"
         artifact_dir.mkdir(parents=True, exist_ok=True)
         results_path = artifact_dir / "scored_candidates.jsonl"
@@ -147,8 +155,9 @@ class EnumerationHandler(StepHandler):
                 sites=sites,
                 progress_callback=_on_progress,
                 result_callback=_on_result,
-                batch_size=progress_every,
+                progress_every=progress_every,
                 cancel_event=cancel_event,
+                timeout_seconds=timeout_seconds,
             )
 
             file_handle.flush()
@@ -231,7 +240,7 @@ class EnumerationHandler(StepHandler):
         target = state.target_molecule
         can_score = bool(target and target.smiles)
 
-        run_dir = self.screen.app.persistence._run_dir(state.run_id)
+        run_dir = self.screen.app.persistence.run_dir(state.run_id)
         artifact_dir = run_dir / "artifacts"
         artifact_dir.mkdir(parents=True, exist_ok=True)
         results_path = artifact_dir / "scored_candidates.jsonl"

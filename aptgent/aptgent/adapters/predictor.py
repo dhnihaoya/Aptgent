@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable
 
 from aptgent.domain.models import CandidateSequence, PredictionResult, TargetMolecule
 from aptgent.predictor_runtime.paths import RUNNER_MODULE, default_model_dir
+
+_log = logging.getLogger(__name__)
 
 
 class EnsembleAdapter:
@@ -78,21 +82,32 @@ class EnsembleAdapter:
         candidates: list[CandidateSequence],
         target: TargetMolecule,
     ) -> list[PredictionResult]:
-        """Run a batch prediction via the CLI batch mode using a temporary CSV."""
+        """Run a batch prediction via the CLI batch mode using a temporary CSV.
+
+        Rows are matched back to candidates via an explicit ``candidate_id``
+        column rather than by row order, because the predictor runtime is
+        allowed to skip empty/malformed rows and preserving alignment by index
+        alone would silently corrupt results.
+        """
         import csv as csv_module
 
         smiles = target.smiles or ""
         if not smiles:
             raise ValueError("Target molecule must have a resolved SMILES string.")
 
-        # Write temporary input CSV
+        cand_by_id: dict[str, CandidateSequence] = {}
+        for idx, cand in enumerate(candidates):
+            cid = cand.candidate_id or f"cand_{idx}"
+            cand_by_id[cid] = cand
+
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".csv", delete=False, prefix="pred_in_"
         ) as tmp_in:
             writer = csv_module.writer(tmp_in)
-            writer.writerow(["sequence", "smiles"])
-            for cand in candidates:
-                writer.writerow([cand.sequence, smiles])
+            writer.writerow(["candidate_id", "sequence", "smiles"])
+            for idx, cand in enumerate(candidates):
+                cid = cand.candidate_id or f"cand_{idx}"
+                writer.writerow([cid, cand.sequence, smiles])
             in_path = tmp_in.name
 
         out_path = in_path.replace("pred_in_", "pred_out_").replace(".csv", "_out.csv")
@@ -113,30 +128,47 @@ class EnsembleAdapter:
                     f"{proc.stderr[:500]}"
                 )
 
-            results: list[PredictionResult] = []
+            results_by_id: dict[str, PredictionResult] = {}
             with open(out_path, "r", newline="") as f:
                 reader = csv_module.DictReader(f)
-                for idx, row in enumerate(reader):
-                    cand = candidates[idx]
-                    cand_id = cand.candidate_id or f"cand_{idx}"
+                for row in reader:
+                    cid = (row.get("candidate_id") or "").strip()
+                    if not cid or cid not in cand_by_id:
+                        continue
                     individual_raw = row.get("individual", "{}")
                     try:
                         individual = json.loads(individual_raw)
-                    except Exception:
+                    except json.JSONDecodeError:
                         individual = {}
-                    labels = [v["label"] for v in individual.values()]
-                    probs = [v["probability"] for v in individual.values()]
+                    labels = [v.get("label", 0) for v in individual.values()]
+                    probs = [v.get("probability", 0.0) for v in individual.values()]
                     avg_prob = sum(probs) / len(probs) if probs else 0.0
-                    ens_label = 1 if all(l == 1 for l in labels) else 0
+                    ens_label = 1 if labels and all(l == 1 for l in labels) else 0
+                    results_by_id[cid] = PredictionResult(
+                        candidate_id=cid,
+                        model_name="ensemble",
+                        target=smiles,
+                        score=avg_prob,
+                        label=ens_label,
+                        probability=avg_prob,
+                        raw_outputs={"individual": individual},
+                    )
+
+            results: list[PredictionResult] = []
+            for idx, cand in enumerate(candidates):
+                cid = cand.candidate_id or f"cand_{idx}"
+                if cid in results_by_id:
+                    results.append(results_by_id[cid])
+                else:
                     results.append(
                         PredictionResult(
-                            candidate_id=cand_id,
+                            candidate_id=cid,
                             model_name="ensemble",
                             target=smiles,
-                            score=avg_prob,
-                            label=ens_label,
-                            probability=avg_prob,
-                            raw_outputs={"individual": individual},
+                            score=0.0,
+                            label=0,
+                            probability=0.0,
+                            raw_outputs={"individual": {}, "error": "missing_row"},
                         )
                     )
             return results
@@ -144,7 +176,7 @@ class EnsembleAdapter:
             for p in (in_path, out_path):
                 try:
                     os.unlink(p)
-                except Exception:
+                except OSError:
                     pass
 
     def predict_batch_for_targets(
@@ -181,17 +213,33 @@ class EnsembleAdapter:
         *,
         progress_callback: Callable[[int, int, dict], None] | None = None,
         result_callback: Callable[[dict], None] | None = None,
-        batch_size: int = 2000,
+        progress_every: int = 10000,
         cancel_event: threading.Event | None = None,
+        timeout_seconds: int | None = 3600,
+        # Back-compat alias: older callers passed ``batch_size`` to control the
+        # progress-emit cadence. Treat it as ``progress_every`` if supplied.
+        batch_size: int | None = None,
     ) -> dict[str, Any]:
         """Run mutation-batch via subprocess with line-JSON protocol.
 
         Streams positives-only hits through ``result_callback``.
         Returns summary dict with total, hits, device, model_order.
+
+        The subprocess lifecycle is guarded by:
+
+        * a dedicated stderr-pump thread (stderr is ``PIPE``-backed and the OS
+          pipe buffer would otherwise block the child once full);
+        * a total wall-clock watchdog (``timeout_seconds``) that triggers the
+          same three-stage termination as a cooperative cancel
+          (``cancel\\n`` on stdin -> ``terminate()`` -> ``kill()``).
         """
         smiles = target.smiles or ""
         if not smiles:
             raise ValueError("Target molecule must have a resolved SMILES string.")
+
+        effective_progress_every = progress_every
+        if batch_size is not None:
+            effective_progress_every = batch_size
 
         sites_str = ",".join(str(s) for s in sites)
         cmd = self._build_cmd() + [
@@ -200,7 +248,7 @@ class EnsembleAdapter:
             "--base-sequence", base_sequence,
             "--smiles", smiles,
             "--sites", sites_str,
-            "--progress-every", str(batch_size),
+            "--progress-every", str(int(effective_progress_every)),
         ]
 
         proc = subprocess.Popen(
@@ -215,60 +263,129 @@ class EnsembleAdapter:
         )
 
         summary: dict[str, Any] = {"total": 0, "hits": 0}
+        stderr_chunks: list[str] = []
+        subprocess_error: dict[str, Any] = {}
 
         def _reader() -> None:
-            for line in proc.stdout:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+            try:
+                for line in proc.stdout:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
 
-                msg_type = obj.get("type")
-                if msg_type == "progress" and progress_callback:
-                    progress_callback(obj["done"], obj["total"], {})
-                elif msg_type == "hit" and result_callback:
-                    result_callback({
-                        "sequence": obj["sequence"],
-                        "ensemble_label": 1,
-                        "probability": obj["mean_probability"],
-                        "model_probabilities": obj.get("model_probabilities", []),
-                    })
-                elif msg_type == "done":
-                    summary["total"] = obj.get("total", 0)
-                    summary["hits"] = obj.get("hits", 0)
-                    if "device" in obj:
-                        summary["device"] = obj["device"]
-                    if "model_order" in obj:
-                        summary["model_order"] = obj["model_order"]
-                elif msg_type == "ready":
-                    summary["device"] = obj.get("device", "cpu")
-                    summary["model_order"] = obj.get("model_order", [])
+                    msg_type = obj.get("type")
+                    if msg_type == "progress" and progress_callback:
+                        progress_callback(obj["done"], obj["total"], {})
+                    elif msg_type == "hit" and result_callback:
+                        result_callback({
+                            "sequence": obj["sequence"],
+                            "ensemble_label": 1,
+                            "probability": obj["mean_probability"],
+                            "model_probabilities": obj.get("model_probabilities", []),
+                        })
+                    elif msg_type == "done":
+                        summary["total"] = obj.get("total", 0)
+                        summary["hits"] = obj.get("hits", 0)
+                        if "device" in obj:
+                            summary["device"] = obj["device"]
+                        if "model_order" in obj:
+                            summary["model_order"] = obj["model_order"]
+                        if obj.get("cancelled"):
+                            summary["cancelled"] = True
+                    elif msg_type == "ready":
+                        summary["device"] = obj.get("device", "cpu")
+                        summary["model_order"] = obj.get("model_order", [])
+                    elif msg_type == "error":
+                        subprocess_error["message"] = obj.get("message", "")
+            except Exception as exc:
+                _log.debug("mutation-batch stdout reader aborted: %s", exc)
+
+        def _stderr_pump() -> None:
+            try:
+                for line in proc.stderr:
+                    stderr_chunks.append(line)
+            except Exception as exc:
+                _log.debug("mutation-batch stderr pump aborted: %s", exc)
 
         reader_thread = threading.Thread(target=_reader, daemon=True)
+        stderr_thread = threading.Thread(target=_stderr_pump, daemon=True)
         reader_thread.start()
+        stderr_thread.start()
 
-        # Poll for cancel
+        timed_out = False
+        start = time.monotonic()
+
+        def _send_cancel() -> None:
+            try:
+                if proc.stdin and not proc.stdin.closed:
+                    proc.stdin.write("cancel\n")
+                    proc.stdin.flush()
+            except (OSError, ValueError):
+                pass
+
         try:
             while reader_thread.is_alive():
                 reader_thread.join(timeout=0.5)
-                if cancel_event and cancel_event.is_set():
-                    try:
-                        proc.stdin.write("cancel\n")
-                        proc.stdin.flush()
-                    except Exception:
-                        pass
+                if cancel_event is not None and cancel_event.is_set():
+                    _send_cancel()
+                    break
+                if timeout_seconds is not None and (time.monotonic() - start) > timeout_seconds:
+                    timed_out = True
+                    _log.warning(
+                        "mutation-batch subprocess exceeded %ss; requesting cancel.",
+                        timeout_seconds,
+                    )
+                    _send_cancel()
                     break
         finally:
-            proc.wait(timeout=30)
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                _log.warning("mutation-batch subprocess did not exit; terminating.")
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    _log.warning("mutation-batch subprocess still alive; killing.")
+                    proc.kill()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
             reader_thread.join(timeout=5)
+            stderr_thread.join(timeout=5)
+            try:
+                if proc.stdout:
+                    proc.stdout.close()
+                if proc.stderr:
+                    proc.stderr.close()
+                if proc.stdin:
+                    proc.stdin.close()
+            except OSError:
+                pass
 
-        stderr_output = proc.stderr.read()
-        if proc.returncode != 0 and proc.returncode != 1:
+        stderr_output = "".join(stderr_chunks)
+        if timed_out:
+            summary["cancelled"] = True
+            summary["timed_out"] = True
+        if cancel_event is not None and cancel_event.is_set():
+            summary["cancelled"] = True
+
+        if subprocess_error:
             raise RuntimeError(
-                f"Predictor mutation-batch failed (exit {proc.returncode}): "
+                "Predictor mutation-batch reported error: "
+                f"{subprocess_error.get('message', '')[:500]}"
+            )
+
+        rc = proc.returncode
+        # rc == 0 success; rc == 1 is a cooperative cancel (PredictionCancelled)
+        if rc not in (0, 1):
+            raise RuntimeError(
+                f"Predictor mutation-batch failed (exit {rc}): "
                 f"{stderr_output[:500]}"
             )
 
