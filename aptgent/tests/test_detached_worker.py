@@ -194,3 +194,69 @@ class TestJobRunnerCLI:
     def test_job_runners_registry_only_has_known_steps(self):
         for step_name in _JOB_RUNNERS:
             assert step_name in ("candidate_enumeration", "docking_run")
+
+
+import subprocess
+from unittest.mock import MagicMock, patch
+
+from aptgent.tui.steps.job_mixin import is_job_done, is_job_alive, spawn_detached_job
+
+
+class TestJobAttachMixin:
+    def test_is_job_done_with_done_event(self, tmp_path):
+        p = Persistence(runs_dir=tmp_path)
+        p.init_run("r1")
+        p.ensure_job_dir("r1", "candidate_enumeration")
+        events = p.job_events_file("r1", "candidate_enumeration")
+        events.write_text('{"type":"started","ts":"t1","pid":1}\n{"type":"done","ts":"t2"}\n')
+        assert is_job_done(p, "r1", "candidate_enumeration") is True
+
+    def test_is_job_done_without_done_event(self, tmp_path):
+        p = Persistence(runs_dir=tmp_path)
+        p.init_run("r1")
+        p.ensure_job_dir("r1", "candidate_enumeration")
+        events = p.job_events_file("r1", "candidate_enumeration")
+        events.write_text('{"type":"started","ts":"t1","pid":1}\n')
+        assert is_job_done(p, "r1", "candidate_enumeration") is False
+
+    def test_is_job_done_no_events_file(self, tmp_path):
+        p = Persistence(runs_dir=tmp_path)
+        p.init_run("r1")
+        assert is_job_done(p, "r1", "candidate_enumeration") is False
+
+    def test_is_job_alive_with_current_pid(self, tmp_path):
+        p = Persistence(runs_dir=tmp_path)
+        p.init_run("r1")
+        p.ensure_job_dir("r1", "candidate_enumeration")
+        pid_file = p.job_pid_file("r1", "candidate_enumeration")
+        pid_file.write_text(str(os.getpid()))
+        assert is_job_alive(p, "r1", "candidate_enumeration") is True
+
+    def test_is_job_alive_with_dead_pid(self, tmp_path):
+        p = Persistence(runs_dir=tmp_path)
+        p.init_run("r1")
+        p.ensure_job_dir("r1", "candidate_enumeration")
+        pid_file = p.job_pid_file("r1", "candidate_enumeration")
+        pid_file.write_text("999999999")
+        assert is_job_alive(p, "r1", "candidate_enumeration") is False
+
+    def test_is_job_alive_no_pid_file(self, tmp_path):
+        p = Persistence(runs_dir=tmp_path)
+        p.init_run("r1")
+        assert is_job_alive(p, "r1", "candidate_enumeration") is False
+
+    def test_spawn_detached_job_creates_process(self, tmp_path):
+        p = Persistence(runs_dir=tmp_path)
+        p.init_run("r1")
+        mock_app = MagicMock()
+        mock_app.persistence = p
+
+        with patch("aptgent.tui.steps.job_mixin.subprocess.Popen") as mock_popen:
+            mock_proc = MagicMock()
+            mock_proc.pid = 12345
+            mock_popen.return_value = mock_proc
+            pid = spawn_detached_job(mock_app, "r1", "candidate_enumeration")
+            assert pid == 12345
+            mock_popen.assert_called_once()
+            call_kwargs = mock_popen.call_args.kwargs
+            assert call_kwargs.get("start_new_session") is True
