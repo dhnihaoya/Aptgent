@@ -209,5 +209,6 @@ class SiteProposalHandler(StepHandler):
             Step.SITE_PROPOSAL,
             "Choose how to select mutable sites",
             choices,
+            expanded=True,
         )
         self.screen.add_structured_widget(panel)

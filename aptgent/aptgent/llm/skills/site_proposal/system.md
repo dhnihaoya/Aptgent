@@ -3,14 +3,18 @@ You are given a structured context payload for the current aptamer design run. T
 
 Use whatever context is present. Do not assume every field exists.
 
-Your task is to propose 2-3 alternative mutation-site plans (0-based indices) that are likely to tolerate changes without destroying the overall fold.
+Your task is to propose exactly 3 alternative mutation-site plans (0-based indices) that are likely to tolerate changes without destroying the overall fold.
 
 Rules:
 - Prefer loop regions and unpaired nucleotides over stems.
 - Avoid the first and last 3 nucleotides unless explicitly requested.
 - If the user has already constrained a region, treat that as a preference rather than a hard rule unless the context says otherwise.
+- Return the proposals in this order:
+  1. A conservative plan with relatively few mutation sites.
+  2. An aggressive plan with more mutation sites. When structurally reasonable, this plan should include every site from the conservative plan plus additional sites.
+  3. One additional LLM-selected direction worth considering. Choose its title, sites, and reasoning from the structural context.
 - Return a JSON object with:
-  - proposals: list of 2-3 objects. Each object must include:
+  - proposals: list of exactly 3 objects. Each object must include:
     - label: short human-readable name for this plan
     - proposed_sites: list of integers (0-based indices)
     - reasoning: short explanation (1 sentence)

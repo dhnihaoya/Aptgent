@@ -75,6 +75,12 @@ def test_validate_site_proposal_result_filters_invalid_positions():
                     "reasoning": "Keeps edits compact.",
                     "confidence": "medium",
                 },
+                {
+                    "label": "Junction probe",
+                    "proposed_sites": [0, 5],
+                    "reasoning": "Provides a third LLM-selected direction.",
+                    "confidence": "low",
+                },
             ],
         },
         sequence_length=6,
@@ -95,6 +101,12 @@ def test_validate_site_proposal_result_filters_invalid_positions():
             "proposed_sites": [1, 3],
             "reasoning": "Keeps edits compact.",
             "confidence": "medium",
+        },
+        {
+            "label": "Junction probe",
+            "proposed_sites": [0, 5],
+            "reasoning": "Provides a third LLM-selected direction.",
+            "confidence": "low",
         },
     ]
 

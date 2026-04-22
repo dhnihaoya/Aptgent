@@ -414,15 +414,21 @@ async def test_site_proposal_uses_choice_panel_before_custom_selector(tmp_path, 
             return {
                 "proposals": [
                     {
-                        "label": "Loop plan",
+                        "label": "Conservative loop plan",
                         "proposed_sites": [1, 3],
                         "reasoning": "Loop positions look tolerant.",
                         "confidence": "high",
                     },
                     {
-                        "label": "Compact plan",
-                        "proposed_sites": [2, 4],
-                        "reasoning": "Compact edits keep the search small.",
+                        "label": "Aggressive loop scan",
+                        "proposed_sites": [1, 3, 4],
+                        "reasoning": "Adds nearby loop positions while keeping the conservative sites.",
+                        "confidence": "medium",
+                    },
+                    {
+                        "label": "Junction probe",
+                        "proposed_sites": [2, 5],
+                        "reasoning": "Tests a distinct exposed region.",
                         "confidence": "medium",
                     },
                 ],
@@ -454,15 +460,17 @@ async def test_site_proposal_uses_choice_panel_before_custom_selector(tmp_path, 
         assert type(app.screen).__name__ == "ChatScreen"
         assert seen_context["secondary_structure"]["dot_bracket"] == "......"
         assert seen_context["sequence"] == "ACGTAC"
-        assert app.screen.query_one(ActionMenuPanel) is not None
+        panel = app.screen.query_one(ActionMenuPanel)
+        assert panel is not None
+        assert panel.has_class("expanded-menu")
         app.screen.query_one("#action-menu", OptionList).focus()
 
-        await pilot.press("down", "down", "enter")
+        await pilot.press("down", "down", "down", "enter")
         await pilot.pause()
 
-        panel = app.screen.query_one(MutationSitePanel)
-        assert panel is not None
-        assert panel.query_one("#btn-confirm-sites", Button) is not None
+        site_panel = app.screen.query_one(MutationSitePanel)
+        assert site_panel is not None
+        assert site_panel.query_one("#btn-confirm-sites", Button) is not None
 
 
 @pytest.mark.anyio
@@ -475,15 +483,21 @@ async def test_site_proposal_can_confirm_second_recommended_plan(tmp_path, monke
             return {
                 "proposals": [
                     {
-                        "label": "Loop plan",
+                        "label": "Conservative loop plan",
                         "proposed_sites": [1, 3],
                         "reasoning": "Loop positions look tolerant.",
                         "confidence": "high",
                     },
                     {
-                        "label": "Compact plan",
-                        "proposed_sites": [2, 4],
-                        "reasoning": "Compact edits keep the search small.",
+                        "label": "Aggressive loop scan",
+                        "proposed_sites": [1, 3, 4],
+                        "reasoning": "Adds nearby loop positions while keeping the conservative sites.",
+                        "confidence": "medium",
+                    },
+                    {
+                        "label": "Junction probe",
+                        "proposed_sites": [2, 5],
+                        "reasoning": "Tests a distinct exposed region.",
                         "confidence": "medium",
                     },
                 ],
@@ -515,14 +529,78 @@ async def test_site_proposal_can_confirm_second_recommended_plan(tmp_path, monke
         menu = app.screen.query_one("#action-menu", OptionList)
         assert menu.get_option_at_index(0).id == "use-recommended-sites-0"
         assert menu.get_option_at_index(1).id == "use-recommended-sites-1"
-        assert menu.get_option_at_index(2).id == "custom-sites"
+        assert menu.get_option_at_index(2).id == "use-recommended-sites-2"
+        assert menu.get_option_at_index(3).id == "custom-sites"
         menu.focus()
 
         await pilot.press("down", "enter")
         await pilot.pause()
 
-        assert app.current_state.confirmed_mutation_sites == [2, 4]
-        assert app.current_state.context.site_proposal.confirmed_sites == [2, 4]
+        assert app.current_state.confirmed_mutation_sites == [1, 3, 4]
+        assert app.current_state.context.site_proposal.confirmed_sites == [1, 3, 4]
+
+
+@pytest.mark.anyio
+async def test_site_proposal_can_confirm_llm_alternative_plan(tmp_path, monkeypatch):
+    class FakeSiteProposalSkill:
+        def explain_propose_stream_from_context(self, context):
+            yield "- Three possible mutation plans are available.\n"
+
+        def propose_from_context(self, context):
+            return {
+                "proposals": [
+                    {
+                        "label": "Conservative loop plan",
+                        "proposed_sites": [1, 3],
+                        "reasoning": "Loop positions look tolerant.",
+                        "confidence": "high",
+                    },
+                    {
+                        "label": "Aggressive loop scan",
+                        "proposed_sites": [1, 3, 4],
+                        "reasoning": "Adds nearby loop positions while keeping the conservative sites.",
+                        "confidence": "medium",
+                    },
+                    {
+                        "label": "Junction probe",
+                        "proposed_sites": [2, 5],
+                        "reasoning": "Tests a distinct exposed region.",
+                        "confidence": "medium",
+                    },
+                ],
+            }
+
+    monkeypatch.setattr(
+        "aptgent.tui.steps.site_proposal.SiteProposalSkill",
+        FakeSiteProposalSkill,
+    )
+
+    app = make_app(tmp_path)
+    state = app.engine.create_run("site_alternative_plan_case")
+    state.current_step = Step.SITE_PROPOSAL
+    state.input_payload["initial_sequence"] = "ACGTAC"
+    state.secondary_structure = SecondaryStructure(
+        sequence="ACGTAC",
+        dot_bracket="......",
+        mfe=-1.2,
+    )
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.set_run_id("site_alternative_plan_case")
+        app.push_screen("chat")
+        await pilot.pause()
+        await pilot.pause()
+
+        menu = app.screen.query_one("#action-menu", OptionList)
+        menu.focus()
+
+        await pilot.press("down", "down", "enter")
+        await pilot.pause()
+
+        assert app.current_state.confirmed_mutation_sites == [2, 5]
+        assert app.current_state.context.site_proposal.confirmed_sites == [2, 5]
 
 
 @pytest.mark.anyio

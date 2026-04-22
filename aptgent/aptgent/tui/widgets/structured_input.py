@@ -69,6 +69,9 @@ class ActionMenuPanel(_BaseStructuredPanel):
         max-height: 10;
         border: tall $surface-lighten-1;
     }
+    ActionMenuPanel.expanded-menu > OptionList {
+        max-height: 22;
+    }
     """
 
     def __init__(
@@ -78,8 +81,14 @@ class ActionMenuPanel(_BaseStructuredPanel):
         choices: list[tuple[str, str, str]],
         *,
         help_text: str = "Use Up/Down to choose and Enter to confirm.",
+        expanded: bool = False,
         **kwargs,
     ) -> None:
+        if expanded:
+            classes = kwargs.get("classes")
+            kwargs["classes"] = (
+                f"{classes} expanded-menu" if classes else "expanded-menu"
+            )
         super().__init__(**kwargs)
         self.step = step
         self.title = title
