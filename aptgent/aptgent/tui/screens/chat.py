@@ -116,9 +116,35 @@ class ChatScreen(Screen):
             self.add_system_message("Back is only available from primary scoring.")
             return True
 
+        from aptgent.tui.steps.empty_candidates import (
+            clear_site_selection_retry_feedback,
+            is_empty_enumeration_result,
+            prepare_empty_candidate_recovery,
+        )
+
+        if is_empty_enumeration_result(state):
+            recovery = prepare_empty_candidate_recovery(state)
+            self.app.save_state()
+            if recovery.needs_regeneration:
+                self.add_system_message(
+                    "No predicted binding mutations were found for the selected LLM plan. "
+                    "Returning to site proposal so the LLM can revise the recommendation.",
+                    "warning-text",
+                )
+            else:
+                self.add_system_message(
+                    "No predicted binding mutations were found for the selected custom sites. "
+                    "Returning to site proposal so you can choose a different set."
+                )
+            self.rewind_to_step(
+                Step.SITE_PROPOSAL,
+                metadata={"reason": "no_positive_candidates"},
+            )
+            return True
+
         proposal = state.context.site_proposal
-        proposal.needs_regeneration = False
-        proposal.regeneration_reason = None
+        clear_site_selection_retry_feedback(state)
+        state.confirmed_mutation_sites = []
         state.candidates = []
         state.predictions = []
         self.app.save_state()

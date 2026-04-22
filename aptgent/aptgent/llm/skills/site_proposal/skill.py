@@ -49,6 +49,9 @@ class SiteProposalSkill(BaseSkill):
     def explain_propose_stream_from_context(self, context: dict[str, Any]):
         return self.explain_stream(context)
 
+    def propose_events_from_context(self, context: dict[str, Any]):
+        return self.invoke_json_events(context)
+
     def propose(
         self, sequence: str, structure: SecondaryStructure
     ) -> dict[str, Any]:

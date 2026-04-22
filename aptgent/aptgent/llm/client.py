@@ -281,6 +281,76 @@ class LLMClient:
         self._raise_after_retries("request", last_exc)
         raise AssertionError("unreachable")
 
+    def chat_json_events(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+    ):
+        timeout = self._stream_timeout()
+        last_exc: BaseException | None = None
+        for attempt in range(self.max_retries + 1):
+            if should_cancel is not None and should_cancel():
+                raise LLMCancelled()
+            try:
+                collected: list[str] = []
+                reasoning_preview: list[str] = []
+                with httpx.stream(
+                    "POST",
+                    f"{self.base_url}/chat/completions",
+                    headers=self._headers(),
+                    json=self._payload(
+                        system_prompt,
+                        user_prompt,
+                        temperature=self.json_temperature,
+                        stream=True,
+                        response_format={"type": "json_object"},
+                        enable_thinking=True,
+                        model=self.model,
+                    ),
+                    timeout=timeout,
+                ) as resp:
+                    resp.raise_for_status()
+                    for event in self._iter_sse_events(resp, should_cancel):
+                        event_type = event.get("type")
+                        text = event.get("text", "")
+                        if event_type == "reasoning" and text:
+                            reasoning_preview.append(text)
+                            yield event
+                        elif event_type == "content" and text:
+                            collected.append(text)
+                content = "".join(collected)
+                if not content:
+                    raise ValueError("LLM returned empty content")
+                parsed = json.loads(content)
+                self._log_call(
+                    method="chat_json_events",
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    response={
+                        "reasoning_preview": "".join(reasoning_preview)[:200],
+                        "json": parsed,
+                    },
+                )
+                yield {"type": "result", "value": parsed}
+                return
+            except LLMCancelled:
+                raise
+            except Exception as exc:
+                last_exc = exc
+                if not _is_retryable(exc) or attempt == self.max_retries:
+                    self._raise_after_retries("request", exc)
+                _log.warning(
+                    "LLM chat_json_events attempt %d/%d failed (retryable): %s",
+                    attempt + 1,
+                    self.max_retries + 1,
+                    exc,
+                )
+        assert last_exc is not None
+        self._raise_after_retries("request", last_exc)
+        raise AssertionError("unreachable")
+
     def chat_stream(
         self,
         system_prompt: str,

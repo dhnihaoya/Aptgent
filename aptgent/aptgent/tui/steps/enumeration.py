@@ -6,6 +6,7 @@ from typing import Any
 from aptgent.domain.enums import Step
 from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.steps.common import next_step
+from aptgent.tui.steps.empty_candidates import prepare_empty_candidate_recovery
 from aptgent.tui.steps.job_mixin import JobAttachMixin
 from aptgent.tui.widgets.chat_widgets import ProgressBubble
 from aptgent.workflow.context import get_sequence
@@ -154,44 +155,15 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
         hits: int,
         kept: int,
     ) -> None:
-        context = state.context.site_proposal
-        selected_index = context.selected_proposal_index
-        preserve_indexes: list[int] = []
-        needs_regeneration = context.selection_source == "llm"
-        if needs_regeneration and selected_index in (0, 1):
-            preserve_indexes = [2]
-        elif needs_regeneration and selected_index == 2:
-            preserve_indexes = [0, 1]
-
-        reason = (
-            f"No binding candidates were found after enumerating {total:,} mutants "
-            f"({hits:,} hits, {kept:,} kept)."
+        recovery = prepare_empty_candidate_recovery(
+            state,
+            total=total,
+            hits=hits,
+            kept=kept,
         )
-        guidance = self._empty_result_guidance(
-            selection_source=context.selection_source,
-            selected_index=selected_index,
-        )
-        state.candidates = []
-        state.predictions = []
-        context.needs_regeneration = needs_regeneration
-        context.regeneration_reason = reason
-        context.preserve_proposal_indexes = preserve_indexes
-        context.extra_context = {
-            **dict(context.extra_context),
-            "site_selection_feedback": {
-                "reason": "no_positive_candidates",
-                "message": reason,
-                "guidance": guidance,
-                "selected_sites": list(state.confirmed_mutation_sites),
-                "selection_source": context.selection_source,
-                "selected_proposal_index": selected_index,
-                "preserve_proposal_indexes": preserve_indexes,
-                "previous_proposals": list(context.proposals),
-            },
-        }
         self.screen.app.save_state()
 
-        if needs_regeneration:
+        if recovery.needs_regeneration:
             self.screen.add_system_message(
                 "No binding candidates were found for the selected LLM plan. "
                 "Returning to site proposal with this feedback so the LLM can revise the sites.",
@@ -206,33 +178,4 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
         self.screen.rewind_to_step(
             Step.SITE_PROPOSAL,
             metadata={"reason": "no_positive_candidates"},
-        )
-
-    @staticmethod
-    def _empty_result_guidance(
-        *,
-        selection_source: str,
-        selected_index: int | None,
-    ) -> str:
-        if selection_source != "llm":
-            return (
-                "The custom mutation sites produced no predicted binding mutations. "
-                "Do not regenerate LLM recommendations automatically; let the user choose "
-                "another set of sites."
-            )
-        if selected_index in (0, 1):
-            return (
-                "The selected conservative/aggressive LLM plan produced no predicted "
-                "binding mutations. Keep the alternate plan unchanged, and regenerate "
-                "plans 1 and 2 with a larger mutation space than the failed sites."
-            )
-        if selected_index == 2:
-            return (
-                "The selected alternate LLM plan produced no predicted binding mutations. "
-                "Keep plans 1 and 2 unchanged, and regenerate only the alternate plan "
-                "with a different direction."
-            )
-        return (
-            "The selected LLM plan produced no predicted binding mutations. Regenerate "
-            "recommendations using the failed sites and previous proposals as feedback."
         )

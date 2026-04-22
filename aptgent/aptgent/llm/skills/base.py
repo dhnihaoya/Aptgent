@@ -210,6 +210,10 @@ class BaseSkill:
             model = self.output_schema.model_validate(raw)
         return SkillResult(raw=raw, model=model)
 
+    def invoke_json_events(self, payload: Any):
+        user = self.build_user_message(payload)
+        yield from self.client.chat_json_events(self.system_prompt, user)
+
     def invoke_stream(self, payload: Any) -> Generator[str, None, None]:
         user = self.build_user_message(payload)
         yield from self.client.chat_stream(self.system_prompt, user)

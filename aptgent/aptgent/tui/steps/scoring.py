@@ -5,6 +5,10 @@ from typing import Any
 from aptgent.domain.enums import Step
 from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.steps.common import next_step
+from aptgent.tui.steps.empty_candidates import (
+    is_empty_enumeration_result,
+    prepare_empty_candidate_recovery,
+)
 
 
 class ScoringHandler(StepHandler):
@@ -102,23 +106,11 @@ class ScoringHandler(StepHandler):
             self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
 
     def _handle_empty_candidates(self, state: Any) -> bool:
-        context = state.context.site_proposal
-        feedback = dict(context.extra_context.get("site_selection_feedback") or {})
-        is_no_positive = (
-            feedback.get("reason") == "no_positive_candidates"
-            or bool(context.regeneration_reason)
-        )
-        if not is_no_positive:
+        if not is_empty_enumeration_result(state):
             return False
 
-        if context.selection_source == "llm" or context.needs_regeneration:
-            if not context.needs_regeneration:
-                context.needs_regeneration = True
-            if not context.regeneration_reason:
-                context.regeneration_reason = (
-                    feedback.get("message")
-                    or "No predicted binding mutations were found for the selected LLM plan."
-                )
+        recovery = prepare_empty_candidate_recovery(state)
+        if recovery.needs_regeneration:
             self.screen.app.save_state()
             self.screen.add_system_message(
                 "No predicted binding mutations were found for the selected LLM plan. "

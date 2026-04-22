@@ -8,6 +8,7 @@ from aptgent.tui.steps.common import (
     run_llm_interaction,
     validate_site_proposal_result,
 )
+from aptgent.tui.steps.empty_candidates import clear_site_selection_retry_feedback
 from aptgent.tui.widgets.structured_input import ActionMenuPanel, MutationSitePanel
 from aptgent.workflow.context import (
     build_site_proposal_llm_context,
@@ -79,13 +80,35 @@ class SiteProposalHandler(StepHandler):
                 "Preparing site-proposal context...",
             )
             llm_context = build_site_proposal_llm_context(state)
-            result = run_llm_interaction(
-                self.screen,
-                display_stream=None,
-                structured_call=lambda: validate_site_proposal_result(
+            streamed_result: dict[str, object] = {}
+            supports_structured_events = hasattr(skill, "propose_events_from_context")
+
+            def display_stream():
+                if not supports_structured_events:
+                    return
+                for event in skill.propose_events_from_context(llm_context):
+                    if isinstance(event, dict) and event.get("type") == "result":
+                        value = event.get("value")
+                        if isinstance(value, dict):
+                            streamed_result.clear()
+                            streamed_result.update(value)
+                        continue
+                    yield event
+
+            def structured_result() -> dict:
+                if streamed_result:
+                    return validate_site_proposal_result(streamed_result, len(seq))
+                if supports_structured_events:
+                    raise RuntimeError("LLM structured result unavailable.")
+                return validate_site_proposal_result(
                     skill.propose_from_context(llm_context),
                     len(seq),
-                ),
+                )
+
+            result = run_llm_interaction(
+                self.screen,
+                display_stream=display_stream,
+                structured_call=structured_result,
             )
         except Exception as exc:
             self.screen.app.call_from_thread(
@@ -227,9 +250,7 @@ class SiteProposalHandler(StepHandler):
         context = state.context.site_proposal
         context.selection_source = source
         context.selected_proposal_index = proposal_index
-        context.needs_regeneration = False
-        context.regeneration_reason = None
-        context.preserve_proposal_indexes = []
+        clear_site_selection_retry_feedback(state)
         record_site_proposal_context(state, confirmed_sites=sites)
         self.screen.app.save_state()
         self.screen.add_system_message(f"Confirmed mutation sites: {sites}")
