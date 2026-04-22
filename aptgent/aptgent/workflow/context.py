@@ -192,6 +192,7 @@ def record_secondary_structure_context(
 def record_site_proposal_context(
     state: RunState,
     *,
+    proposals: list[dict[str, Any]] | None = None,
     proposed_sites: list[int] | None = None,
     reasoning: str | None = None,
     confidence: str | None = None,
@@ -200,6 +201,8 @@ def record_site_proposal_context(
     extra_context: dict[str, Any] | None = None,
 ) -> None:
     context = state.context.site_proposal
+    if proposals is not None:
+        context.proposals = [dict(proposal) for proposal in proposals]
     if proposed_sites is not None:
         context.proposed_sites = list(proposed_sites)
     if reasoning is not None:
@@ -279,6 +282,7 @@ def build_site_proposal_llm_context(state: RunState) -> dict[str, Any]:
         },
         "workflow_context": {
             "current_step": state.current_step.value,
+            "previous_site_proposals": list(proposal.proposals),
             "previous_proposed_sites": list(proposal.proposed_sites),
             "confirmed_mutation_sites": list(state.confirmed_mutation_sites),
         },

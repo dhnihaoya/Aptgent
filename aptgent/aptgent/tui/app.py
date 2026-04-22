@@ -6,7 +6,7 @@ from textual.app import App
 from textual.binding import Binding
 from textual.theme import Theme
 
-from aptgent.bootstrap import AppRuntime, build_runtime
+from aptgent.bootstrap import AppRuntime, build_runtime, create_engine, create_persistence
 from aptgent.domain.enums import Step
 from aptgent.tui.commands import get_theme_preset
 from aptgent.tui.rich_theme import build_chat_markdown_theme
@@ -240,6 +240,8 @@ class AptgentApp(App):
         runtime: AppRuntime | None = None,
         **kwargs,
     ) -> None:
+        if runtime is None and "config" in kwargs:
+            runtime = self._runtime_from_kwargs(kwargs)
         super().__init__(**kwargs)
         if runtime is None:
             runtime = build_runtime()
@@ -272,6 +274,36 @@ class AptgentApp(App):
         self.register_theme(CLEAN_MINIMAL_LIGHT_THEME)
         self.register_theme(WARM_INDUSTRIAL_THEME)
         self.theme = self.DEFAULT_THEME
+
+    @staticmethod
+    def _runtime_from_kwargs(kwargs: dict[str, Any]) -> AppRuntime:
+        config = kwargs.pop("config")
+        tools_config = kwargs.pop("tools_config", {})
+        llm_config = kwargs.pop("llm_config", {})
+        persistence = kwargs.pop("persistence", None) or create_persistence(config)
+        engine = kwargs.pop("engine", None) or create_engine(
+            persistence,
+            tools_config=tools_config,
+            llm_config=llm_config,
+        )
+        return AppRuntime(
+            config=config,
+            tools_config=tools_config,
+            llm_config=llm_config,
+            persistence=persistence,
+            engine=engine,
+            rna_fold_adapter=kwargs.pop("rna_fold_adapter", None),
+            vina_adapter=kwargs.pop("vina_adapter", None),
+            prediction_adapter=kwargs.pop("prediction_adapter", None),
+            molecule_resolver=kwargs.pop("molecule_resolver", None),
+            spatial_rank_adapter=kwargs.pop("spatial_rank_adapter", None),
+            pdb_analysis_adapter=kwargs.pop("pdb_analysis_adapter", None),
+            structure_lookup_adapter=kwargs.pop("structure_lookup_adapter", None),
+            structure_fetch_adapter=kwargs.pop("structure_fetch_adapter", None),
+            tertiary_structure_adapter=kwargs.pop("tertiary_structure_adapter", None),
+            intake_skill_factory=kwargs.pop("intake_skill_factory", None),
+            pdb_review_skill_factory=kwargs.pop("pdb_review_skill_factory", None),
+        )
 
     def get_theme_variable_defaults(self) -> dict[str, str]:
         return dict(_THEME_VARIABLE_DEFAULTS)

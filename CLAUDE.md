@@ -15,3 +15,7 @@ Claude Code (and any other agent tool) should read [`AGENTS.md`](./AGENTS.md) fo
 
 If this file and `AGENTS.md` disagree, trust `AGENTS.md` and the code; then
 update both. Do not maintain two parallel descriptions of the project.
+
+## 推送前检查
+
+Before pushing to remote, always review and update CLAUDE.md and AGENTS.md to ensure they reflect the current codebase state (directory layout, entry points, workflow steps, new features, config changes).

@@ -412,9 +412,20 @@ async def test_site_proposal_uses_choice_panel_before_custom_selector(tmp_path, 
         def propose_from_context(self, context):
             seen_context.update(context)
             return {
-                "proposed_sites": [1, 3],
-                "reasoning": "Loop positions look tolerant.",
-                "confidence": "high",
+                "proposals": [
+                    {
+                        "label": "Loop plan",
+                        "proposed_sites": [1, 3],
+                        "reasoning": "Loop positions look tolerant.",
+                        "confidence": "high",
+                    },
+                    {
+                        "label": "Compact plan",
+                        "proposed_sites": [2, 4],
+                        "reasoning": "Compact edits keep the search small.",
+                        "confidence": "medium",
+                    },
+                ],
             }
 
     monkeypatch.setattr(
@@ -446,12 +457,72 @@ async def test_site_proposal_uses_choice_panel_before_custom_selector(tmp_path, 
         assert app.screen.query_one(ActionMenuPanel) is not None
         app.screen.query_one("#action-menu", OptionList).focus()
 
-        await pilot.press("down", "enter")
+        await pilot.press("down", "down", "enter")
         await pilot.pause()
 
         panel = app.screen.query_one(MutationSitePanel)
         assert panel is not None
         assert panel.query_one("#btn-confirm-sites", Button) is not None
+
+
+@pytest.mark.anyio
+async def test_site_proposal_can_confirm_second_recommended_plan(tmp_path, monkeypatch):
+    class FakeSiteProposalSkill:
+        def explain_propose_stream_from_context(self, context):
+            yield "- Two possible mutation plans are available.\n"
+
+        def propose_from_context(self, context):
+            return {
+                "proposals": [
+                    {
+                        "label": "Loop plan",
+                        "proposed_sites": [1, 3],
+                        "reasoning": "Loop positions look tolerant.",
+                        "confidence": "high",
+                    },
+                    {
+                        "label": "Compact plan",
+                        "proposed_sites": [2, 4],
+                        "reasoning": "Compact edits keep the search small.",
+                        "confidence": "medium",
+                    },
+                ],
+            }
+
+    monkeypatch.setattr(
+        "aptgent.tui.steps.site_proposal.SiteProposalSkill",
+        FakeSiteProposalSkill,
+    )
+
+    app = make_app(tmp_path)
+    state = app.engine.create_run("site_second_plan_case")
+    state.current_step = Step.SITE_PROPOSAL
+    state.input_payload["initial_sequence"] = "ACGTAC"
+    state.secondary_structure = SecondaryStructure(
+        sequence="ACGTAC",
+        dot_bracket="......",
+        mfe=-1.2,
+    )
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.set_run_id("site_second_plan_case")
+        app.push_screen("chat")
+        await pilot.pause()
+        await pilot.pause()
+
+        menu = app.screen.query_one("#action-menu", OptionList)
+        assert menu.get_option_at_index(0).id == "use-recommended-sites-0"
+        assert menu.get_option_at_index(1).id == "use-recommended-sites-1"
+        assert menu.get_option_at_index(2).id == "custom-sites"
+        menu.focus()
+
+        await pilot.press("down", "enter")
+        await pilot.pause()
+
+        assert app.current_state.confirmed_mutation_sites == [2, 4]
+        assert app.current_state.context.site_proposal.confirmed_sites == [2, 4]
 
 
 @pytest.mark.anyio

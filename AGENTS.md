@@ -317,4 +317,8 @@ aptgent run-job <run_id> <step>
 - 相关测试是否存在，或是否需要补最小验证。
 - 如果涉及新的外部命令调用，是否应先在 adapter 层封装。
 
+## 14. 推送前检查
+
+Before pushing to remote, always review and update CLAUDE.md and AGENTS.md to ensure they reflect the current codebase state (directory layout, entry points, workflow steps, new features, config changes).
+
 如果文档与代码冲突，以代码为准，并在修改代码后同步更新此文件。

@@ -11,11 +11,11 @@ from aptgent.workflow.context import (
 )
 from aptgent.workflow.state import RunState
 from aptgent.llm.client import LLMClient
-from aptgent.tui.widgets.step_handlers import (
-    _format_intake_confirmation,
-    _validate_docking_recommendation_result,
-    _validate_intake_result,
-    _validate_site_proposal_result,
+from aptgent.tui.steps.common import (
+    format_intake_confirmation as _format_intake_confirmation,
+    validate_docking_recommendation_result as _validate_docking_recommendation_result,
+    validate_intake_result as _validate_intake_result,
+    validate_site_proposal_result as _validate_site_proposal_result,
 )
 from aptgent.domain.models import SecondaryStructure, TargetMolecule
 
@@ -62,9 +62,20 @@ def test_validate_intake_result_normalizes_pdb_fields():
 def test_validate_site_proposal_result_filters_invalid_positions():
     result = _validate_site_proposal_result(
         {
-            "proposed_sites": ["2", -1, 99, "bad", 2, 4],
-            "reasoning": "Likely loop positions.",
-            "confidence": "High",
+            "proposals": [
+                {
+                    "label": "Loop-focused",
+                    "proposed_sites": ["2", -1, 99, "bad", 2, 4],
+                    "reasoning": "Likely loop positions.",
+                    "confidence": "High",
+                },
+                {
+                    "label": "Conservative",
+                    "proposed_sites": [1, 1, 3],
+                    "reasoning": "Keeps edits compact.",
+                    "confidence": "medium",
+                },
+            ],
         },
         sequence_length=6,
     )
@@ -72,6 +83,41 @@ def test_validate_site_proposal_result_filters_invalid_positions():
     assert result["proposed_sites"] == [2, 4]
     assert result["reasoning"] == "Likely loop positions."
     assert result["confidence"] == "high"
+    assert result["proposals"] == [
+        {
+            "label": "Loop-focused",
+            "proposed_sites": [2, 4],
+            "reasoning": "Likely loop positions.",
+            "confidence": "high",
+        },
+        {
+            "label": "Conservative",
+            "proposed_sites": [1, 3],
+            "reasoning": "Keeps edits compact.",
+            "confidence": "medium",
+        },
+    ]
+
+
+def test_validate_site_proposal_result_keeps_legacy_single_proposal_shape():
+    result = _validate_site_proposal_result(
+        {
+            "proposed_sites": ["2", 4],
+            "reasoning": "Likely loop positions.",
+            "confidence": "High",
+        },
+        sequence_length=6,
+    )
+
+    assert result["proposed_sites"] == [2, 4]
+    assert result["proposals"] == [
+        {
+            "label": "Recommended plan",
+            "proposed_sites": [2, 4],
+            "reasoning": "Likely loop positions.",
+            "confidence": "high",
+        }
+    ]
 
 
 def test_validate_docking_recommendation_result_uses_fallback_for_invalid_top_k():

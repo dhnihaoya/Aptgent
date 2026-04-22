@@ -7,15 +7,17 @@ version: 1.0.0
 trust_level: advisory
 tags: [sites, mutation, advisory]
 inputs: [sequence, secondary_structure, user_notes]
-outputs: [proposed_sites, reasoning, confidence]
+outputs: [proposals, proposed_sites, reasoning, confidence]
 ---
 
 # Site Proposal Skill
 
-Proposes 0-based mutation-site indices that are likely to tolerate changes
-without destroying the fold. The skill is advisory and never decides the
-final confirmed sites — that decision still belongs to the user through
-the Site Proposal UI.
+Proposes 2-3 alternative plans of 0-based mutation-site indices that are
+likely to tolerate changes without destroying the fold. The skill is
+advisory and never decides the final confirmed sites — that decision still
+belongs to the user through the Site Proposal UI. The first proposal is the
+preferred plan and is mirrored in the legacy `proposed_sites`, `reasoning`,
+and `confidence` fields for compatibility.
 
 In addition to the structured JSON API (`invoke` / `invoke_stream`), the
 skill also supports a `rephrase` mode that converts a free-form user

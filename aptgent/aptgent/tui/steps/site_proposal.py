@@ -18,6 +18,8 @@ from aptgent.workflow.context import (
 
 class SiteProposalHandler(StepHandler):
     def enter(self) -> None:
+        self._site_proposals: list[dict] = []
+        self._proposed_sites: list[int] = []
         state = self.screen.app.current_state
         struct = state.secondary_structure
 
@@ -59,12 +61,15 @@ class SiteProposalHandler(StepHandler):
             self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
             return
 
+        proposals = result.get("proposals", [])
         sites = result.get("proposed_sites", [])
         reasoning = result.get("reasoning", "")
         confidence = result.get("confidence", "")
+        self._site_proposals = proposals
         self._proposed_sites = sites
         record_site_proposal_context(
             state,
+            proposals=proposals,
             proposed_sites=sites,
             reasoning=reasoning,
             confidence=confidence,
@@ -72,17 +77,13 @@ class SiteProposalHandler(StepHandler):
         )
         self.screen.app.save_state()
 
-        if reasoning:
-            self.screen.app.call_from_thread(self.screen.add_system_message, reasoning)
-        msg = f"Suggested sites: {sites}"
-        if confidence:
-            msg += f"\nConfidence: {confidence}"
+        msg = self._format_proposals_message(proposals, sites, reasoning, confidence)
         self.screen.app.call_from_thread(self.screen.add_system_message, msg)
 
-        self.screen.app.call_from_thread(self._show_choice_panel, sites)
+        self.screen.app.call_from_thread(self._show_choice_panel, proposals)
         self.screen.app.call_from_thread(
             self.screen.set_input_placeholder,
-            "Type positions (e.g. 3,7,12) or 'use suggestions'.",
+            "Type positions (e.g. 3,7,12) or choose a recommended plan.",
         )
         self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
 
@@ -112,6 +113,17 @@ class SiteProposalHandler(StepHandler):
         self._confirm_sites(sites)
 
     def handle_action(self, action: str) -> None:
+        if action.startswith("use-recommended-sites-"):
+            try:
+                index = int(action.rsplit("-", 1)[1])
+            except ValueError:
+                index = 0
+            proposals = getattr(self, "_site_proposals", [])
+            if 0 <= index < len(proposals):
+                self._confirm_sites(list(proposals[index].get("proposed_sites", [])))
+            else:
+                self._confirm_sites(getattr(self, "_proposed_sites", []))
+            return
         if action == "use-recommended-sites":
             self._confirm_sites(getattr(self, "_proposed_sites", []))
             return
@@ -134,21 +146,68 @@ class SiteProposalHandler(StepHandler):
         if ns:
             self.screen.advance_to_step(ns)
 
-    def _show_choice_panel(self, sites: list[int]) -> None:
-        panel = ActionMenuPanel(
-            Step.SITE_PROPOSAL,
-            "Choose how to select mutable sites",
-            [
+    @staticmethod
+    def _format_proposals_message(
+        proposals: list[dict],
+        sites: list[int],
+        reasoning: str,
+        confidence: str,
+    ) -> str:
+        if not proposals:
+            msg = f"Suggested sites: {sites}"
+            if reasoning:
+                msg += f"\nReason: {reasoning}"
+            if confidence:
+                msg += f"\nConfidence: {confidence}"
+            return msg
+        lines = ["Suggested mutation-site plans:"]
+        for index, proposal in enumerate(proposals, start=1):
+            label = proposal.get("label") or f"Plan {index}"
+            proposal_sites = proposal.get("proposed_sites", [])
+            proposal_reasoning = proposal.get("reasoning") or "No reason provided."
+            proposal_confidence = proposal.get("confidence") or "unknown"
+            lines.append(
+                f"{index}. {label}: {proposal_sites} "
+                f"({proposal_confidence}) - {proposal_reasoning}"
+            )
+        return "\n".join(lines)
+
+    def _show_choice_panel(self, proposals: list[dict]) -> None:
+        if proposals:
+            choices = [
+                (
+                    f"use-recommended-sites-{index}",
+                    proposal.get("label") or f"Use Plan {index + 1}",
+                    (
+                        f"Accept positions {proposal.get('proposed_sites', [])}. "
+                        f"{proposal.get('reasoning') or ''}"
+                    ).strip(),
+                )
+                for index, proposal in enumerate(proposals)
+            ]
+        else:
+            sites = getattr(self, "_proposed_sites", [])
+            choices = [
                 (
                     "use-recommended-sites",
                     "Use Recommended Sites",
-                    f"Accept the suggested positions immediately: {sites}" if sites else "No sites were suggested; continue with an empty selection.",
-                ),
-                (
-                    "custom-sites",
-                    "Customize Sites",
-                    "Review the full sequence and choose positions yourself.",
-                ),
-            ],
+                    (
+                        f"Accept the suggested positions immediately: {sites}"
+                        if sites
+                        else "No sites were suggested; continue with an empty selection."
+                    ),
+                )
+            ]
+        choices.append(
+            (
+                "custom-sites",
+                "Customize Sites",
+                "Review the full sequence and choose positions yourself.",
+            )
+        )
+        panel = ActionMenuPanel(
+            Step.SITE_PROPOSAL,
+            "Choose how to select mutable sites",
+            choices,
         )
         self.screen.add_structured_widget(panel)

@@ -81,6 +81,7 @@ class TertiaryStructureContext(BaseModel):
 
 
 class SiteProposalContext(BaseModel):
+    proposals: list[dict[str, Any]] = Field(default_factory=list)
     proposed_sites: list[int] = Field(default_factory=list)
     reasoning: Optional[str] = None
     confidence: Optional[str] = None

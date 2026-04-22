@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from aptgent.domain.enums import Step
@@ -14,6 +15,13 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
     """Full enumeration + batch prediction, runs as a detached job."""
 
     JOB_STEP = "candidate_enumeration"
+
+    def __init__(self, screen: Any) -> None:
+        super().__init__(screen)
+        self._progress_done = 0
+        self._progress_total = 0
+        self._hit_count = 0
+        self._best_probability: float | None = None
 
     def enter(self) -> None:
         state = self.screen.app.current_state
@@ -53,18 +61,40 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
         if etype == "progress":
             done = evt.get("done", 0)
             total = evt.get("total", 0)
+            self._progress_done = done
+            self._progress_total = total
             extra = evt.get("extra", {})
-            parts = [f"Progress: {done:,}/{total:,}"]
             binding = extra.get("binding")
             if binding is not None:
-                parts.append(f"Binding: {binding:,}")
-            progress.set_progress(done, " | ".join(parts))
+                self._hit_count = max(self._hit_count, int(binding))
+            progress.set_progress(done, self._progress_info())
         elif etype == "hit":
             prob = evt.get("probability", 0.0)
-            seq_text = evt.get("extra", {}).get("sequence", "?")
-            self.screen.add_system_message(
-                f"Hit: P={prob:.4f} {seq_text[:40]}...", "success-text"
+            self._best_probability = (
+                prob
+                if self._best_probability is None
+                else max(self._best_probability, prob)
             )
+            hit_index = self._hit_index(evt)
+            if hit_index is None:
+                self._hit_count += 1
+            else:
+                self._hit_count = max(self._hit_count, hit_index)
+            progress.set_progress(self._progress_done, self._progress_info())
+
+    def _progress_info(self) -> str:
+        parts = [f"Progress: {self._progress_done:,}/{self._progress_total:,}"]
+        parts.append(f"Hits: {self._hit_count:,}")
+        if self._best_probability is not None:
+            parts.append(f"Best P: {self._best_probability:.4f}")
+        return " | ".join(parts)
+
+    def _hit_index(self, evt: dict) -> int | None:
+        candidate_id = str(evt.get("candidate_id", ""))
+        match = re.fullmatch(r"hit_(\d+)", candidate_id)
+        if match:
+            return int(match.group(1))
+        return None
 
     def _on_job_done(self, summary: dict, progress: ProgressBubble) -> None:
         # Reload state (the job runner saves it)

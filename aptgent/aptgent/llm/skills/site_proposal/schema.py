@@ -11,9 +11,19 @@ class SiteProposalInput(BaseModel):
     user_notes: str | None = None
 
 
+class SiteProposalPlan(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    label: str = ""
+    proposed_sites: list[int] = Field(default_factory=list)
+    reasoning: str = ""
+    confidence: str = "unknown"
+
+
 class SiteProposalOutput(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    proposals: list[SiteProposalPlan] = Field(default_factory=list)
     proposed_sites: list[int] = Field(default_factory=list)
     reasoning: str = ""
     confidence: str = "unknown"
