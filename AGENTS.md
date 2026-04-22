@@ -127,7 +127,7 @@ LLM 输出是辅助信息，不应覆盖确定性计算结果。涉及评分、�
 
 - `intake`：自然语言输入解析，提取序列、靶标分子、修饰区域、类似物列表和时间预算等字段。
 - `pdb_review`：PDB 结构语义审查，7 类分类 + 靶标匹配 + 置信度。输出用于 review gate 机制（不合适的 PDB 会暂停流程等待用户确认）。
-- `site_proposal`：突变位点提议（含 rephrase 能力），基于二级结构 loop/stem 分析给出位点建议和推理。
+- `site_proposal`：突变位点提议（含 rephrase 能力），基于二级结构 loop/stem 分析给出 2-3 个备选 mutation 方案，每个方案包含独立的位点、推理和置信度；首选方案会镜像到 legacy 字段保持兼容。
 - `analog_suggestion`：结构类似物建议，用于特异性过滤步骤，LLM 推荐靶标的类似物供交叉预测。
 - `docking_planner`：对接参数建议（advisory 级别），LLM 可建议 `top_k`、`grid_size`、`exhaustiveness`，但所有数值经 `validate_docking_recommendation_result()` 钳位后才生效。
 - `report`：最终报告生成，LLM 辅助撰写结论性报告摘要。
@@ -247,19 +247,32 @@ aptgent run-job <run_id> <step>
 当前测试位于 `aptgent/tests/`：
 
 - `test_workflow_engine.py`：workflow 状态机流转测试
+- `test_workflow.py`：workflow 辅助逻辑测试
 - `test_persistence.py`：持久化层测试
 - `test_skills.py`：LLM skill 注册与基础行为测试
 - `test_llm_client_retry.py`：LLM 客户端重试逻辑测试
+- `test_llm_handling.py`：LLM 输出校验与 context 构建测试
 - `test_mutation_batch.py`：mutation-batch 加速路径测试
+- `test_mutation_acceleration.py`：mutation 加速管线端到端测试
 - `test_feature_matrix.py`：特征矩阵计算测试
+- `test_predictor_adapter.py`：预测器 adapter 测试
 - `test_detached_worker.py`：可分离后台任务测试
+- `test_tui.py`：TUI step handler 行为测试
+- `test_tui_markdown_theme.py`：chat markdown 主题测试
+- `test_enumeration_ui.py`：枚举步骤 UI 测试
+- `test_pdb_analysis.py`：PDB 分析 adapter 测试
+- `test_spatial_rank.py`：空间排序测试
 
 修改以下内容后，至少应重新检查对应测试：
 
 - workflow step / 状态流转 → `test_workflow_engine.py`、`test_persistence.py`
-- LLM skill 行为 → `test_skills.py`、`test_llm_client_retry.py`
-- predictor / 特征提取 → `test_mutation_batch.py`、`test_feature_matrix.py`
+- LLM skill 行为 / 输出校验 → `test_skills.py`、`test_llm_client_retry.py`、`test_llm_handling.py`
+- predictor / 特征提取 → `test_mutation_batch.py`、`test_mutation_acceleration.py`、`test_feature_matrix.py`、`test_predictor_adapter.py`
+- TUI step handler / UI → `test_tui.py`、`test_enumeration_ui.py`、`test_tui_markdown_theme.py`
+- PDB / 结构分析 → `test_pdb_analysis.py`
+- 空间排序 → `test_spatial_rank.py`
 - detached job 系统 → `test_detached_worker.py`
+- workflow 辅助逻辑 → `test_workflow.py`
 
 ## 10. 推荐修改策略
 

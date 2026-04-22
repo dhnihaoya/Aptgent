@@ -115,7 +115,7 @@ Supported detached job steps are:
 2. Describe the aptamer, target, optional analogs, modification region, and time budget.
 3. If a PDB ID is provided, intake enters an internal PDB branch that downloads and analyzes the structure, asks for chain or ligand confirmation when needed, and uses the `pdb_review` LLM skill as a review gate.
 4. RNAfold predicts the secondary structure.
-5. The LLM proposes mutation sites based on structural context. The user confirms or edits those sites.
+5. The LLM proposes 2–3 alternative mutation-site plans based on structural context. The user picks one, or enters custom sites.
 6. Candidate enumeration scores the mutation space. The accelerated path uses `predict_mutation_batch()` when available and writes positives-only hits to `scored_candidates.jsonl`.
 7. Specificity filtering checks candidates against target analogs.
 8. Docking selection proposes docking parameters. Values are clamped before use.
@@ -293,7 +293,7 @@ Targeted tests by area:
 - Workflow and persistence: `tests/test_workflow_engine.py`, `tests/test_workflow.py`, `tests/test_persistence.py`
 - LLM client and skills: `tests/test_llm_client_retry.py`, `tests/test_llm_handling.py`, `tests/test_skills.py`
 - Predictor and mutation acceleration: `tests/test_predictor_adapter.py`, `tests/test_mutation_batch.py`, `tests/test_mutation_acceleration.py`, `tests/test_feature_matrix.py`
-- TUI behavior: `tests/test_tui.py`
+- TUI behavior: `tests/test_tui.py`, `tests/test_tui_markdown_theme.py`, `tests/test_enumeration_ui.py`
 - PDB analysis: `tests/test_pdb_analysis.py`
 - Spatial ranking: `tests/test_spatial_rank.py`
 - Detached jobs: `tests/test_detached_worker.py`
