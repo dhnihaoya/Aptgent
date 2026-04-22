@@ -4,6 +4,8 @@ import logging
 import re
 
 from rich.markdown import Markdown
+from rich.style import Style as RichStyle
+from rich.theme import Theme as RichTheme
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
@@ -29,6 +31,9 @@ _DEFAULT_THEME_VARIABLES = {
     "chat-activity-frame-bright": "#d7deea",
     "chat-activity-frame-hot": "#f1c15b",
     "chat-activity-final-icon": "#f1c15b",
+    "chat-progress-fill": "#78b7f2",
+    "chat-code-background": "#1a2332",
+    "chat-code-foreground": "#e6edf7",
 }
 
 
@@ -79,6 +84,39 @@ def _normalize_markdown_for_chat(text: str) -> str:
     return "\n".join(normalized_lines)
 
 
+class _ThemedMarkdown:
+    """Wraps ``rich.markdown.Markdown`` to override ``markdown.code``
+    and ``markdown.code_inline`` styles at render time so that inline
+    code blocks adapt to the active Textual theme."""
+
+    def __init__(self, md: Markdown, *, code_bg: str, code_fg: str) -> None:
+        self._md = md
+        self._code_bg = code_bg
+        self._code_fg = code_fg
+
+    def __rich_console__(self, console, options):
+        code_style = RichStyle(bgcolor=self._code_bg, color=self._code_fg, bold=True)
+        console.push_theme(RichTheme({
+            "markdown.code": code_style,
+            "markdown.code_inline": code_style,
+        }))
+        try:
+            yield from self._md.__rich_console__(console, options)
+        finally:
+            console.pop_theme()
+
+    def __rich_measure__(self, console, options):
+        return self._md.__rich_measure__(console, options)
+
+
+def _themed_markdown(widget: Static, text: str) -> _ThemedMarkdown:
+    """Build a ``Markdown`` renderable styled to match the active theme."""
+    code_bg = _theme_variable(widget, "chat-code-background")
+    code_fg = _theme_variable(widget, "chat-code-foreground")
+    md = Markdown(_normalize_markdown_for_chat(text or " "))
+    return _ThemedMarkdown(md, code_bg=code_bg, code_fg=code_fg)
+
+
 class _BaseBubble(Static):
     """Shared styling for chat bubbles."""
 
@@ -101,7 +139,7 @@ class _BaseBubble(Static):
     def set_content(self, text: str) -> None:
         self._text = text
         if self._markdown:
-            super().update(Markdown(_normalize_markdown_for_chat(text or " ")))
+            super().update(_themed_markdown(self, text))
         else:
             super().update(text)
 
@@ -150,7 +188,7 @@ class StreamingBubble(Static):
 
     def finalize(self) -> None:
         if self._markdown:
-            self.update(Markdown(_normalize_markdown_for_chat(self._buffer or " ")))
+            self.update(_themed_markdown(self, self._buffer))
         else:
             self.update(self._buffer)
 
@@ -309,9 +347,10 @@ class ProgressBubble(Static):
         bar_width = 30
         filled = int(bar_width * self._current / self._total)
         bar = "█" * filled + "░" * (bar_width - filled)
+        fill_color = _theme_variable(self, "chat-progress-fill")
         text = (
             f"{self._label}\n"
-            f"[bold cyan]{bar}[/bold cyan] {pct:.1f}%  ({self._current:,}/{self._total:,})"
+            f"[bold {fill_color}]{bar}[/] {pct:.1f}%  ({self._current:,}/{self._total:,})"
         )
         if self._info:
             text += f"\n{self._info}"
@@ -339,15 +378,6 @@ class StepDivider(Static):
 
 class ActivityBubble(Static):
     """A breathing status bubble that stays at the end of the chat log."""
-
-    _FRAMES = [
-        ("#6b7280", False, "·"),
-        ("#9ca3af", False, "•"),
-        ("#d1d5db", False, "•"),
-        ("#facc15", True, "✦"),
-        ("#d1d5db", False, "•"),
-        ("#9ca3af", False, "•"),
-    ]
 
     DEFAULT_CSS = """
     ActivityBubble {

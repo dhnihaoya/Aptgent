@@ -46,6 +46,8 @@ _THEME_VARIABLE_DEFAULTS = {
     "chat-activity-frame-bright": "#D7DEEA",
     "chat-activity-frame-hot": "#F1C15B",
     "chat-activity-final-icon": "#F1C15B",
+    "chat-thinking-label": "#A9BAD1",
+    "chat-progress-fill": "#78B7F2",
     "chat-progress-background": "#0D131B",
     "chat-progress-foreground": "#9AACBF",
     "chat-progress-border": "#254A72",
@@ -53,6 +55,8 @@ _THEME_VARIABLE_DEFAULTS = {
     "chat-status-foreground": "#8B9EB0",
     "chat-status-border": "#1A314A",
     "chat-divider-color": "#84BCF3",
+    "chat-code-background": "#1A2332",
+    "chat-code-foreground": "#E6EDF7",
 }
 
 
@@ -128,8 +132,8 @@ CLEAN_MINIMAL_LIGHT_THEME = _build_theme(
         "chat-stream-foreground": "#24303C",
         "chat-stream-accent": "#5F90C3",
         "chat-tool-background": "#EDF2F6",
-        "chat-tool-foreground": "#4A5A6B",
-        "chat-tool-accent": "#7A8FA3",
+        "chat-tool-foreground": "#374856",
+        "chat-tool-accent": "#5F7A90",
         "chat-user-background": "#EAF2FA",
         "chat-user-foreground": "#203040",
         "chat-user-accent": "#5F90C3",
@@ -149,6 +153,8 @@ CLEAN_MINIMAL_LIGHT_THEME = _build_theme(
         "chat-activity-frame-bright": "#E8DBBA",
         "chat-activity-frame-hot": "#C58A1F",
         "chat-activity-final-icon": "#C58A1F",
+        "chat-thinking-label": "#5A6A7D",
+        "chat-progress-fill": "#3F78AF",
         "chat-progress-background": "#E8EEF4",
         "chat-progress-foreground": "#486276",
         "chat-progress-border": "#B4C7D8",
@@ -156,6 +162,8 @@ CLEAN_MINIMAL_LIGHT_THEME = _build_theme(
         "chat-status-foreground": "#5C6E80",
         "chat-status-border": "#C8D6E3",
         "chat-divider-color": "#3F78AF",
+        "chat-code-background": "#E0E8F0",
+        "chat-code-foreground": "#1E2935",
     },
 )
 
@@ -203,6 +211,8 @@ WARM_INDUSTRIAL_THEME = _build_theme(
         "chat-activity-frame-bright": "#E0CEB5",
         "chat-activity-frame-hot": "#E0B56A",
         "chat-activity-final-icon": "#E0B56A",
+        "chat-thinking-label": "#D8C0A2",
+        "chat-progress-fill": "#5EA5A3",
         "chat-progress-background": "#1B1511",
         "chat-progress-foreground": "#BCA898",
         "chat-progress-border": "#4A3A2D",
@@ -210,6 +220,8 @@ WARM_INDUSTRIAL_THEME = _build_theme(
         "chat-status-foreground": "#AD9988",
         "chat-status-border": "#3B2C23",
         "chat-divider-color": "#D2A15B",
+        "chat-code-background": "#2F231A",
+        "chat-code-foreground": "#F0E6DB",
     },
 )
 
