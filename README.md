@@ -181,21 +181,22 @@ By default, `predictor.model_dir` resolves to bundled models in `aptgent/aptgent
 
 ### `llm.toml`
 
-The default provider is OpenAI-compatible and points at Moonshot Kimi:
+The default provider is OpenAI-compatible and points at Zhipu GLM:
 
 ```toml
 [provider.openai]
-base_url = "https://api.moonshot.cn/v1"
-model = "kimi-k2.5"
-api_key_env = "KIMI_API_KEY"
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+model = "glm-5.1"
+fast_model = "glm-4.7-flashx"
+api_key_env = "GLM_API_KEY"
 temperature = 1
-max_tokens = 4096
+max_tokens = 65536
 ```
 
-`LLMClient` resolves the API key as environment variable first, then config-file fallback. Prefer environment variables:
+`LLMClient` uses `glm-5.1` (flagship) for text output and `glm-4.7-flashx` (fast) for structured JSON calls. It resolves the API key as environment variable first, then config-file fallback. Prefer environment variables:
 
 ```bash
-export KIMI_API_KEY=...
+export GLM_API_KEY=...
 ```
 
 Security note: do not commit real API keys. If this checkout contains a populated fallback key in `llm.toml`, rotate it and replace it with an empty placeholder.
@@ -319,7 +320,7 @@ Common issues:
 - `RNAfold` missing: install/update the conda environment or set `APTGENT_RNAFOLD`.
 - `vina` missing: install/update the conda environment or set `APTGENT_VINA`.
 - Predictor dependencies missing: use `environment.yml` or install the `predictor` optional dependencies plus RDKit.
-- LLM key missing: set `KIMI_API_KEY`.
+- LLM key missing: set `GLM_API_KEY`.
 - Runs appear missing: check the current working directory and `APTGENT_RUNS_DIR`.
 - Detached job cannot reattach: inspect `runs/<run_id>/jobs/<step>/events.jsonl`, `pid`, and `logs/job_<step>.log`.
 

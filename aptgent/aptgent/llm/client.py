@@ -38,7 +38,7 @@ class LLMClient:
             config_path = Path(__file__).parent.parent / "config" / "llm.toml"
         self.config = self._load_config(config_path)
         # Priority: env var > config file fallback
-        api_key_env = self.config.get("api_key_env", "KIMI_API_KEY")
+        api_key_env = self.config.get("api_key_env", "GLM_API_KEY")
         config_fallback = self.config.get("api_key", "")
         self.api_key = os.environ.get(api_key_env, "") or config_fallback
         if not self.api_key:
@@ -50,6 +50,7 @@ class LLMClient:
             )
         self.base_url = self.config["base_url"]
         self.model = self.config["model"]
+        self.fast_model = self.config.get("fast_model", self.model)
         self.temperature = self.config.get("temperature", 0.2)
         self.json_temperature = self.config.get("json_temperature", 0.2)
         self.max_tokens = self.config.get("max_tokens", 4096)
@@ -98,8 +99,9 @@ class LLMClient:
         except Exception:
             _log.debug("Failed to write LLM log entry", exc_info=True)
 
-    def _uses_kimi_k25(self) -> bool:
-        return self.model.startswith("kimi-k2.5")
+    def _supports_thinking(self, model: str | None = None) -> bool:
+        m = model or self.model
+        return m.startswith("glm-") or m.startswith("kimi-")
 
     def _load_config(self, path: Path) -> dict[str, Any]:
         import tomli
@@ -148,18 +150,18 @@ class LLMClient:
         stream: bool = False,
         response_format: dict[str, Any] | None = None,
         enable_thinking: bool | None = None,
+        model: str | None = None,
     ) -> dict[str, Any]:
+        use_model = model or self.model
         payload: dict[str, Any] = {
-            "model": self.model,
+            "model": use_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             "max_tokens": self.max_tokens,
         }
-        # Kimi K2.5 rejects arbitrary temperature values; omit the field and use
-        # the provider default instead of sending a value that triggers HTTP 400.
-        if temperature is not None and not self._uses_kimi_k25():
+        if temperature is not None:
             payload["temperature"] = temperature
         if enable_thinking is None:
             thinking_enabled = (
@@ -167,7 +169,7 @@ class LLMClient:
             )
         else:
             thinking_enabled = enable_thinking
-        if self._uses_kimi_k25() and thinking_enabled:
+        if self._supports_thinking(use_model) and thinking_enabled:
             payload["thinking"] = {"type": "enabled"}
         if stream:
             payload["stream"] = True
@@ -244,6 +246,7 @@ class LLMClient:
                         stream=True,
                         response_format={"type": "json_object"},
                         enable_thinking=False,
+                        model=self.fast_model,
                     ),
                     timeout=timeout,
                 ) as resp:
@@ -305,6 +308,7 @@ class LLMClient:
                             stream=True,
                             response_format={"type": "json_object"},
                             enable_thinking=False,
+                            model=self.fast_model,
                         ),
                         timeout=timeout,
                     ) as resp:

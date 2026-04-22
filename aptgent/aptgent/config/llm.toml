@@ -1,8 +1,9 @@
 [provider.openai]
-base_url = "https://api.moonshot.cn/v1"
-model = "kimi-k2.5"
-# Fallback API key (used when KIMI_API_KEY env var is not set).
-api_key = "sk-3PfdAWe9dEjoNBqGtoo9MgImNyBfQC0IkKBdS5V5unk6u6WZ"
-api_key_env = "KIMI_API_KEY"
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+model = "glm-5.1"
+fast_model = "glm-4.7-flashx"
+# Fallback API key (used when GLM_API_KEY env var is not set).
+api_key = "465afa7b084140fb814ea657b37805fe.9MLoVE4fJBkl1PUr"
+api_key_env = "GLM_API_KEY"
 temperature = 1
-max_tokens = 4096
+max_tokens = 65536

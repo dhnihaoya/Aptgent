@@ -37,7 +37,7 @@ runs/
 docs/
 
 # Local scratch / export notes
-kimi-export-*.md
+glm-export-*.md
 plan
 *.jpg
 *.png

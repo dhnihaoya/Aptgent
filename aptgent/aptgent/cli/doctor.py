@@ -86,7 +86,7 @@ def _check_predictor(model_dir: str | None) -> dict[str, Any]:
 
 def _check_llm(llm_config: dict[str, Any]) -> dict[str, Any]:
     provider_cfg = llm_config.get("provider", {}).get("openai", {})
-    api_key_env = provider_cfg.get("api_key_env", "KIMI_API_KEY")
+    api_key_env = provider_cfg.get("api_key_env", "GLM_API_KEY")
     has_key = bool(os.environ.get(api_key_env) or provider_cfg.get("api_key"))
     return {
         "provider": llm_config.get("default_provider", "openai"),

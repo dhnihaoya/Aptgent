@@ -146,14 +146,15 @@ def test_validate_docking_recommendation_result_uses_fallback_for_invalid_top_k(
     assert "resources" in result["reason"].lower()
 
 
-def test_kimi_k25_payload_omits_temperature_and_keeps_thinking_by_default(tmp_path):
+def test_glm_payload_includes_temperature_and_thinking_by_default(tmp_path):
     config_path = tmp_path / "llm.toml"
     config_path.write_text(
         "\n".join(
             [
                 "[provider.openai]",
-                'base_url = "https://api.moonshot.cn/v1"',
-                'model = "kimi-k2.5"',
+                'base_url = "https://open.bigmodel.cn/api/paas/v4"',
+                'model = "glm-5.1"',
+                'fast_model = "glm-4.7-flashx"',
                 'api_key = "test-key"',
                 "temperature = 1",
             ]
@@ -166,21 +167,49 @@ def test_kimi_k25_payload_omits_temperature_and_keeps_thinking_by_default(tmp_pa
         "system",
         "user",
         temperature=0.2,
-        response_format={"type": "json_object"},
     )
 
-    assert "temperature" not in payload
-    assert "thinking" not in payload
+    assert payload["temperature"] == 0.2
+    assert payload["thinking"] == {"type": "enabled"}
+    assert payload["model"] == "glm-5.1"
 
 
-def test_without_thinking_context_disables_kimi_thinking(tmp_path):
+def test_json_payload_uses_fast_model(tmp_path):
     config_path = tmp_path / "llm.toml"
     config_path.write_text(
         "\n".join(
             [
                 "[provider.openai]",
-                'base_url = "https://api.moonshot.cn/v1"',
-                'model = "kimi-k2.5"',
+                'base_url = "https://open.bigmodel.cn/api/paas/v4"',
+                'model = "glm-5.1"',
+                'fast_model = "glm-4.7-flashx"',
+                'api_key = "test-key"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    client = LLMClient(config_path=config_path)
+    payload = client._payload(
+        "system",
+        "user",
+        temperature=0.2,
+        response_format={"type": "json_object"},
+        model=client.fast_model,
+    )
+
+    assert payload["model"] == "glm-4.7-flashx"
+    assert "thinking" not in payload
+
+
+def test_without_thinking_context_disables_thinking(tmp_path):
+    config_path = tmp_path / "llm.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[provider.openai]",
+                'base_url = "https://open.bigmodel.cn/api/paas/v4"',
+                'model = "glm-5.1"',
                 'api_key = "test-key"',
             ]
         ),
@@ -213,8 +242,8 @@ def test_iter_sse_events_emits_reasoning_before_content(tmp_path):
         "\n".join(
             [
                 "[provider.openai]",
-                'base_url = "https://api.moonshot.cn/v1"',
-                'model = "kimi-k2.5"',
+                'base_url = "https://open.bigmodel.cn/api/paas/v4"',
+                'model = "glm-5.1"',
                 'api_key = "test-key"',
             ]
         ),
