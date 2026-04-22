@@ -9,6 +9,7 @@ from aptgent.tui.steps.common import (
     validate_site_proposal_result,
 )
 from aptgent.tui.steps.empty_candidates import clear_site_selection_retry_feedback
+from aptgent.tui.steps.state_reset import reset_after_site_selection
 from aptgent.tui.widgets.structured_input import ActionMenuPanel, MutationSitePanel
 from aptgent.workflow.context import (
     build_site_proposal_llm_context,
@@ -162,7 +163,9 @@ class SiteProposalHandler(StepHandler):
             confidence,
             region_assessment=region_assessment,
         )
-        self.screen.app.call_from_thread(self.screen.add_system_message, msg)
+        self.screen.app.call_from_thread(
+            lambda: self.screen.add_system_message(msg, markdown=True)
+        )
 
         self.screen.app.call_from_thread(self._show_choice_panel, proposals)
         self.screen.app.call_from_thread(
@@ -245,11 +248,15 @@ class SiteProposalHandler(StepHandler):
     ) -> None:
         state = self.screen.app.current_state
         state.confirmed_mutation_sites = sites
-        state.candidates = []
-        state.predictions = []
         context = state.context.site_proposal
         context.selection_source = source
         context.selected_proposal_index = proposal_index
+        try:
+            reset_after_site_selection(state, self.screen.app.persistence)
+        except RuntimeError as exc:
+            self.screen.add_system_message(str(exc), "error-text")
+            self.screen.set_input_enabled(True)
+            return
         clear_site_selection_retry_feedback(state)
         record_site_proposal_context(state, confirmed_sites=sites)
         self.screen.app.save_state()
@@ -370,7 +377,7 @@ class SiteProposalHandler(StepHandler):
             context.confidence or "",
             region_assessment=list(context.extra_context.get("region_assessment") or []),
         )
-        self.screen.add_system_message(msg)
+        self.screen.add_system_message(msg, markdown=True)
         self._show_choice_panel(self._site_proposals)
         self.screen.set_input_placeholder(
             "Type positions (e.g. 3,7,12) or choose a recommended plan."

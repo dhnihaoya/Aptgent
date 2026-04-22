@@ -258,10 +258,9 @@ aptgent run-job <run_id> <step>
 - `test_llm_result_validation.py`：LLM 输出校验与展示格式测试
 - `test_workflow_context_helpers.py`：workflow context 构建与记录辅助测试
 - `test_predictor_adapter_mutation_protocol.py`：mutation-batch 子进程行式 JSON 协议测试
-- `test_predictor_adapter_mutation_search.py`：adapter mutation search 结果重建测试
 - `test_predictor_feature_matrix_batch.py`：批量特征矩阵测试
 - `test_predictor_mutation_batch_runtime.py`：predictor runtime mutation-batch 规则测试
-- `test_tui_enumeration_acceleration.py`：TUI enumeration 加速路径测试
+- `test_tui_enumeration_acceleration.py`：TUI enumeration detached mutation-batch job 启动测试
 - `test_feature_matrix.py`：特征矩阵计算测试
 - `test_predictor_adapter.py`：预测器 adapter 测试
 - `test_jobs_events.py`、`test_jobs_persistence_paths.py`、`test_jobs_pid.py`、`test_jobs_runner_cli.py`：jobs 层事件、路径、PID 与 CLI 测试
@@ -276,7 +275,7 @@ aptgent run-job <run_id> <step>
 
 - workflow step / 状态流转 → `test_workflow_engine.py`、`test_persistence.py`
 - LLM skill 行为 / 输出校验 → `test_skills.py`、`test_llm_client_retry.py`、`test_llm_client_payloads.py`、`test_llm_result_validation.py`、`test_workflow_context_helpers.py`
-- predictor / 特征提取 → `test_predictor_adapter_mutation_protocol.py`、`test_predictor_adapter_mutation_search.py`、`test_predictor_feature_matrix_batch.py`、`test_predictor_mutation_batch_runtime.py`、`test_tui_enumeration_acceleration.py`、`test_feature_matrix.py`、`test_predictor_adapter.py`
+- predictor / 特征提取 → `test_predictor_adapter_mutation_protocol.py`、`test_predictor_feature_matrix_batch.py`、`test_predictor_mutation_batch_runtime.py`、`test_tui_enumeration_acceleration.py`、`test_feature_matrix.py`、`test_predictor_adapter.py`
 - TUI step handler / UI → `test_tui_*.py`、`test_enumeration_ui.py`、`test_tui_markdown_theme.py`
 - PDB / 结构分析 → `test_pdb_analysis.py`
 - 空间排序 → `test_spatial_rank.py`

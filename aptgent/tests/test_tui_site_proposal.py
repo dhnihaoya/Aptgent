@@ -3,7 +3,18 @@ from __future__ import annotations
 import pytest
 
 from aptgent.domain.enums import Step
-from aptgent.domain.models import SecondaryStructure
+from aptgent.domain.models import (
+    CandidateSequence,
+    DockingPlan,
+    DockingResult,
+    FinalRecommendation,
+    PredictionResult,
+    SecondaryStructure,
+    SpatialRankResult,
+    SpecificityResult,
+)
+from aptgent.jobs.events import EventWriter
+from aptgent.tui.steps.job_mixin import is_job_done
 from aptgent.tui.steps.site_proposal import SiteProposalHandler
 from aptgent.tui.widgets.structured_input import ActionMenuPanel, MutationSitePanel
 from textual.widgets import Button, OptionList
@@ -23,12 +34,14 @@ def test_site_proposal_reuses_saved_choices_without_llm(tmp_path, monkeypatch):
         def __init__(self, app):
             self.app = app
             self.messages: list[str] = []
+            self.message_kwargs: list[dict] = []
             self.widgets: list[object] = []
             self.placeholders: list[str] = []
             self.input_enabled: list[bool] = []
 
-        def add_system_message(self, text: str, *_args, **_kwargs):
+        def add_system_message(self, text: str, *_args, **kwargs):
             self.messages.append(text)
+            self.message_kwargs.append(kwargs)
 
         def add_structured_widget(self, widget):
             self.widgets.append(widget)
@@ -71,6 +84,12 @@ def test_site_proposal_reuses_saved_choices_without_llm(tmp_path, monkeypatch):
 
     assert calls == 0
     assert any("No binding candidates were found" in msg for msg in screen.messages)
+    proposal_index = next(
+        index
+        for index, msg in enumerate(screen.messages)
+        if "Suggested mutation-site plans" in msg
+    )
+    assert screen.message_kwargs[proposal_index]["markdown"] is True
     assert any(isinstance(widget, ActionMenuPanel) for widget in screen.widgets)
     assert screen.input_enabled[-1] is True
 def test_site_proposal_regeneration_replaces_only_third_plan(tmp_path, monkeypatch):
@@ -141,13 +160,15 @@ def test_site_proposal_regeneration_replaces_only_third_plan(tmp_path, monkeypat
         def __init__(self, state):
             self.app = FakeApp(state)
             self.messages: list[str] = []
+            self.message_kwargs: list[dict] = []
             self.widgets: list[object] = []
 
         def update_activity(self, _text: str):
             pass
 
-        def add_system_message(self, text: str, *_args, **_kwargs):
+        def add_system_message(self, text: str, *_args, **kwargs):
             self.messages.append(text)
+            self.message_kwargs.append(kwargs)
 
         def add_structured_widget(self, widget):
             self.widgets.append(widget)
@@ -206,9 +227,112 @@ def test_site_proposal_regeneration_replaces_only_third_plan(tmp_path, monkeypat
     ]
     assert propose_from_context_called is False
     assert "Region assessment" in "\n".join(screen.messages)
+    proposal_index = next(
+        index
+        for index, msg in enumerate(screen.messages)
+        if "Suggested mutation-site plans" in msg
+    )
+    assert screen.message_kwargs[proposal_index]["markdown"] is True
     assert captured_context["extra_context"]["site_selection_feedback"]["message"] == (
         "No binding candidates were found."
     )
+
+
+def test_site_confirmation_invalidates_stale_enumeration_job_and_downstream_state(tmp_path):
+    app = make_app(tmp_path)
+    state = app.engine.create_run("site_retry_confirm_case")
+    state.current_step = Step.SITE_PROPOSAL
+    state.confirmed_mutation_sites = [1, 3]
+    state.candidates = [CandidateSequence(sequence="ACGTTC", candidate_id="cand_0")]
+    state.predictions = [
+        PredictionResult(
+            candidate_id="cand_0",
+            model_name="ensemble",
+            target="C",
+            score=0.0,
+            label=0,
+        )
+    ]
+    state.specificity_results = [SpecificityResult(candidate_id="cand_0", status="kept")]
+    state.docking_plan = DockingPlan(recommended_top_k=1)
+    state.docking_results = [
+        DockingResult(candidate_id="cand_0", docking_score=-7.1, status="completed")
+    ]
+    state.spatial_ranks = [SpatialRankResult(candidate_id="cand_0", spatial_score=1.0)]
+    state.recommendations = [
+        FinalRecommendation(candidate_id="cand_0", primary_score=0.9, final_priority=1)
+    ]
+    state.context.site_proposal.selection_source = "llm"
+    state.context.site_proposal.selected_proposal_index = 0
+    state.context.site_proposal.needs_regeneration = True
+    state.context.site_proposal.regeneration_reason = "No binding candidates were found."
+    state.context.site_proposal.preserve_proposal_indexes = [2]
+    state.context.specificity_recommendation.phase = "complete"
+    state.context.docking_recommendation.phase = "accepted"
+    app.persistence.save(state)
+    app.set_run_id("site_retry_confirm_case")
+
+    app.persistence.ensure_job_dir(state.run_id, "candidate_enumeration")
+    enum_events = app.persistence.job_events_file(state.run_id, "candidate_enumeration")
+    writer = EventWriter(enum_events)
+    writer.write_done(summary={"total": 16, "hits": 0, "kept": 0})
+    writer.close()
+    assert is_job_done(app.persistence, state.run_id, "candidate_enumeration") is True
+
+    results_path = app.persistence.run_dir(state.run_id) / "artifacts" / "scored_candidates.jsonl"
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    results_path.write_text('{"meta":{"sites":[1,3]}}\n', encoding="utf-8")
+
+    app.persistence.ensure_job_dir(state.run_id, "docking_run")
+    docking_events = app.persistence.job_events_file(state.run_id, "docking_run")
+    docking_writer = EventWriter(docking_events)
+    docking_writer.write_done(summary={"total": 1, "completed": 1})
+    docking_writer.close()
+    docking_output = app.persistence.run_dir(state.run_id) / "docking" / "cand_0_out.pdbqt"
+    docking_output.parent.mkdir(parents=True, exist_ok=True)
+    docking_output.write_text("REMARK VINA RESULT: -7.1 0 0\n", encoding="utf-8")
+
+    class FakeScreen:
+        def __init__(self, app):
+            self.app = app
+            self.messages: list[str] = []
+            self.advanced_steps: list[Step] = []
+
+        def add_system_message(self, text: str, *_args, **_kwargs):
+            self.messages.append(text)
+
+        def advance_to_step(self, step: Step):
+            self.advanced_steps.append(step)
+
+    screen = FakeScreen(app)
+
+    SiteProposalHandler(screen)._confirm_sites([2, 5], source="llm", proposal_index=2)
+
+    context = app.current_state.context.site_proposal
+    assert app.current_state.confirmed_mutation_sites == [2, 5]
+    assert context.confirmed_sites == [2, 5]
+    assert context.selection_source == "llm"
+    assert context.selected_proposal_index == 2
+    assert context.needs_regeneration is False
+    assert context.regeneration_reason is None
+    assert context.preserve_proposal_indexes == []
+    assert app.current_state.candidates == []
+    assert app.current_state.predictions == []
+    assert app.current_state.specificity_results == []
+    assert app.current_state.docking_plan is None
+    assert app.current_state.docking_results == []
+    assert app.current_state.spatial_ranks == []
+    assert app.current_state.recommendations == []
+    assert app.current_state.context.specificity_recommendation.phase == "initial"
+    assert app.current_state.context.docking_recommendation.phase == "initial"
+    assert is_job_done(app.persistence, state.run_id, "candidate_enumeration") is False
+    assert not enum_events.exists()
+    assert not results_path.exists()
+    assert not docking_events.exists()
+    assert not docking_output.parent.exists()
+    assert screen.advanced_steps == [Step.CANDIDATE_ENUMERATION]
+
+
 @pytest.mark.anyio
 async def test_site_proposal_uses_choice_panel_before_custom_selector(tmp_path, monkeypatch):
     seen_context = {}

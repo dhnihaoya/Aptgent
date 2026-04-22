@@ -7,7 +7,9 @@ from aptgent.predictor_runtime.predictor import EnsemblePredictor
 
 
 class ThresholdModel:
-    def __init__(self, feature_index: int, threshold: float, hit_probability: float) -> None:
+    def __init__(
+        self, feature_index: int, threshold: float, hit_probability: float
+    ) -> None:
         self.feature_index = feature_index
         self.threshold = threshold
         self.hit_probability = hit_probability
@@ -21,7 +23,11 @@ class ThresholdModel:
             self.hit_probability if pred else 1.0 - self.hit_probability
             for pred in preds
         ]
-        return runtime_features.np.column_stack([1.0 - runtime_features.np.array(probs), probs])
+        return runtime_features.np.column_stack(
+            [1.0 - runtime_features.np.array(probs), probs]
+        )
+
+
 def test_predict_mutation_batch_filters_to_strict_ensemble_hits(monkeypatch):
     monkeypatch.setattr(
         runtime_features,
@@ -30,9 +36,18 @@ def test_predict_mutation_batch_filters_to_strict_ensemble_hits(monkeypatch):
     )
 
     predictor = object.__new__(EnsemblePredictor)
+    predictor._device = "cpu"
     predictor.models = [
-        (ThresholdModel(feature_index=0, threshold=0.5, hit_probability=0.8), "1mer", "model_a"),
-        (ThresholdModel(feature_index=2, threshold=0.5, hit_probability=0.9), "1mer", "model_b"),
+        (
+            ThresholdModel(feature_index=0, threshold=0.5, hit_probability=0.8),
+            "1mer",
+            "model_a",
+        ),
+        (
+            ThresholdModel(feature_index=2, threshold=0.5, hit_probability=0.9),
+            "1mer",
+            "model_b",
+        ),
     ]
 
     results = predictor.predict_mutation_batch("AA", "C1=CC=CC=C1", [1], batch_size=4)

@@ -329,7 +329,7 @@ Targeted tests by area:
 - Workflow and persistence: `tests/test_workflow_engine.py`, `tests/test_workflow.py`, `tests/test_persistence.py`
 - LLM client and skills: `tests/test_llm_client_retry.py`, `tests/test_llm_client_payloads.py`, `tests/test_llm_result_validation.py`, `tests/test_skills.py`
 - Workflow context helpers: `tests/test_workflow_context_helpers.py`
-- Predictor and mutation acceleration: `tests/test_predictor_adapter.py`, `tests/test_predictor_adapter_mutation_protocol.py`, `tests/test_predictor_adapter_mutation_search.py`, `tests/test_predictor_feature_matrix_batch.py`, `tests/test_predictor_mutation_batch_runtime.py`, `tests/test_feature_matrix.py`
+- Predictor and mutation acceleration: `tests/test_predictor_adapter.py`, `tests/test_predictor_adapter_mutation_protocol.py`, `tests/test_predictor_feature_matrix_batch.py`, `tests/test_predictor_mutation_batch_runtime.py`, `tests/test_tui_enumeration_acceleration.py`, `tests/test_feature_matrix.py`
 - TUI behavior: `tests/test_tui_*.py`, `tests/test_tui_markdown_theme.py`, `tests/test_enumeration_ui.py`
 - PDB analysis: `tests/test_pdb_analysis.py`
 - Spatial ranking: `tests/test_spatial_rank.py`
