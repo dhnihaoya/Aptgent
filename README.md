@@ -115,7 +115,7 @@ Supported detached job steps are:
 2. Describe the aptamer, target, optional analogs, modification region, and time budget.
 3. If a PDB ID is provided, intake enters an internal PDB branch that downloads and analyzes the structure, asks for chain or ligand confirmation when needed, and uses the `pdb_review` LLM skill as a review gate.
 4. RNAfold predicts the secondary structure.
-5. The LLM proposes 2–3 alternative mutation-site plans based on structural context. The user picks one, or enters custom sites.
+5. The LLM proposes 3 alternative mutation-site plans (conservative → aggressive → LLM-selected direction) based on structural context. The user picks one, or enters custom sites.
 6. Candidate enumeration scores the mutation space. The accelerated path uses `predict_mutation_batch()` when available and writes positives-only hits to `scored_candidates.jsonl`.
 7. Specificity filtering checks candidates against target analogs.
 8. Docking selection proposes docking parameters. Values are clamped before use.
