@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from aptgent.domain.enums import Step
 from aptgent.tui.steps.enumeration import EnumerationHandler
 from aptgent.workflow.engine import WorkflowEngine
@@ -23,10 +25,10 @@ class FakeProgress:
 class FakeScreen:
     def __init__(self) -> None:
         self.app = SimpleNamespace()
-        self.messages: list[str] = []
+        self.messages: list[tuple[str, str]] = []
 
-    def add_system_message(self, text: str, *_args) -> None:
-        self.messages.append(text)
+    def add_system_message(self, text: str, extra_class: str = "", *_args) -> None:
+        self.messages.append((text, extra_class))
 
 
 def test_enumeration_hit_events_update_progress_without_new_messages():
@@ -54,14 +56,27 @@ def test_enumeration_hit_events_update_progress_without_new_messages():
     )
 
 
-def test_enumeration_done_with_no_hits_rewinds_to_site_proposal(tmp_path):
+@pytest.mark.parametrize(
+    ("selected_index", "preserved_indexes", "expected_guidance"),
+    [
+        (0, [2], "larger mutation space"),
+        (1, [2], "larger mutation space"),
+        (2, [0, 1], "alternate"),
+    ],
+)
+def test_enumeration_done_with_no_hits_after_llm_choice_sets_regeneration_feedback(
+    tmp_path,
+    selected_index,
+    preserved_indexes,
+    expected_guidance,
+):
     persistence = Persistence(runs_dir=tmp_path)
     engine = WorkflowEngine(persistence)
     state = engine.create_run("zero_hits")
     state.current_step = Step.CANDIDATE_ENUMERATION
     state.confirmed_mutation_sites = [1, 3]
     state.context.site_proposal.selection_source = "llm"
-    state.context.site_proposal.selected_proposal_index = 2
+    state.context.site_proposal.selected_proposal_index = selected_index
     state.context.site_proposal.proposals = [
         {"label": "Plan 1", "proposed_sites": [1], "reasoning": "first"},
         {"label": "Plan 2", "proposed_sites": [1, 3], "reasoning": "second"},
@@ -104,9 +119,14 @@ def test_enumeration_done_with_no_hits_rewinds_to_site_proposal(tmp_path):
     )
 
     assert screen.rewound_to == Step.SITE_PROPOSAL
-    assert screen.app.current_state.context.site_proposal.needs_regeneration is True
-    assert screen.app.current_state.context.site_proposal.preserve_proposal_indexes == [0, 1]
-    assert "No binding candidates" in screen.messages[-1]
+    context = screen.app.current_state.context.site_proposal
+    assert context.needs_regeneration is True
+    assert context.preserve_proposal_indexes == preserved_indexes
+    feedback = context.extra_context["site_selection_feedback"]
+    assert feedback["selected_proposal_index"] == selected_index
+    assert expected_guidance in feedback["guidance"]
+    assert "No binding candidates" in screen.messages[-1][0]
+    assert screen.messages[-1][1] != "error-text"
 
 
 def test_enumeration_done_with_no_hits_after_custom_sites_reuses_choices(tmp_path):
@@ -155,5 +175,8 @@ def test_enumeration_done_with_no_hits_after_custom_sites_reuses_choices(tmp_pat
     )
 
     assert screen.rewound_to == Step.SITE_PROPOSAL
-    assert screen.app.current_state.context.site_proposal.needs_regeneration is False
-    assert screen.app.current_state.context.site_proposal.preserve_proposal_indexes == []
+    context = screen.app.current_state.context.site_proposal
+    assert context.needs_regeneration is False
+    assert context.preserve_proposal_indexes == []
+    assert context.extra_context["site_selection_feedback"]["selection_source"] == "custom"
+    assert screen.messages[-1][1] != "error-text"

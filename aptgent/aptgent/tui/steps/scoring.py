@@ -22,6 +22,8 @@ class ScoringHandler(StepHandler):
         target = state.target_molecule
 
         if not candidates:
+            if self._handle_empty_candidates(state):
+                return
             self.screen.add_system_message("No candidates available.", "error-text")
             self.screen.set_input_enabled(True)
             return
@@ -98,3 +100,41 @@ class ScoringHandler(StepHandler):
                 self.screen.add_system_message, f"Scoring failed: {exc}", "error-text"
             )
             self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+
+    def _handle_empty_candidates(self, state: Any) -> bool:
+        context = state.context.site_proposal
+        feedback = dict(context.extra_context.get("site_selection_feedback") or {})
+        is_no_positive = (
+            feedback.get("reason") == "no_positive_candidates"
+            or bool(context.regeneration_reason)
+        )
+        if not is_no_positive:
+            return False
+
+        if context.selection_source == "llm" or context.needs_regeneration:
+            if not context.needs_regeneration:
+                context.needs_regeneration = True
+            if not context.regeneration_reason:
+                context.regeneration_reason = (
+                    feedback.get("message")
+                    or "No predicted binding mutations were found for the selected LLM plan."
+                )
+            self.screen.app.save_state()
+            self.screen.add_system_message(
+                "No predicted binding mutations were found for the selected LLM plan. "
+                "Returning to site proposal so the LLM can revise the recommendation.",
+                "warning-text",
+            )
+            self.screen.rewind_to_step(
+                Step.SITE_PROPOSAL,
+                metadata={"reason": "no_positive_candidates"},
+            )
+            return True
+
+        self.screen.add_system_message(
+            "No predicted binding mutations were found for the selected custom sites. "
+            "Choose a different set of mutation sites, use /resume to open another saved run, "
+            "or use /quit to exit."
+        )
+        self.screen.set_input_enabled(True)
+        return True

@@ -158,12 +158,18 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
         selected_index = context.selected_proposal_index
         preserve_indexes: list[int] = []
         needs_regeneration = context.selection_source == "llm"
-        if needs_regeneration and selected_index == 2:
+        if needs_regeneration and selected_index in (0, 1):
+            preserve_indexes = [2]
+        elif needs_regeneration and selected_index == 2:
             preserve_indexes = [0, 1]
 
         reason = (
             f"No binding candidates were found after enumerating {total:,} mutants "
             f"({hits:,} hits, {kept:,} kept)."
+        )
+        guidance = self._empty_result_guidance(
+            selection_source=context.selection_source,
+            selected_index=selected_index,
         )
         state.candidates = []
         state.predictions = []
@@ -175,9 +181,12 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
             "site_selection_feedback": {
                 "reason": "no_positive_candidates",
                 "message": reason,
+                "guidance": guidance,
                 "selected_sites": list(state.confirmed_mutation_sites),
                 "selection_source": context.selection_source,
                 "selected_proposal_index": selected_index,
+                "preserve_proposal_indexes": preserve_indexes,
+                "previous_proposals": list(context.proposals),
             },
         }
         self.screen.app.save_state()
@@ -191,10 +200,39 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
         else:
             self.screen.add_system_message(
                 "No binding candidates were found for the selected sites. "
-                "Returning to site proposal so you can choose a different set.",
-                "warning-text",
+                "Returning to site proposal so you can choose a different set. "
+                "You can also use /resume to open another saved run or /quit to exit.",
             )
         self.screen.rewind_to_step(
             Step.SITE_PROPOSAL,
             metadata={"reason": "no_positive_candidates"},
+        )
+
+    @staticmethod
+    def _empty_result_guidance(
+        *,
+        selection_source: str,
+        selected_index: int | None,
+    ) -> str:
+        if selection_source != "llm":
+            return (
+                "The custom mutation sites produced no predicted binding mutations. "
+                "Do not regenerate LLM recommendations automatically; let the user choose "
+                "another set of sites."
+            )
+        if selected_index in (0, 1):
+            return (
+                "The selected conservative/aggressive LLM plan produced no predicted "
+                "binding mutations. Keep the alternate plan unchanged, and regenerate "
+                "plans 1 and 2 with a larger mutation space than the failed sites."
+            )
+        if selected_index == 2:
+            return (
+                "The selected alternate LLM plan produced no predicted binding mutations. "
+                "Keep plans 1 and 2 unchanged, and regenerate only the alternate plan "
+                "with a different direction."
+            )
+        return (
+            "The selected LLM plan produced no predicted binding mutations. Regenerate "
+            "recommendations using the failed sites and previous proposals as feedback."
         )

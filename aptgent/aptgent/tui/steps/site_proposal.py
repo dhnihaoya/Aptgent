@@ -54,12 +54,18 @@ class SiteProposalHandler(StepHandler):
         preserve_indexes = set(proposal_context.preserve_proposal_indexes)
 
         if proposal_context.needs_regeneration and proposal_context.regeneration_reason:
+            existing_feedback = dict(
+                proposal_context.extra_context.get("site_selection_feedback") or {}
+            )
             feedback = {
+                **existing_feedback,
                 "reason": "no_positive_candidates",
                 "message": proposal_context.regeneration_reason,
                 "selected_sites": list(state.confirmed_mutation_sites),
                 "selection_source": proposal_context.selection_source,
                 "selected_proposal_index": proposal_context.selected_proposal_index,
+                "preserve_proposal_indexes": list(proposal_context.preserve_proposal_indexes),
+                "previous_proposals": previous_proposals,
             }
             proposal_context.extra_context = {
                 **dict(proposal_context.extra_context),

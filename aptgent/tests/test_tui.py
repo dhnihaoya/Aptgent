@@ -20,6 +20,7 @@ from aptgent.tui.screens.quit_confirm import QuitConfirmScreen
 from aptgent.tui.screens.resume import _overview, _timestamp_label
 from aptgent.tui.screens.theme_picker import ThemePickerScreen
 from aptgent.tui.screens.welcome import WelcomeScreen
+from aptgent.tui.steps.scoring import ScoringHandler
 from aptgent.tui.steps.site_proposal import SiteProposalHandler
 from aptgent.tui.widgets.chat_widgets import (
     ActivityBubble,
@@ -180,6 +181,82 @@ def test_set_run_id_restores_saved_progress(tmp_path):
 
     assert app.current_state.current_step == Step.PRIMARY_SCORING
     assert app.progress_bar.current_step == Step.PRIMARY_SCORING
+
+
+def test_primary_scoring_empty_llm_retry_rewinds_without_error_message(tmp_path):
+    app = make_app(tmp_path)
+    state = app.engine.create_run("empty_llm_retry")
+    state.current_step = Step.PRIMARY_SCORING
+    state.context.site_proposal.selection_source = "llm"
+    state.context.site_proposal.needs_regeneration = True
+    state.context.site_proposal.extra_context = {
+        "site_selection_feedback": {"reason": "no_positive_candidates"}
+    }
+    app.persistence.save(state)
+    app.set_run_id("empty_llm_retry")
+
+    class FakeScreen:
+        def __init__(self, app):
+            self.app = app
+            self.messages: list[tuple[str, str]] = []
+            self.rewound_to: Step | None = None
+
+        def add_system_message(self, text: str, extra_class: str = "", **_kwargs):
+            self.messages.append((text, extra_class))
+
+        def set_input_enabled(self, _enabled: bool):
+            pass
+
+        def rewind_to_step(self, step: Step, metadata=None):
+            self.rewound_to = step
+            self.app.engine.rewind_to(self.app.current_state, step, metadata=metadata)
+
+    screen = FakeScreen(app)
+
+    ScoringHandler(screen).enter()
+
+    assert screen.rewound_to == Step.SITE_PROPOSAL
+    assert all(extra_class != "error-text" for _text, extra_class in screen.messages)
+
+
+def test_primary_scoring_empty_custom_sites_prompts_without_error_message(tmp_path):
+    app = make_app(tmp_path)
+    state = app.engine.create_run("empty_custom")
+    state.current_step = Step.PRIMARY_SCORING
+    state.context.site_proposal.selection_source = "custom"
+    state.context.site_proposal.extra_context = {
+        "site_selection_feedback": {"reason": "no_positive_candidates"}
+    }
+    app.persistence.save(state)
+    app.set_run_id("empty_custom")
+
+    class FakeScreen:
+        def __init__(self, app):
+            self.app = app
+            self.messages: list[tuple[str, str]] = []
+            self.input_enabled: list[bool] = []
+            self.rewound_to: Step | None = None
+
+        def add_system_message(self, text: str, extra_class: str = "", **_kwargs):
+            self.messages.append((text, extra_class))
+
+        def set_input_enabled(self, enabled: bool):
+            self.input_enabled.append(enabled)
+
+        def rewind_to_step(self, step: Step, metadata=None):
+            self.rewound_to = step
+
+    screen = FakeScreen(app)
+
+    ScoringHandler(screen).enter()
+
+    assert screen.rewound_to is None
+    assert screen.input_enabled[-1] is True
+    assert any(
+        "no predicted binding mutations" in text.lower()
+        for text, _class in screen.messages
+    )
+    assert all(extra_class != "error-text" for _text, extra_class in screen.messages)
 
 
 def test_site_proposal_reuses_saved_choices_without_llm(tmp_path, monkeypatch):
