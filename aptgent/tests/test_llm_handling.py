@@ -132,6 +132,61 @@ def test_validate_site_proposal_result_keeps_legacy_single_proposal_shape():
     ]
 
 
+def test_validate_site_proposal_result_preserves_region_assessment():
+    result = _validate_site_proposal_result(
+        {
+            "region_assessment": [
+                {
+                    "label": "Safer scaffold edge",
+                    "category": "safer_scaffold",
+                    "start": "1",
+                    "end": 4,
+                    "positions": ["1", 2, 99, "bad"],
+                    "rationale": "Peripheral unpaired bases are less likely to form the core pocket.",
+                    "confidence": "Medium",
+                },
+                {
+                    "label": "Loop core",
+                    "category": "suspected_binding_core",
+                    "positions": [5, 6],
+                    "rationale": "Central loop may contact the ligand.",
+                    "confidence": "High",
+                },
+            ],
+            "proposals": [
+                {
+                    "label": "Conservative",
+                    "proposed_sites": [1, 2],
+                    "reasoning": "Uses the safer scaffold edge.",
+                    "confidence": "medium",
+                }
+            ],
+        },
+        sequence_length=8,
+    )
+
+    assert result["region_assessment"] == [
+        {
+            "label": "Safer scaffold edge",
+            "category": "safer_scaffold",
+            "start": 1,
+            "end": 4,
+            "positions": [1, 2],
+            "rationale": "Peripheral unpaired bases are less likely to form the core pocket.",
+            "confidence": "medium",
+        },
+        {
+            "label": "Loop core",
+            "category": "suspected_binding_core",
+            "start": None,
+            "end": None,
+            "positions": [5, 6],
+            "rationale": "Central loop may contact the ligand.",
+            "confidence": "high",
+        },
+    ]
+
+
 def test_validate_docking_recommendation_result_uses_fallback_for_invalid_top_k():
     result = _validate_docking_recommendation_result(
         {"recommended_top_k": 0, "reason": ""},

@@ -81,7 +81,7 @@ class SiteProposalHandler(StepHandler):
             llm_context = build_site_proposal_llm_context(state)
             result = run_llm_interaction(
                 self.screen,
-                display_stream=lambda: skill.explain_propose_stream_from_context(llm_context),
+                display_stream=None,
                 structured_call=lambda: validate_site_proposal_result(
                     skill.propose_from_context(llm_context),
                     len(seq),
@@ -95,6 +95,7 @@ class SiteProposalHandler(StepHandler):
             return
 
         proposals = result.get("proposals", [])
+        region_assessment = result.get("region_assessment", [])
         if proposal_context.needs_regeneration and preserve_indexes:
             proposals = self._merge_regenerated_proposals(
                 previous_proposals,
@@ -103,9 +104,13 @@ class SiteProposalHandler(StepHandler):
             )
         sites = result.get("proposed_sites", [])
         if proposals:
-            sites = list(proposals[0].get("proposed_sites", []))
-        reasoning = result.get("reasoning", "")
-        confidence = result.get("confidence", "")
+            first_proposal = proposals[0]
+            sites = list(first_proposal.get("proposed_sites", []))
+            reasoning = first_proposal.get("reasoning") or result.get("reasoning", "")
+            confidence = first_proposal.get("confidence") or result.get("confidence", "")
+        else:
+            reasoning = result.get("reasoning", "")
+            confidence = result.get("confidence", "")
         self._site_proposals = proposals
         self._proposed_sites = sites
         proposal_context.needs_regeneration = False
@@ -118,12 +123,22 @@ class SiteProposalHandler(StepHandler):
             reasoning=reasoning,
             confidence=confidence,
             llm_context=llm_context,
+            extra_context={
+                **dict(proposal_context.extra_context),
+                "region_assessment": region_assessment,
+            },
             needs_regeneration=False,
             preserve_proposal_indexes=[],
         )
         self.screen.app.save_state()
 
-        msg = self._format_proposals_message(proposals, sites, reasoning, confidence)
+        msg = self._format_proposals_message(
+            proposals,
+            sites,
+            reasoning,
+            confidence,
+            region_assessment=region_assessment,
+        )
         self.screen.app.call_from_thread(self.screen.add_system_message, msg)
 
         self.screen.app.call_from_thread(self._show_choice_panel, proposals)
@@ -228,25 +243,58 @@ class SiteProposalHandler(StepHandler):
         sites: list[int],
         reasoning: str,
         confidence: str,
+        *,
+        region_assessment: list[dict] | None = None,
     ) -> str:
+        lines: list[str] = []
+        if region_assessment:
+            lines.append("Region assessment:")
+            for region in region_assessment:
+                label = region.get("label") or "Region"
+                category = region.get("category") or "unknown"
+                region_sites = region.get("positions") or []
+                start = region.get("start")
+                end = region.get("end")
+                if region_sites:
+                    scope = SiteProposalHandler._format_site_display(region_sites)
+                elif start is not None and end is not None:
+                    scope = SiteProposalHandler._format_site_display(
+                        list(range(int(start), int(end) + 1))
+                    )
+                else:
+                    scope = "positions unspecified"
+                rationale = region.get("rationale") or "No rationale provided."
+                region_confidence = region.get("confidence") or "unknown"
+                lines.append(
+                    f"- {label} ({category}, {region_confidence}): {scope} - {rationale}"
+                )
+            lines.append("")
+
         if not proposals:
             msg = f"Suggested sites: {sites}"
             if reasoning:
                 msg += f"\nReason: {reasoning}"
             if confidence:
                 msg += f"\nConfidence: {confidence}"
-            return msg
-        lines = ["Suggested mutation-site plans:"]
+            lines.append(msg)
+            return "\n".join(lines)
+        lines.append("Suggested mutation-site plans:")
         for index, proposal in enumerate(proposals, start=1):
             label = proposal.get("label") or f"Plan {index}"
             proposal_sites = proposal.get("proposed_sites", [])
             proposal_reasoning = proposal.get("reasoning") or "No reason provided."
             proposal_confidence = proposal.get("confidence") or "unknown"
             lines.append(
-                f"{index}. {label}: {proposal_sites} "
+                f"{index}. {label}: {SiteProposalHandler._format_site_display(proposal_sites)} "
                 f"({proposal_confidence}) - {proposal_reasoning}"
             )
         return "\n".join(lines)
+
+    @staticmethod
+    def _format_site_display(sites: list[int]) -> str:
+        zero_based = [int(site) for site in sites]
+        one_based = [site + 1 for site in zero_based]
+        return f"0-based {zero_based} / 1-based {one_based}"
 
     def _show_choice_panel(self, proposals: list[dict]) -> None:
         if proposals:
@@ -299,6 +347,7 @@ class SiteProposalHandler(StepHandler):
             self._proposed_sites,
             context.reasoning or "",
             context.confidence or "",
+            region_assessment=list(context.extra_context.get("region_assessment") or []),
         )
         self.screen.add_system_message(msg)
         self._show_choice_panel(self._site_proposals)

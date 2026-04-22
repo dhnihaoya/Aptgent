@@ -20,9 +20,22 @@ class SiteProposalPlan(BaseModel):
     confidence: str = "unknown"
 
 
+class SiteRegionAssessment(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    label: str = ""
+    category: str = ""
+    start: int | None = None
+    end: int | None = None
+    positions: list[int] = Field(default_factory=list)
+    rationale: str = ""
+    confidence: str = "unknown"
+
+
 class SiteProposalOutput(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    region_assessment: list[SiteRegionAssessment] = Field(default_factory=list)
     proposals: list[SiteProposalPlan] = Field(default_factory=list)
     proposed_sites: list[int] = Field(default_factory=list)
     reasoning: str = ""

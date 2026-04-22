@@ -42,6 +42,7 @@ from aptgent.llm.skills.site_proposal import (
     SiteProposalInput,
     SiteProposalOutput,
     SiteProposalSkill,
+    SiteRegionAssessment,
     SiteRephraseOutput,
 )
 
@@ -79,6 +80,7 @@ __all__ = [
     "ReportSkill",
     "SiteProposalInput",
     "SiteProposalOutput",
+    "SiteRegionAssessment",
     "SiteRephraseOutput",
     "SiteProposalSkill",
     "SkillMetadata",

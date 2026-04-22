@@ -259,6 +259,39 @@ def validate_site_proposal_result(result: Any, sequence_length: int) -> dict[str
         or "Suggested from the current secondary-structure context."
     )
     fallback_confidence = (clean_text(result.get("confidence")) or "unknown").lower()
+    region_assessment: list[dict[str, Any]] = []
+    raw_regions = result.get("region_assessment")
+    if isinstance(raw_regions, list):
+        for index, raw in enumerate(raw_regions, start=1):
+            if not isinstance(raw, dict):
+                continue
+            start = coerce_int(raw.get("start"))
+            end = coerce_int(raw.get("end"))
+            if start is not None and (start < 0 or start > max_value):
+                start = None
+            if end is not None and (end < 0 or end > max_value):
+                end = None
+            positions = coerce_int_list(
+                raw.get("positions"),
+                min_value=0,
+                max_value=max_value,
+            )
+            rationale = clean_text(raw.get("rationale")) or clean_text(
+                raw.get("reasoning")
+            )
+            region_assessment.append(
+                {
+                    "label": clean_text(raw.get("label")) or f"Region {index}",
+                    "category": clean_text(raw.get("category")) or "unknown",
+                    "start": start,
+                    "end": end,
+                    "positions": positions,
+                    "rationale": rationale or "No rationale provided.",
+                    "confidence": (
+                        clean_text(raw.get("confidence")) or "unknown"
+                    ).lower(),
+                }
+            )
     proposals: list[dict[str, Any]] = []
     raw_proposals = result.get("proposals")
     if isinstance(raw_proposals, list):
@@ -298,6 +331,7 @@ def validate_site_proposal_result(result: Any, sequence_length: int) -> dict[str
         ]
     first = proposals[0]
     return {
+        "region_assessment": region_assessment,
         "proposals": proposals,
         "proposed_sites": list(first["proposed_sites"]),
         "reasoning": clean_text(first.get("reasoning")) or fallback_reasoning,

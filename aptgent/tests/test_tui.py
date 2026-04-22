@@ -325,14 +325,21 @@ def test_site_proposal_reuses_saved_choices_without_llm(tmp_path, monkeypatch):
 
 def test_site_proposal_regeneration_replaces_only_third_plan(tmp_path, monkeypatch):
     captured_context = {}
+    captured_display_stream = object()
 
     class FakeSiteProposalSkill:
-        def explain_propose_stream_from_context(self, context):
-            return iter(())
-
         def propose_from_context(self, context):
             captured_context.update(context)
             return {
+                "region_assessment": [
+                    {
+                        "label": "Loop edge",
+                        "category": "safer_scaffold",
+                        "positions": [4, 5],
+                        "rationale": "Peripheral loop bases are plausible scaffold edits.",
+                        "confidence": "medium",
+                    }
+                ],
                 "proposals": [
                     {
                         "label": "Replacement 3",
@@ -344,6 +351,8 @@ def test_site_proposal_regeneration_replaces_only_third_plan(tmp_path, monkeypat
             }
 
     def fake_run_llm_interaction(_screen, *, display_stream, structured_call, structured_client=None):
+        nonlocal captured_display_stream
+        captured_display_stream = display_stream
         return structured_call()
 
     class FakeApp:
@@ -419,6 +428,10 @@ def test_site_proposal_regeneration_replaces_only_third_plan(tmp_path, monkeypat
         "Replacement 3",
     ]
     assert state.context.site_proposal.needs_regeneration is False
+    assert state.context.site_proposal.proposed_sites == [1]
+    assert state.context.site_proposal.reasoning == "keep first"
+    assert captured_display_stream is None
+    assert "Region assessment" in "\n".join(screen.messages)
     assert captured_context["extra_context"]["site_selection_feedback"]["message"] == (
         "No binding candidates were found."
     )
