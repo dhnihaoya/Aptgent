@@ -63,6 +63,7 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme` 等�
 
 - `aptgent/aptgent/tui/screens/`：chat、welcome、quit_confirm、resume、theme_picker。
 - `aptgent/aptgent/tui/steps/`：每个 workflow step 一个模块（`intake.py`、`pdb_intake.py`、`structure.py`、`site_proposal.py`、`enumeration.py`、`scoring.py`、`specificity.py`、`docking_selection.py`、`docking_run.py`、`spatial_rank.py`、`report.py`），由 `factory.py` 分发。
+- `aptgent/aptgent/tui/steps/empty_candidates.py`：空候选统一处理（`is_empty_enumeration_result`、`prepare_empty_candidate_recovery`、`clear_site_selection_retry_feedback`），被 enumeration、scoring、chat back-handler 共用。
 - `aptgent/aptgent/tui/steps/base.py`：`StepHandler` 基类。
 - `aptgent/aptgent/tui/steps/job_mixin.py`：可分离后台任务 mixin（attach/spawn detached subprocess）。
 - `aptgent/aptgent/tui/widgets/`：通用 widget（`StatusPanel`、`StepProgressBar`、`StructuredInput`、chat bubble 系列）。
@@ -133,6 +134,8 @@ LLM 输出是辅助信息，不应覆盖确定性计算结果。涉及评分、�
 - `report`：最终报告生成，LLM 辅助撰写结论性报告摘要。
 
 LLM 调用日志记录到 `<run_dir>/logs/llm_calls.jsonl`，默认对用户输入做 SHA-256 脱敏（`APTGENT_LLM_REDACT=0` 关闭）。
+
+`LLMClient` 支持三种调用模式：`chat_json`（同步 JSON 请求）、`chat_json_events`（流式 SSE，逐步 yield reasoning/content 事件，最终 yield `{"type": "result", "value": parsed_json}`）、`chat_stream`（纯文本流式）。site proposal skill 已通过 `propose_events_from_context` 接入 `chat_json_events`，在生成方案时实时展示 LLM reasoning。
 
 ### Jobs 层（可分离后台任务）
 
