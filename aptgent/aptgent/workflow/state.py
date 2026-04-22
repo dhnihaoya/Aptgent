@@ -88,6 +88,11 @@ class SiteProposalContext(BaseModel):
     confirmed_sites: list[int] = Field(default_factory=list)
     llm_context: dict[str, Any] = Field(default_factory=dict)
     extra_context: dict[str, Any] = Field(default_factory=dict)
+    selection_source: str = ""
+    selected_proposal_index: Optional[int] = None
+    needs_regeneration: bool = False
+    regeneration_reason: Optional[str] = None
+    preserve_proposal_indexes: list[int] = Field(default_factory=list)
 
 
 class DockingRecommendationContext(BaseModel):

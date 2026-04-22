@@ -20,6 +20,7 @@ from aptgent.tui.screens.quit_confirm import QuitConfirmScreen
 from aptgent.tui.screens.resume import _overview, _timestamp_label
 from aptgent.tui.screens.theme_picker import ThemePickerScreen
 from aptgent.tui.screens.welcome import WelcomeScreen
+from aptgent.tui.steps.site_proposal import SiteProposalHandler
 from aptgent.tui.widgets.chat_widgets import (
     ActivityBubble,
     InputBar,
@@ -179,6 +180,171 @@ def test_set_run_id_restores_saved_progress(tmp_path):
 
     assert app.current_state.current_step == Step.PRIMARY_SCORING
     assert app.progress_bar.current_step == Step.PRIMARY_SCORING
+
+
+def test_site_proposal_reuses_saved_choices_without_llm(tmp_path, monkeypatch):
+    calls = 0
+
+    class FakeSiteProposalSkill:
+        def __init__(self):
+            nonlocal calls
+            calls += 1
+
+    class FakeScreen:
+        def __init__(self, app):
+            self.app = app
+            self.messages: list[str] = []
+            self.widgets: list[object] = []
+            self.placeholders: list[str] = []
+            self.input_enabled: list[bool] = []
+
+        def add_system_message(self, text: str, *_args, **_kwargs):
+            self.messages.append(text)
+
+        def add_structured_widget(self, widget):
+            self.widgets.append(widget)
+
+        def set_input_placeholder(self, text: str):
+            self.placeholders.append(text)
+
+        def set_input_enabled(self, enabled: bool):
+            self.input_enabled.append(enabled)
+
+    monkeypatch.setattr(
+        "aptgent.tui.steps.site_proposal.SiteProposalSkill",
+        FakeSiteProposalSkill,
+    )
+
+    app = make_app(tmp_path)
+    state = app.engine.create_run("site_reuse_case")
+    state.current_step = Step.SITE_PROPOSAL
+    state.input_payload["initial_sequence"] = "ACGTAC"
+    state.secondary_structure = SecondaryStructure(
+        sequence="ACGTAC",
+        dot_bracket="......",
+        mfe=-1.2,
+    )
+    state.context.site_proposal.proposals = [
+        {
+            "label": "Saved plan",
+            "proposed_sites": [1, 3],
+            "reasoning": "Saved from a previous recommendation.",
+            "confidence": "high",
+        }
+    ]
+    state.context.site_proposal.proposed_sites = [1, 3]
+    state.context.site_proposal.regeneration_reason = "No binding candidates were found."
+    app.persistence.save(state)
+    app.set_run_id("site_reuse_case")
+    screen = FakeScreen(app)
+
+    SiteProposalHandler(screen).enter()
+
+    assert calls == 0
+    assert any("No binding candidates were found" in msg for msg in screen.messages)
+    assert any(isinstance(widget, ActionMenuPanel) for widget in screen.widgets)
+    assert screen.input_enabled[-1] is True
+
+
+def test_site_proposal_regeneration_replaces_only_third_plan(tmp_path, monkeypatch):
+    captured_context = {}
+
+    class FakeSiteProposalSkill:
+        def explain_propose_stream_from_context(self, context):
+            return iter(())
+
+        def propose_from_context(self, context):
+            captured_context.update(context)
+            return {
+                "proposals": [
+                    {
+                        "label": "Replacement 3",
+                        "proposed_sites": [4, 5],
+                        "reasoning": "Replaces the failed third direction.",
+                        "confidence": "medium",
+                    },
+                ],
+            }
+
+    def fake_run_llm_interaction(_screen, *, display_stream, structured_call, structured_client=None):
+        return structured_call()
+
+    class FakeApp:
+        def __init__(self, state):
+            self._state = state
+            self.saved = False
+
+        @property
+        def current_state(self):
+            return self._state
+
+        def call_from_thread(self, func, *args):
+            return func(*args)
+
+        def save_state(self):
+            self.saved = True
+
+    class FakeScreen:
+        def __init__(self, state):
+            self.app = FakeApp(state)
+            self.messages: list[str] = []
+            self.widgets: list[object] = []
+
+        def update_activity(self, _text: str):
+            pass
+
+        def add_system_message(self, text: str, *_args, **_kwargs):
+            self.messages.append(text)
+
+        def add_structured_widget(self, widget):
+            self.widgets.append(widget)
+
+        def set_input_placeholder(self, _text: str):
+            pass
+
+        def set_input_enabled(self, _enabled: bool):
+            pass
+
+    monkeypatch.setattr(
+        "aptgent.tui.steps.site_proposal.SiteProposalSkill",
+        FakeSiteProposalSkill,
+    )
+    monkeypatch.setattr(
+        "aptgent.tui.steps.site_proposal.run_llm_interaction",
+        fake_run_llm_interaction,
+    )
+
+    app = make_app(tmp_path)
+    state = app.engine.create_run("site_replace_third_case")
+    state.current_step = Step.SITE_PROPOSAL
+    state.input_payload["initial_sequence"] = "ACGTAC"
+    state.secondary_structure = SecondaryStructure(
+        sequence="ACGTAC",
+        dot_bracket="......",
+        mfe=-1.2,
+    )
+    state.context.site_proposal.proposals = [
+        {"label": "Keep 1", "proposed_sites": [1], "reasoning": "keep first"},
+        {"label": "Keep 2", "proposed_sites": [1, 3], "reasoning": "keep second"},
+        {"label": "Replace 3", "proposed_sites": [2, 4], "reasoning": "failed third"},
+    ]
+    state.context.site_proposal.needs_regeneration = True
+    state.context.site_proposal.regeneration_reason = "No binding candidates were found."
+    state.context.site_proposal.preserve_proposal_indexes = [0, 1]
+    screen = FakeScreen(state)
+
+    SiteProposalHandler(screen)._propose()
+
+    proposals = state.context.site_proposal.proposals
+    assert [proposal["label"] for proposal in proposals] == [
+        "Keep 1",
+        "Keep 2",
+        "Replacement 3",
+    ]
+    assert state.context.site_proposal.needs_regeneration is False
+    assert captured_context["extra_context"]["site_selection_feedback"]["message"] == (
+        "No binding candidates were found."
+    )
 
 
 @pytest.mark.anyio
@@ -601,6 +767,60 @@ async def test_site_proposal_can_confirm_llm_alternative_plan(tmp_path, monkeypa
 
         assert app.current_state.confirmed_mutation_sites == [2, 5]
         assert app.current_state.context.site_proposal.confirmed_sites == [2, 5]
+
+
+@pytest.mark.anyio
+async def test_primary_scoring_back_reuses_site_proposal_choices(tmp_path, monkeypatch):
+    calls = 0
+
+    class FakeSiteProposalSkill:
+        def __init__(self):
+            nonlocal calls
+            calls += 1
+
+    monkeypatch.setattr(
+        "aptgent.tui.steps.site_proposal.SiteProposalSkill",
+        FakeSiteProposalSkill,
+    )
+
+    app = make_app(tmp_path)
+    state = app.engine.create_run("primary_back_case")
+    state.current_step = Step.PRIMARY_SCORING
+    state.input_payload["initial_sequence"] = "ACGTAC"
+    state.secondary_structure = SecondaryStructure(
+        sequence="ACGTAC",
+        dot_bracket="......",
+        mfe=-1.2,
+    )
+    state.context.site_proposal.proposals = [
+        {
+            "label": "Saved plan",
+            "proposed_sites": [1, 3],
+            "reasoning": "Previously generated.",
+            "confidence": "high",
+        }
+    ]
+    state.context.site_proposal.proposed_sites = [1, 3]
+    state.context.site_proposal.regeneration_reason = "Previous automatic retry reason."
+    state.context.site_proposal.preserve_proposal_indexes = [0, 1]
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.set_run_id("primary_back_case")
+        app.push_screen("chat")
+        await pilot.pause()
+
+        await pilot.click("#chat-input")
+        await pilot.press("/", "b", "a", "c", "k", "enter")
+        await pilot.pause()
+
+        assert app.current_state.current_step == Step.SITE_PROPOSAL
+        assert app.current_state.context.site_proposal.needs_regeneration is False
+        assert app.current_state.context.site_proposal.regeneration_reason is None
+        assert app.current_state.context.site_proposal.preserve_proposal_indexes == [0, 1]
+        assert calls == 0
+        assert app.screen.query_one(ActionMenuPanel) is not None
 
 
 @pytest.mark.anyio

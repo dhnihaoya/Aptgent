@@ -112,6 +112,10 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
         finish_msg = msg + f"\nResults: {summary.get('results_path', 'N/A')}"
         progress.finish(finish_msg)
 
+        if not summary.get("cancelled") and (hits == 0 or kept == 0):
+            self._rewind_after_empty_result(state, total, hits, kept)
+            return
+
         self._show_preview(state.candidates, state.predictions)
 
         ns = next_step(Step.CANDIDATE_ENUMERATION)
@@ -142,3 +146,55 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
             preview.append(f"  ... and {len(candidates) - 10} more")
         if preview:
             self.screen.add_system_message("\n".join(preview))
+
+    def _rewind_after_empty_result(
+        self,
+        state: Any,
+        total: int,
+        hits: int,
+        kept: int,
+    ) -> None:
+        context = state.context.site_proposal
+        selected_index = context.selected_proposal_index
+        preserve_indexes: list[int] = []
+        needs_regeneration = context.selection_source == "llm"
+        if needs_regeneration and selected_index == 2:
+            preserve_indexes = [0, 1]
+
+        reason = (
+            f"No binding candidates were found after enumerating {total:,} mutants "
+            f"({hits:,} hits, {kept:,} kept)."
+        )
+        state.candidates = []
+        state.predictions = []
+        context.needs_regeneration = needs_regeneration
+        context.regeneration_reason = reason
+        context.preserve_proposal_indexes = preserve_indexes
+        context.extra_context = {
+            **dict(context.extra_context),
+            "site_selection_feedback": {
+                "reason": "no_positive_candidates",
+                "message": reason,
+                "selected_sites": list(state.confirmed_mutation_sites),
+                "selection_source": context.selection_source,
+                "selected_proposal_index": selected_index,
+            },
+        }
+        self.screen.app.save_state()
+
+        if needs_regeneration:
+            self.screen.add_system_message(
+                "No binding candidates were found for the selected LLM plan. "
+                "Returning to site proposal with this feedback so the LLM can revise the sites.",
+                "warning-text",
+            )
+        else:
+            self.screen.add_system_message(
+                "No binding candidates were found for the selected sites. "
+                "Returning to site proposal so you can choose a different set.",
+                "warning-text",
+            )
+        self.screen.rewind_to_step(
+            Step.SITE_PROPOSAL,
+            metadata={"reason": "no_positive_candidates"},
+        )

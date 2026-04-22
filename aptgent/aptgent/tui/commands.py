@@ -42,6 +42,11 @@ FINISH_COMMAND = SlashCommand(
     description="Mark the workflow complete and exit",
 )
 
+BACK_COMMAND = SlashCommand(
+    name="/back",
+    description="Return to mutation site selection",
+)
+
 CANCEL_COMMAND = SlashCommand(
     name="/cancel",
     description="Cancel the running background job (enumeration or docking)",
@@ -81,6 +86,8 @@ def commands_for_step(step: Step | None) -> tuple[SlashCommand, ...]:
     commands = [RESUME_COMMAND, QUIT_COMMAND]
     if step == Step.FINAL_REPORT:
         commands.extend((EXPORT_COMMAND, FINISH_COMMAND))
+    if step == Step.PRIMARY_SCORING:
+        commands.append(BACK_COMMAND)
     if step in (Step.CANDIDATE_ENUMERATION, Step.DOCKING_RUN):
         commands.append(CANCEL_COMMAND)
     commands.append(THEME_COMMAND)

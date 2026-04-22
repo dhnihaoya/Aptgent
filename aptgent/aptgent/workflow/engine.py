@@ -69,6 +69,27 @@ class WorkflowEngine:
         )
         return state
 
+    def rewind_to(
+        self,
+        state: RunState,
+        step: Step,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> RunState:
+        state.current_step = step
+        state.status = Status.RUNNING
+        state.error_info = None
+        state.step_timestamps[step.value] = datetime.now(timezone.utc).isoformat()
+        self.persistence.save(state)
+        self.persistence.append_log(
+            state.run_id,
+            {
+                "event": "rewind",
+                "to_step": step.value,
+                "metadata": metadata or {},
+            },
+        )
+        return state
+
     def pause(
         self,
         state: RunState,

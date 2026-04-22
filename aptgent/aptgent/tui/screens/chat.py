@@ -58,6 +58,7 @@ class ChatScreen(Screen):
         registry.register("/resume", lambda screen, arg: screen._cmd_resume(arg))
         registry.register("/quit", lambda screen, _arg: screen._cmd_quit())
         registry.register("/cancel", lambda screen, _arg: screen._cmd_cancel())
+        registry.register("/back", lambda screen, _arg: screen._cmd_back())
         registry.register("/export", lambda screen, _arg: screen._cmd_final_report("export"))
         registry.register("/finish", lambda screen, _arg: screen._cmd_final_report("finish"))
         return registry
@@ -107,6 +108,28 @@ class ChatScreen(Screen):
             )
         except OSError as exc:
             self.add_system_message(f"Failed to send cancel: {exc}", "error-text")
+        return True
+
+    def _cmd_back(self) -> bool:
+        state = self.app.current_state
+        if state.current_step != Step.PRIMARY_SCORING:
+            self.add_system_message("Back is only available from primary scoring.")
+            return True
+
+        proposal = state.context.site_proposal
+        proposal.needs_regeneration = False
+        proposal.regeneration_reason = None
+        state.candidates = []
+        state.predictions = []
+        self.app.save_state()
+        self.add_system_message(
+            "Returning to site proposal. Existing recommendations will be reused.",
+            "warning-text",
+        )
+        self.rewind_to_step(
+            Step.SITE_PROPOSAL,
+            metadata={"reason": "user_back_from_primary_scoring"},
+        )
         return True
 
     def _cmd_final_report(self, action: str) -> bool:
@@ -288,6 +311,16 @@ class ChatScreen(Screen):
                 return
         else:
             self.app.engine.transition_to(state, step)
+        self.app.progress_bar.set_step(step)
+        self.app.save_state()
+        self.clear_structured_widget()
+        self.clear_activity()
+        self._start_step(step)
+
+    def rewind_to_step(self, step: Step, metadata: dict | None = None) -> None:
+        """Move back to an earlier workflow step outside the normal transition DAG."""
+        state = self.app.current_state
+        self.app.engine.rewind_to(state, step, metadata=metadata)
         self.app.progress_bar.set_step(step)
         self.app.save_state()
         self.clear_structured_widget()

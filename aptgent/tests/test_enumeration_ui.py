@@ -2,15 +2,22 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from aptgent.domain.enums import Step
 from aptgent.tui.steps.enumeration import EnumerationHandler
+from aptgent.workflow.engine import WorkflowEngine
+from aptgent.workflow.persistence import Persistence
 
 
 class FakeProgress:
     def __init__(self) -> None:
         self.updates: list[tuple[int, str]] = []
+        self.finished: str | None = None
 
     def set_progress(self, processed: int, text: str) -> None:
         self.updates.append((processed, text))
+
+    def finish(self, text: str) -> None:
+        self.finished = text
 
 
 class FakeScreen:
@@ -46,3 +53,107 @@ def test_enumeration_hit_events_update_progress_without_new_messages():
         "Progress: 128/256 | Hits: 2 | Best P: 0.9100",
     )
 
+
+def test_enumeration_done_with_no_hits_rewinds_to_site_proposal(tmp_path):
+    persistence = Persistence(runs_dir=tmp_path)
+    engine = WorkflowEngine(persistence)
+    state = engine.create_run("zero_hits")
+    state.current_step = Step.CANDIDATE_ENUMERATION
+    state.confirmed_mutation_sites = [1, 3]
+    state.context.site_proposal.selection_source = "llm"
+    state.context.site_proposal.selected_proposal_index = 2
+    state.context.site_proposal.proposals = [
+        {"label": "Plan 1", "proposed_sites": [1], "reasoning": "first"},
+        {"label": "Plan 2", "proposed_sites": [1, 3], "reasoning": "second"},
+        {"label": "Plan 3", "proposed_sites": [2, 4], "reasoning": "third"},
+    ]
+    persistence.save(state)
+
+    class FakeApp:
+        def __init__(self):
+            self.engine = engine
+            self.persistence = persistence
+            self._state = state
+            self.saved = False
+
+        @property
+        def current_state(self):
+            return self._state
+
+        def save_state(self):
+            self.saved = True
+            self.persistence.save(self._state)
+
+    class RewindScreen(FakeScreen):
+        def __init__(self):
+            super().__init__()
+            self.app = FakeApp()
+            self.rewound_to: Step | None = None
+
+        def rewind_to_step(self, step: Step, metadata=None) -> None:
+            self.rewound_to = step
+            self.app.engine.rewind_to(self.app.current_state, step, metadata=metadata)
+
+    screen = RewindScreen()
+    handler = EnumerationHandler(screen)
+    progress = FakeProgress()
+
+    handler._on_job_done(
+        {"total": 16, "hits": 0, "kept": 0, "results_path": "/tmp/results.jsonl"},
+        progress,
+    )
+
+    assert screen.rewound_to == Step.SITE_PROPOSAL
+    assert screen.app.current_state.context.site_proposal.needs_regeneration is True
+    assert screen.app.current_state.context.site_proposal.preserve_proposal_indexes == [0, 1]
+    assert "No binding candidates" in screen.messages[-1]
+
+
+def test_enumeration_done_with_no_hits_after_custom_sites_reuses_choices(tmp_path):
+    persistence = Persistence(runs_dir=tmp_path)
+    engine = WorkflowEngine(persistence)
+    state = engine.create_run("zero_hits_custom")
+    state.current_step = Step.CANDIDATE_ENUMERATION
+    state.confirmed_mutation_sites = [1, 3]
+    state.context.site_proposal.selection_source = "custom"
+    state.context.site_proposal.proposals = [
+        {"label": "Plan 1", "proposed_sites": [1], "reasoning": "first"},
+        {"label": "Plan 2", "proposed_sites": [1, 3], "reasoning": "second"},
+    ]
+    persistence.save(state)
+
+    class FakeApp:
+        def __init__(self):
+            self.engine = engine
+            self.persistence = persistence
+            self._state = state
+
+        @property
+        def current_state(self):
+            return self._state
+
+        def save_state(self):
+            self.persistence.save(self._state)
+
+    class RewindScreen(FakeScreen):
+        def __init__(self):
+            super().__init__()
+            self.app = FakeApp()
+            self.rewound_to: Step | None = None
+
+        def rewind_to_step(self, step: Step, metadata=None) -> None:
+            self.rewound_to = step
+            self.app.engine.rewind_to(self.app.current_state, step, metadata=metadata)
+
+    screen = RewindScreen()
+    handler = EnumerationHandler(screen)
+    progress = FakeProgress()
+
+    handler._on_job_done(
+        {"total": 16, "hits": 0, "kept": 0, "results_path": "/tmp/results.jsonl"},
+        progress,
+    )
+
+    assert screen.rewound_to == Step.SITE_PROPOSAL
+    assert screen.app.current_state.context.site_proposal.needs_regeneration is False
+    assert screen.app.current_state.context.site_proposal.preserve_proposal_indexes == []

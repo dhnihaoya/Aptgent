@@ -199,6 +199,11 @@ def record_site_proposal_context(
     confirmed_sites: list[int] | None = None,
     llm_context: dict[str, Any] | None = None,
     extra_context: dict[str, Any] | None = None,
+    selection_source: str | None = None,
+    selected_proposal_index: int | None = None,
+    needs_regeneration: bool | None = None,
+    regeneration_reason: str | None = None,
+    preserve_proposal_indexes: list[int] | None = None,
 ) -> None:
     context = state.context.site_proposal
     if proposals is not None:
@@ -215,6 +220,16 @@ def record_site_proposal_context(
         context.llm_context = dict(llm_context)
     if extra_context is not None:
         context.extra_context = dict(extra_context)
+    if selection_source is not None:
+        context.selection_source = _clean_text(selection_source) or ""
+    if selected_proposal_index is not None:
+        context.selected_proposal_index = selected_proposal_index
+    if needs_regeneration is not None:
+        context.needs_regeneration = needs_regeneration
+    if regeneration_reason is not None:
+        context.regeneration_reason = _clean_text(regeneration_reason)
+    if preserve_proposal_indexes is not None:
+        context.preserve_proposal_indexes = list(preserve_proposal_indexes)
 
 
 def build_site_proposal_llm_context(state: RunState) -> dict[str, Any]:

@@ -6,6 +6,8 @@ re-introduction of the removed ``DOCKING_PREP`` step.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from aptgent.domain.enums import Step, Status
@@ -56,3 +58,24 @@ def test_workflow_engine_reload_preserves_step(tmp_path):
     assert reloaded is not None
     assert reloaded.current_step == Step.SECONDARY_STRUCTURE
     assert reloaded.run_id == "persist_me"
+
+
+def test_workflow_engine_rewind_to_previous_step(tmp_path):
+    persistence = Persistence(runs_dir=tmp_path)
+    engine = WorkflowEngine(persistence)
+    state = engine.create_run("rewind_me")
+    state.current_step = Step.PRIMARY_SCORING
+    persistence.save(state)
+
+    engine.rewind_to(
+        state,
+        Step.SITE_PROPOSAL,
+        metadata={"reason": "no_positive_candidates"},
+    )
+
+    reloaded = engine.load_run("rewind_me")
+    assert reloaded is not None
+    assert reloaded.current_step == Step.SITE_PROPOSAL
+    log_path = persistence.run_dir("rewind_me") / "logs" / "workflow.jsonl"
+    log_events = [json.loads(line)["event"] for line in log_path.read_text().splitlines()]
+    assert "rewind" in log_events

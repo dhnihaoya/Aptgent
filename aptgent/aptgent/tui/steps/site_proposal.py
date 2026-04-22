@@ -18,9 +18,10 @@ from aptgent.workflow.context import (
 
 class SiteProposalHandler(StepHandler):
     def enter(self) -> None:
-        self._site_proposals: list[dict] = []
-        self._proposed_sites: list[int] = []
         state = self.screen.app.current_state
+        proposal_context = state.context.site_proposal
+        self._site_proposals = [dict(proposal) for proposal in proposal_context.proposals]
+        self._proposed_sites = list(proposal_context.proposed_sites)
         struct = state.secondary_structure
 
         if struct is None:
@@ -33,11 +34,37 @@ class SiteProposalHandler(StepHandler):
                 self.screen.advance_to_step(ns)
             return
 
+        if self._site_proposals or self._proposed_sites:
+            if proposal_context.needs_regeneration:
+                self.run_worker(
+                    self._propose,
+                    activity="Revising mutation-site recommendations...",
+                )
+                return
+            self._show_existing_choices()
+            return
+
         self.run_worker(self._propose, activity="Analyzing mutation-tolerant sites...")
 
     def _propose(self) -> None:
         state = self.screen.app.current_state
         seq = get_sequence(state) or ""
+        proposal_context = state.context.site_proposal
+        previous_proposals = [dict(proposal) for proposal in proposal_context.proposals]
+        preserve_indexes = set(proposal_context.preserve_proposal_indexes)
+
+        if proposal_context.needs_regeneration and proposal_context.regeneration_reason:
+            feedback = {
+                "reason": "no_positive_candidates",
+                "message": proposal_context.regeneration_reason,
+                "selected_sites": list(state.confirmed_mutation_sites),
+                "selection_source": proposal_context.selection_source,
+                "selected_proposal_index": proposal_context.selected_proposal_index,
+            }
+            proposal_context.extra_context = {
+                **dict(proposal_context.extra_context),
+                "site_selection_feedback": feedback,
+            }
 
         try:
             skill = SiteProposalSkill()
@@ -62,11 +89,22 @@ class SiteProposalHandler(StepHandler):
             return
 
         proposals = result.get("proposals", [])
+        if proposal_context.needs_regeneration and preserve_indexes:
+            proposals = self._merge_regenerated_proposals(
+                previous_proposals,
+                proposals,
+                preserve_indexes,
+            )
         sites = result.get("proposed_sites", [])
+        if proposals:
+            sites = list(proposals[0].get("proposed_sites", []))
         reasoning = result.get("reasoning", "")
         confidence = result.get("confidence", "")
         self._site_proposals = proposals
         self._proposed_sites = sites
+        proposal_context.needs_regeneration = False
+        proposal_context.regeneration_reason = None
+        proposal_context.preserve_proposal_indexes = []
         record_site_proposal_context(
             state,
             proposals=proposals,
@@ -74,6 +112,8 @@ class SiteProposalHandler(StepHandler):
             reasoning=reasoning,
             confidence=confidence,
             llm_context=llm_context,
+            needs_regeneration=False,
+            preserve_proposal_indexes=[],
         )
         self.screen.app.save_state()
 
@@ -94,10 +134,14 @@ class SiteProposalHandler(StepHandler):
 
         if text_lower in ("use suggestions", "confirm", "accept", "ok"):
             sites = getattr(self, "_proposed_sites", [])
+            source = "llm"
+            proposal_index = 0
         else:
             try:
                 sites = [int(x.strip()) for x in text.split(",") if x.strip()]
                 sites = [s for s in sites if 0 <= s < len(seq)]
+                source = "custom"
+                proposal_index = None
             except ValueError:
                 self.screen.add_system_message(
                     f"Could not parse positions from: {text}\n"
@@ -106,11 +150,11 @@ class SiteProposalHandler(StepHandler):
                 )
                 return
 
-        self._confirm_sites(sites)
+        self._confirm_sites(sites, source=source, proposal_index=proposal_index)
 
     def handle_structured_input(self, data: dict) -> None:
         sites = data.get("selected_sites", [])
-        self._confirm_sites(sites)
+        self._confirm_sites(sites, source="custom", proposal_index=None)
 
     def handle_action(self, action: str) -> None:
         if action.startswith("use-recommended-sites-"):
@@ -120,12 +164,24 @@ class SiteProposalHandler(StepHandler):
                 index = 0
             proposals = getattr(self, "_site_proposals", [])
             if 0 <= index < len(proposals):
-                self._confirm_sites(list(proposals[index].get("proposed_sites", [])))
+                self._confirm_sites(
+                    list(proposals[index].get("proposed_sites", [])),
+                    source="llm",
+                    proposal_index=index,
+                )
             else:
-                self._confirm_sites(getattr(self, "_proposed_sites", []))
+                self._confirm_sites(
+                    getattr(self, "_proposed_sites", []),
+                    source="llm",
+                    proposal_index=0,
+                )
             return
         if action == "use-recommended-sites":
-            self._confirm_sites(getattr(self, "_proposed_sites", []))
+            self._confirm_sites(
+                getattr(self, "_proposed_sites", []),
+                source="llm",
+                proposal_index=0,
+            )
             return
         if action == "custom-sites":
             state = self.screen.app.current_state
@@ -136,9 +192,23 @@ class SiteProposalHandler(StepHandler):
                 "Select sites in the panel, or type comma-separated positions."
             )
 
-    def _confirm_sites(self, sites: list[int]) -> None:
+    def _confirm_sites(
+        self,
+        sites: list[int],
+        *,
+        source: str,
+        proposal_index: int | None,
+    ) -> None:
         state = self.screen.app.current_state
         state.confirmed_mutation_sites = sites
+        state.candidates = []
+        state.predictions = []
+        context = state.context.site_proposal
+        context.selection_source = source
+        context.selected_proposal_index = proposal_index
+        context.needs_regeneration = False
+        context.regeneration_reason = None
+        context.preserve_proposal_indexes = []
         record_site_proposal_context(state, confirmed_sites=sites)
         self.screen.app.save_state()
         self.screen.add_system_message(f"Confirmed mutation sites: {sites}")
@@ -212,3 +282,43 @@ class SiteProposalHandler(StepHandler):
             expanded=True,
         )
         self.screen.add_structured_widget(panel)
+
+    def _show_existing_choices(self) -> None:
+        state = self.screen.app.current_state
+        context = state.context.site_proposal
+        if context.regeneration_reason:
+            self.screen.add_system_message(context.regeneration_reason, "warning-text")
+        msg = self._format_proposals_message(
+            self._site_proposals,
+            self._proposed_sites,
+            context.reasoning or "",
+            context.confidence or "",
+        )
+        self.screen.add_system_message(msg)
+        self._show_choice_panel(self._site_proposals)
+        self.screen.set_input_placeholder(
+            "Type positions (e.g. 3,7,12) or choose a recommended plan."
+        )
+        self.screen.set_input_enabled(True)
+
+    @staticmethod
+    def _merge_regenerated_proposals(
+        previous: list[dict],
+        regenerated: list[dict],
+        preserve_indexes: set[int],
+    ) -> list[dict]:
+        if not previous:
+            return regenerated
+        merged: list[dict] = []
+        regenerated_iter = iter(regenerated)
+        target_len = max(len(previous), len(regenerated), 3)
+        for index in range(target_len):
+            if index in preserve_indexes and index < len(previous):
+                merged.append(dict(previous[index]))
+                continue
+            try:
+                merged.append(dict(next(regenerated_iter)))
+            except StopIteration:
+                if index < len(previous):
+                    merged.append(dict(previous[index]))
+        return merged[:3]
