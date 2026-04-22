@@ -9,6 +9,7 @@ from textual.theme import Theme
 from aptgent.bootstrap import AppRuntime, build_runtime
 from aptgent.domain.enums import Step
 from aptgent.tui.commands import get_theme_preset
+from aptgent.tui.rich_theme import build_chat_markdown_theme
 from aptgent.tui.screens.chat import ChatScreen
 from aptgent.tui.screens.quit_confirm import QuitConfirmScreen
 from aptgent.tui.screens.welcome import WelcomeScreen
@@ -53,6 +54,7 @@ _THEME_VARIABLE_DEFAULTS = {
     "chat-status-foreground": "#8B9EB0",
     "chat-status-border": "#1A314A",
     "chat-divider-color": "#84BCF3",
+    "chat-markdown-code": "#8EC5FF",
 }
 
 
@@ -156,6 +158,7 @@ CLEAN_MINIMAL_LIGHT_THEME = _build_theme(
         "chat-status-foreground": "#5C6E80",
         "chat-status-border": "#C8D6E3",
         "chat-divider-color": "#3F78AF",
+        "chat-markdown-code": "#376FA8",
     },
 )
 
@@ -210,6 +213,7 @@ WARM_INDUSTRIAL_THEME = _build_theme(
         "chat-status-foreground": "#AD9988",
         "chat-status-border": "#3B2C23",
         "chat-divider-color": "#D2A15B",
+        "chat-markdown-code": "#5EA5A3",
     },
 )
 
@@ -260,6 +264,7 @@ class AptgentApp(App):
 
         self._state: RunState | None = None
         self._pending_start_message: str | None = None
+        self._chat_markdown_theme_pushed = False
 
         self.progress_bar = StepProgressBar(Step.INTAKE, id="progress-bar")
         self.status_panel = StatusPanel("", "", id="status-panel")
@@ -318,7 +323,20 @@ class AptgentApp(App):
             log_dir = self.persistence.run_dir(self._state.run_id) / "logs"
             skill.client.set_log_dir(log_dir)
 
+    def _sync_chat_markdown_theme(self) -> None:
+        code_color = self.current_theme.variables.get(
+            "chat-markdown-code",
+            _THEME_VARIABLE_DEFAULTS["chat-markdown-code"],
+        )
+        chat_markdown_theme = build_chat_markdown_theme(code_color)
+        if self._chat_markdown_theme_pushed:
+            self.console.pop_theme()
+            self._chat_markdown_theme_pushed = False
+        self.console.push_theme(chat_markdown_theme)
+        self._chat_markdown_theme_pushed = True
+
     def on_mount(self) -> None:
+        self._sync_chat_markdown_theme()
         self.push_screen("welcome")
 
     def action_quit(self) -> None:
@@ -334,6 +352,7 @@ class AptgentApp(App):
         if preset is None:
             return None
         self.theme = theme_name
+        self._sync_chat_markdown_theme()
         return preset.label
 
     def _handle_quit_confirmation(self, should_quit: bool | None) -> None:
