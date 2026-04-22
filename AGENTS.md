@@ -127,7 +127,7 @@ LLM 输出是辅助信息，不应覆盖确定性计算结果。涉及评分、�
 
 - `intake`：自然语言输入解析，提取序列、靶标分子、修饰区域、类似物列表和时间预算等字段。
 - `pdb_review`：PDB 结构语义审查，7 类分类 + 靶标匹配 + 置信度。输出用于 review gate 机制（不合适的 PDB 会暂停流程等待用户确认）。
-- `site_proposal`：突变位点提议（含 rephrase 能力），基于二级结构 loop/stem 分析给出恰好 3 个备选 mutation 方案，按保守 → 激进（含保守位点）→ LLM 自选方向排序；每个方案包含独立的位点、推理和置信度；首选方案会镜像到 legacy 字段保持兼容。UI 层以 `expanded` 模式展示全部选项。支持 retry feedback：当枚举或打分步骤未找到阳性候选时，通过 `extra_context.site_selection_feedback` 回传失败原因、上下文引导（`guidance`）、需保留的方案索引（`preserve_proposal_indexes`）和前一轮方案（`previous_proposals`），LLM 据此只替换失败的方案槽位。
+- `site_proposal`：突变位点提议（含 rephrase 能力）。先产出区域级风险评估（`region_assessment`），将序列区域分为 `safer_scaffold`、`suspected_binding_core` 或 `uncertain`，解释每个区域的分类依据；再给出恰好 3 个备选 mutation 方案，按保守 → 激进（含保守位点）→ LLM 自选方向排序；每个方案包含独立的位点、推理和置信度，若使用了 suspected binding/core 风险位点需显式说明理由；首选方案会镜像到 legacy 字段保持兼容。UI 层以 `expanded` 模式展示全部选项。支持 retry feedback：当枚举或打分步骤未找到阳性候选时，通过 `extra_context.site_selection_feedback` 回传失败原因、上下文引导（`guidance`）、需保留的方案索引（`preserve_proposal_indexes`）和前一轮方案（`previous_proposals`），LLM 据此只替换失败的方案槽位。
 - `analog_suggestion`：结构类似物建议，用于特异性过滤步骤，LLM 推荐靶标的类似物供交叉预测。
 - `docking_planner`：对接参数建议（advisory 级别），LLM 可建议 `top_k`、`grid_size`、`exhaustiveness`，但所有数值经 `validate_docking_recommendation_result()` 钳位后才生效。
 - `report`：最终报告生成，LLM 辅助撰写结论性报告摘要。
