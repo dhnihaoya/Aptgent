@@ -44,8 +44,6 @@ class _LineReader:
                 break
             lines.append(item)
         return "".join(lines)
-
-
 class _FakePopen:
     """Stub subprocess.Popen that simulates the mutation-batch line-JSON protocol."""
 
@@ -76,8 +74,6 @@ class _FakePopen:
 
     def wait(self, timeout=None):
         return self.returncode
-
-
 class _FakePopenFactory:
     def __init__(self, popen_class=None):
         self._popen_class = popen_class or _FakePopen
@@ -89,8 +85,6 @@ class _FakePopenFactory:
         timer.daemon = True
         timer.start()
         return self.proc
-
-
 def test_adapter_predict_mutation_batch_parses_protocol():
     from aptgent.adapters.predictor import EnsembleAdapter
     from aptgent.domain.models import TargetMolecule
@@ -132,8 +126,6 @@ def test_adapter_predict_mutation_batch_parses_protocol():
     assert summary["hits"] == 1
     assert summary["device"] == "cpu"
     assert len(summary["model_order"]) == 2
-
-
 def test_adapter_mutation_batch_cancel():
     from aptgent.adapters.predictor import EnsembleAdapter
     from aptgent.domain.models import TargetMolecule
@@ -184,8 +176,6 @@ def test_adapter_mutation_batch_cancel():
 
     factory.proc.stdin.write.assert_called()
     assert summary.get("cancelled") is True
-
-
 def test_adapter_mutation_batch_error():
     from aptgent.adapters.predictor import EnsembleAdapter
     from aptgent.domain.models import TargetMolecule

@@ -25,6 +25,41 @@ The active workflow is defined in `aptgent/aptgent/workflow/engine.py`.
 10. final_report
 ```
 
+State transition diagram:
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: create_run
+
+    state "RUNNING workflow steps" as RUNNING {
+        [*] --> intake
+        intake --> intake: refine intake
+        intake --> secondary_structure
+        secondary_structure --> site_proposal
+        site_proposal --> candidate_enumeration
+        candidate_enumeration --> primary_scoring
+        primary_scoring --> specificity_filter
+        specificity_filter --> docking_selection
+        docking_selection --> docking_run
+        docking_run --> spatial_rank
+        spatial_rank --> final_report
+
+        candidate_enumeration --> site_proposal: no positive candidates
+        primary_scoring --> site_proposal: no positive candidates or /back
+    }
+
+    PENDING --> RUNNING: transition_to
+    RUNNING --> PAUSED: pause
+    PAUSED --> RUNNING: resume
+    RUNNING --> ERROR: fail
+    final_report --> COMPLETED: complete
+    COMPLETED --> [*]
+
+    note right of PAUSED
+      Resume keeps the current workflow step and clears pending input.
+    end note
+```
+
 The TUI uses a chat-first interface. `AptgentApp` registers the `welcome` and `chat` screens, and `ChatScreen` drives all workflow steps through handlers in `aptgent/aptgent/tui/steps/`.
 
 LLM output is advisory. Deterministic state, scoring, ranking, persistence, and external-tool results should come from workflow, domain, adapter, or predictor-runtime code.
@@ -292,12 +327,13 @@ pytest
 Targeted tests by area:
 
 - Workflow and persistence: `tests/test_workflow_engine.py`, `tests/test_workflow.py`, `tests/test_persistence.py`
-- LLM client and skills: `tests/test_llm_client_retry.py`, `tests/test_llm_handling.py`, `tests/test_skills.py`
-- Predictor and mutation acceleration: `tests/test_predictor_adapter.py`, `tests/test_mutation_batch.py`, `tests/test_mutation_acceleration.py`, `tests/test_feature_matrix.py`
-- TUI behavior: `tests/test_tui.py`, `tests/test_tui_markdown_theme.py`, `tests/test_enumeration_ui.py`
+- LLM client and skills: `tests/test_llm_client_retry.py`, `tests/test_llm_client_payloads.py`, `tests/test_llm_result_validation.py`, `tests/test_skills.py`
+- Workflow context helpers: `tests/test_workflow_context_helpers.py`
+- Predictor and mutation acceleration: `tests/test_predictor_adapter.py`, `tests/test_predictor_adapter_mutation_protocol.py`, `tests/test_predictor_adapter_mutation_search.py`, `tests/test_predictor_feature_matrix_batch.py`, `tests/test_predictor_mutation_batch_runtime.py`, `tests/test_feature_matrix.py`
+- TUI behavior: `tests/test_tui_*.py`, `tests/test_tui_markdown_theme.py`, `tests/test_enumeration_ui.py`
 - PDB analysis: `tests/test_pdb_analysis.py`
 - Spatial ranking: `tests/test_spatial_rank.py`
-- Detached jobs: `tests/test_detached_worker.py`
+- Detached jobs: `tests/test_jobs_*.py`, `tests/test_tui_job_mixin.py`
 
 ## Architecture Rules
 

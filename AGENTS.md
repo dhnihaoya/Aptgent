@@ -254,13 +254,19 @@ aptgent run-job <run_id> <step>
 - `test_persistence.py`：持久化层测试
 - `test_skills.py`：LLM skill 注册与基础行为测试
 - `test_llm_client_retry.py`：LLM 客户端重试逻辑测试
-- `test_llm_handling.py`：LLM 输出校验与 context 构建测试
-- `test_mutation_batch.py`：mutation-batch 加速路径测试
-- `test_mutation_acceleration.py`：mutation 加速管线端到端测试
+- `test_llm_client_payloads.py`：LLM 请求 payload、thinking 与 SSE 事件测试
+- `test_llm_result_validation.py`：LLM 输出校验与展示格式测试
+- `test_workflow_context_helpers.py`：workflow context 构建与记录辅助测试
+- `test_predictor_adapter_mutation_protocol.py`：mutation-batch 子进程行式 JSON 协议测试
+- `test_predictor_adapter_mutation_search.py`：adapter mutation search 结果重建测试
+- `test_predictor_feature_matrix_batch.py`：批量特征矩阵测试
+- `test_predictor_mutation_batch_runtime.py`：predictor runtime mutation-batch 规则测试
+- `test_tui_enumeration_acceleration.py`：TUI enumeration 加速路径测试
 - `test_feature_matrix.py`：特征矩阵计算测试
 - `test_predictor_adapter.py`：预测器 adapter 测试
-- `test_detached_worker.py`：可分离后台任务测试
-- `test_tui.py`：TUI step handler 行为测试
+- `test_jobs_events.py`、`test_jobs_persistence_paths.py`、`test_jobs_pid.py`、`test_jobs_runner_cli.py`：jobs 层事件、路径、PID 与 CLI 测试
+- `test_tui_job_mixin.py`：TUI detached job attach/spawn 行为测试
+- `test_tui_app_navigation.py`、`test_tui_chat_widgets.py`、`test_tui_docking_selection.py`、`test_tui_intake_pdb.py`、`test_tui_scoring_retry.py`、`test_tui_secondary_structure.py`、`test_tui_site_proposal.py`、`test_tui_specificity.py`：TUI 行为测试
 - `test_tui_markdown_theme.py`：chat markdown 主题测试
 - `test_enumeration_ui.py`：枚举步骤 UI 测试
 - `test_pdb_analysis.py`：PDB 分析 adapter 测试
@@ -269,12 +275,12 @@ aptgent run-job <run_id> <step>
 修改以下内容后，至少应重新检查对应测试：
 
 - workflow step / 状态流转 → `test_workflow_engine.py`、`test_persistence.py`
-- LLM skill 行为 / 输出校验 → `test_skills.py`、`test_llm_client_retry.py`、`test_llm_handling.py`
-- predictor / 特征提取 → `test_mutation_batch.py`、`test_mutation_acceleration.py`、`test_feature_matrix.py`、`test_predictor_adapter.py`
-- TUI step handler / UI → `test_tui.py`、`test_enumeration_ui.py`、`test_tui_markdown_theme.py`
+- LLM skill 行为 / 输出校验 → `test_skills.py`、`test_llm_client_retry.py`、`test_llm_client_payloads.py`、`test_llm_result_validation.py`、`test_workflow_context_helpers.py`
+- predictor / 特征提取 → `test_predictor_adapter_mutation_protocol.py`、`test_predictor_adapter_mutation_search.py`、`test_predictor_feature_matrix_batch.py`、`test_predictor_mutation_batch_runtime.py`、`test_tui_enumeration_acceleration.py`、`test_feature_matrix.py`、`test_predictor_adapter.py`
+- TUI step handler / UI → `test_tui_*.py`、`test_enumeration_ui.py`、`test_tui_markdown_theme.py`
 - PDB / 结构分析 → `test_pdb_analysis.py`
 - 空间排序 → `test_spatial_rank.py`
-- detached job 系统 → `test_detached_worker.py`
+- detached job 系统 → `test_jobs_*.py`、`test_tui_job_mixin.py`
 - workflow 辅助逻辑 → `test_workflow.py`
 
 ## 10. 推荐修改策略
