@@ -113,6 +113,18 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
         finish_msg = msg + f"\nResults: {summary.get('results_path', 'N/A')}"
         progress.finish(finish_msg)
 
+        if summary.get("cancelled"):
+            self.screen.add_system_message(
+                "Enumeration was cancelled. Returning to site proposal so you can "
+                "choose mutation sites again.",
+                "warning-text",
+            )
+            self.screen.rewind_to_step(
+                Step.SITE_PROPOSAL,
+                metadata={"reason": "enumeration_cancelled"},
+            )
+            return
+
         if not summary.get("cancelled") and (hits == 0 or kept == 0):
             self._rewind_after_empty_result(state, total, hits, kept)
             return

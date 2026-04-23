@@ -180,3 +180,44 @@ def test_enumeration_done_with_no_hits_after_custom_sites_reuses_choices(tmp_pat
     assert context.preserve_proposal_indexes == []
     assert context.extra_context["site_selection_feedback"]["selection_source"] == "custom"
     assert screen.messages[-1][1] != "error-text"
+
+
+def test_enumeration_done_when_cancelled_rewinds_to_site_proposal(tmp_path):
+    persistence = Persistence(runs_dir=tmp_path)
+    engine = WorkflowEngine(persistence)
+    state = engine.create_run("cancelled_enum")
+    state.current_step = Step.CANDIDATE_ENUMERATION
+    persistence.save(state)
+
+    class FakeApp:
+        def __init__(self):
+            self.engine = engine
+            self.persistence = persistence
+            self._state = state
+
+        @property
+        def current_state(self):
+            return self._state
+
+    class CancelScreen(FakeScreen):
+        def __init__(self):
+            super().__init__()
+            self.app = FakeApp()
+            self.advanced_to: Step | None = None
+            self.rewound_to: Step | None = None
+
+        def rewind_to_step(self, step: Step, metadata=None) -> None:
+            self.rewound_to = step
+
+        def advance_to_step(self, step: Step) -> None:
+            self.advanced_to = step
+
+    screen = CancelScreen()
+    handler = EnumerationHandler(screen)
+    progress = FakeProgress()
+
+    handler._on_job_done({"cancelled": True, "hits": 0}, progress)
+
+    assert screen.advanced_to is None
+    assert screen.rewound_to == Step.SITE_PROPOSAL
+    assert any("cancelled" in text.lower() for text, _class in screen.messages)

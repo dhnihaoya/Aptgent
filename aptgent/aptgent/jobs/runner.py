@@ -208,10 +208,11 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
         file_handle.write(json.dumps({"meta": run_meta}, ensure_ascii=False) + "\n")
 
     cancel_event = threading.Event()
+    stop_cancel_poller = threading.Event()
     cmd_file = persistence.job_cmd_file(state.run_id, "candidate_enumeration")
 
     def _cancel_poller() -> None:
-        while not cancel_event.is_set():
+        while not stop_cancel_poller.is_set() and not cancel_event.is_set():
             if cmd_file.exists():
                 try:
                     content = cmd_file.read_text().strip()
@@ -220,10 +221,11 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
                         return
                 except OSError:
                     pass
-            cancel_event.wait(2)
+            stop_cancel_poller.wait(2)
 
     cancel_thread = threading.Thread(target=_cancel_poller, daemon=True)
     cancel_thread.start()
+    adapter_summary: dict[str, Any] = {}
 
     try:
         adapter = create_prediction_adapter(tools_config)
@@ -262,7 +264,7 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
                     extra={"sequence": result["sequence"]},
                 )
 
-        adapter.predict_mutation_batch(
+        result_summary = adapter.predict_mutation_batch(
             base_sequence=seq,
             target=target,
             sites=sites,
@@ -273,15 +275,18 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
             timeout_seconds=timeout_seconds,
             skip_first=skip_first,
         )
+        if isinstance(result_summary, dict):
+            adapter_summary = result_summary
         file_handle.flush()
     except Exception as exc:
         writer.write_error(message=f"Enumeration failed: {exc}")
         return
     finally:
-        cancel_event.set()
+        stop_cancel_poller.set()
+        cancel_thread.join(timeout=2)
         file_handle.close()
 
-    if cancel_event.is_set():
+    if cancel_event.is_set() or adapter_summary.get("cancelled"):
         writer.write_done(summary={"cancelled": True, "hits": total_binding})
         return
 
