@@ -197,6 +197,12 @@ intake step 内部包含 PDB 输入子流程（`tui/steps/pdb_intake.py`），�
 
 `predict_mutation_batch()` 支持 `skip_first` 参数，用于在部分运行中断后从上次进度恢复。
 
+### Enumeration 取消处理
+
+用户可通过命令文件（`<run_dir>/jobs/candidate_enumeration/cmd.jsonl`）发送取消信号。Runner 层使用独立的 `stop_cancel_poller` 事件控制轮询线程的生命周期，并在 `predict_mutation_batch()` 返回后 join 线程。取消来源有两个：用户主动取消（命令文件写入 `cancel`）和 adapter 内部取消（返回 `{"cancelled": true}`）。
+
+TUI 层（`enumeration.py`）在检测到取消时，显示警告信息并回退到 `site_proposal` 步骤（`rewind_to_step`），让用户重新选择突变位点，而非直接终止工作流。
+
 ## 7. 配置与环境注意事项
 
 配置文件位于 `aptgent/aptgent/config/`：
