@@ -14,18 +14,33 @@ from tui_helpers import anyio_backend, make_app
 @pytest.mark.anyio
 async def test_specificity_step_shows_recommendations_before_edit_input(tmp_path, monkeypatch):
     class FakeAnalogSuggestionSkill:
+        calls = 0
+
+        def suggest_events(self, target):
+            type(self).calls += 1
+            yield {
+                "type": "reasoning",
+                "text": "Checking close methylxanthine neighbors.",
+            }
+            yield {
+                "type": "result",
+                "value": {
+                    "analogs": [
+                        {"name": "theobromine", "reason": "Shares the xanthine core."},
+                        {
+                            "name": "paraxanthine",
+                            "reason": "Probes methylation-specific binding.",
+                        },
+                    ],
+                    "note": "Start with high-priority xanthine neighbors.",
+                },
+            }
+
         def explain_suggest_stream(self, target):
-            yield "- theobromine is a close methylxanthine analog.\n"
-            yield "- paraxanthine can catch selectivity drift."
+            raise AssertionError("specificity should not make a separate explanation call")
 
         def suggest(self, target):
-            return {
-                "analogs": [
-                    {"name": "theobromine", "reason": "Shares the xanthine core."},
-                    {"name": "paraxanthine", "reason": "Probes methylation-specific binding."},
-                ],
-                "note": "Start with high-priority xanthine neighbors.",
-            }
+            raise AssertionError("specificity should not make a second JSON call")
 
     monkeypatch.setattr(
         "aptgent.tui.steps.specificity.AnalogSuggestionSkill",
@@ -52,6 +67,7 @@ async def test_specificity_step_shows_recommendations_before_edit_input(tmp_path
         await pilot.pause()
 
         assert type(app.screen).__name__ == "ChatScreen"
+        assert FakeAnalogSuggestionSkill.calls == 1
         assert app.screen.query_one(ActionMenuPanel) is not None
         with pytest.raises(NoMatches):
             app.screen.query_one(SpecificityPanel)
@@ -63,18 +79,30 @@ async def test_specificity_step_shows_recommendations_before_edit_input(tmp_path
         panel = app.screen.query_one(SpecificityPanel)
         assert panel is not None
         assert panel.query_one("#analog-input", Input).value == "theobromine, paraxanthine"
+
+
 @pytest.mark.anyio
 async def test_specificity_custom_choice_opens_blank_input(tmp_path, monkeypatch):
     class FakeAnalogSuggestionSkill:
+        def suggest_events(self, target):
+            yield {
+                "type": "reasoning",
+                "text": "Checking close methylxanthine neighbors.",
+            }
+            yield {
+                "type": "result",
+                "value": {
+                    "analogs": [
+                        {"name": "theobromine", "reason": "Shares the xanthine core."},
+                    ]
+                },
+            }
+
         def explain_suggest_stream(self, target):
-            yield "- theobromine is relevant.\n"
+            raise AssertionError("specificity should not make a separate explanation call")
 
         def suggest(self, target):
-            return {
-                "analogs": [
-                    {"name": "theobromine", "reason": "Shares the xanthine core."},
-                ]
-            }
+            raise AssertionError("specificity should not make a second JSON call")
 
     monkeypatch.setattr(
         "aptgent.tui.steps.specificity.AnalogSuggestionSkill",
