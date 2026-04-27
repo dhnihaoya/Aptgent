@@ -4,6 +4,7 @@ import logging
 import re
 
 from rich.markdown import Markdown
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
@@ -247,7 +248,7 @@ class ThinkingBubble(Static):
             self.update(header)
             return
 
-        body = self._buffer + ("▌" if self._streaming else "")
+        body = escape(self._buffer) + ("▌" if self._streaming else "")
         self.update(f"{header}\n{body}")
 
 

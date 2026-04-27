@@ -125,6 +125,20 @@ def test_thinking_bubble_toggles_expansion():
 
     bubble.toggle()
     assert bubble.expanded is False
+
+
+def test_thinking_bubble_expands_markup_sensitive_reasoning_text():
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    bubble = ThinkingBubble()
+    bubble.append_text('Checking molecule ["C1=C(C(=O)N(C(=O)N2C)C)"] in JSON.')
+
+    bubble.toggle()
+
+    assert bubble.expanded is True
 def test_thinking_bubble_collapsed_header_shows_token_count_and_arrow():
     try:
         asyncio.get_event_loop()
