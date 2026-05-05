@@ -86,10 +86,27 @@ class SpecificityHandler(StepHandler):
 
         try:
             skill = AnalogSuggestionSkill()
+            streamed_result: dict[str, object] = {}
+
+            def display_stream():
+                for event in skill.suggest_events(target):
+                    if isinstance(event, dict) and event.get("type") == "result":
+                        value = event.get("value")
+                        if isinstance(value, dict):
+                            streamed_result.clear()
+                            streamed_result.update(value)
+                        continue
+                    yield event
+
+            def structured_result() -> dict:
+                if streamed_result:
+                    return validate_analog_suggestion_result(streamed_result)
+                raise RuntimeError("LLM structured result unavailable.")
+
             result = run_llm_interaction(
                 self.screen,
-                display_stream=lambda: skill.explain_suggest_stream(target),
-                structured_call=lambda: validate_analog_suggestion_result(skill.suggest(target)),
+                display_stream=display_stream,
+                structured_call=structured_result,
             )
             analogs = result.get("analogs", [])
             note = result.get("note", "")

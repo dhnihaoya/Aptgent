@@ -29,6 +29,9 @@ class AnalogSuggestionSkill(BaseSkill):
             return payload
         return super().build_user_message(payload)
 
+    def suggest_events(self, target: TargetMolecule):
+        return self.invoke_json_events(target)
+
     # Legacy aliases.
     def suggest(self, target: TargetMolecule) -> dict[str, Any]:
         return self.invoke(target).raw
