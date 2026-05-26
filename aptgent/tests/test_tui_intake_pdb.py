@@ -9,7 +9,7 @@ from aptgent.domain.enums import Step
 from aptgent.domain.models import PdbChainCandidate, PdbLigandCandidate
 from aptgent.tui.steps.intake_heuristics import looks_like_full_intake
 from aptgent.tui.widgets.structured_input import PdbSelectionPanel
-from textual.widgets import Input
+from textual.widgets import TextArea
 
 from tui_helpers import FakePdbAnalysisAdapter, anyio_backend, make_app
 
@@ -31,7 +31,7 @@ async def test_intake_retry_prompt_sets_retry_placeholder(tmp_path):
         app.push_screen("chat")
         await pilot.pause()
 
-        chat_input = app.screen.query_one("#chat-input", Input)
+        chat_input = app.screen.query_one("#chat-input", TextArea)
         bubbles = list(app.screen.query("#chat-log SystemBubble"))
 
         assert chat_input.placeholder == (
@@ -117,7 +117,7 @@ async def test_pdb_input_keeps_sequence_and_requests_missing_target(tmp_path):
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        chat_input = app.screen.query_one("#chat-input", Input)
+        chat_input = app.screen.query_one("#chat-input", TextArea)
         chat_input.value = "1ehz"
         await pilot.press("enter")
         await pilot.pause()
@@ -183,7 +183,7 @@ async def test_pdb_input_with_multiple_candidates_opens_selection_panel(tmp_path
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        chat_input = app.screen.query_one("#chat-input", Input)
+        chat_input = app.screen.query_one("#chat-input", TextArea)
         chat_input.value = "pdb 1ehz"
         await pilot.press("enter")
         await pilot.pause()
@@ -221,7 +221,7 @@ async def test_mixed_pdb_input_prefers_pdb_sequence_over_user_sequence(tmp_path)
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        chat_input = app.screen.query_one("#chat-input", Input)
+        chat_input = app.screen.query_one("#chat-input", TextArea)
         chat_input.value = "sequence AAAA, pdb 1ehz, target caffeine"
         await pilot.press("enter")
         await pilot.pause()

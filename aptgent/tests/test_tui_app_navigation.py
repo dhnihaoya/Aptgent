@@ -12,7 +12,7 @@ from aptgent.tui.screens.theme_picker import ThemePickerScreen
 from aptgent.tui.screens.welcome import WelcomeScreen
 from aptgent.tui.widgets.chat_widgets import InputBar
 from textual.css.query import NoMatches
-from textual.widgets import OptionList
+from textual.widgets import OptionList, TextArea
 
 from tui_helpers import anyio_backend, make_app
 
@@ -131,6 +131,22 @@ async def test_slash_shows_command_palette_in_welcome(tmp_path):
         assert command_list.get_option_at_index(0).id == "/resume"
         assert command_list.get_option_at_index(1).id == "/quit"
         assert command_list.get_option_at_index(2).id == "/theme"
+@pytest.mark.anyio
+async def test_chat_input_wraps_and_grows_for_long_text(tmp_path):
+    app = make_app(tmp_path)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        chat_input = app.screen.query_one("#chat-input", TextArea)
+        input_bar = app.screen.query_one(InputBar)
+
+        assert chat_input.soft_wrap is True
+        assert input_bar.input_height == 3
+
+        chat_input.load_text("Design an aptamer for caffeine. " * 12)
+        await pilot.pause()
+
+        assert 3 < input_bar.input_height <= 8
 def test_resume_option_text_includes_overview_step_and_timestamp(tmp_path):
     app = make_app(tmp_path)
     state = app.engine.create_run("abc123def456")
