@@ -169,6 +169,8 @@ class RunState(BaseModel):
     docking_results: list[DockingResult] = Field(default_factory=list)
     spatial_ranks: list[SpatialRankResult] = Field(default_factory=list)
     recommendations: list[FinalRecommendation] = Field(default_factory=list)
+    final_report_markdown: str = ""
+    final_report_context: dict[str, Any] = Field(default_factory=dict)
 
     # Artifacts & logs
     artifacts: list[ArtifactRef] = Field(default_factory=list)

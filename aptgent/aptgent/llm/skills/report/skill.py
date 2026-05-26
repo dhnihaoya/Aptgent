@@ -11,11 +11,17 @@ _SKILL_DIR = Path(__file__).resolve().parent
 
 
 class ReportSkill(BaseSkill):
-    """Skill: summarise a deterministically ranked recommendation list."""
+    """Skill: write a Markdown report from deterministic workflow facts."""
 
     output_schema = ReportOutput
 
     def build_user_message(self, payload: Any) -> str:
+        if isinstance(payload, dict) and "docking_candidates" in payload:
+            return (
+                "Final report context. The LLM may write prose, but must preserve "
+                "all deterministic facts and must not invent rankings or scores.\n"
+                + json.dumps(payload, indent=2, ensure_ascii=False)
+            )
         if isinstance(payload, list):
             return "Recommendations (already sorted by final_priority):\n" + json.dumps(
                 payload, indent=2, ensure_ascii=False
@@ -34,6 +40,9 @@ class ReportSkill(BaseSkill):
 
     def explain_summarize_stream(self, recommendations: list[dict[str, Any]]):
         return self.explain_stream(recommendations)
+
+    def write_markdown_stream(self, report_context: dict[str, Any]):
+        return self.explain_stream(report_context)
 
 
 ReportSkill._bind_directory(_SKILL_DIR)
