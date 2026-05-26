@@ -258,6 +258,7 @@ class AptgentApp(App):
         self.molecule_resolver = runtime.molecule_resolver
         self.spatial_rank_adapter = runtime.spatial_rank_adapter
         self.pdb_analysis_adapter = runtime.pdb_analysis_adapter
+        self.receptor_prep_adapter = runtime.receptor_prep_adapter
         self.structure_lookup_adapter = runtime.structure_lookup_adapter
         self.structure_fetch_adapter = runtime.structure_fetch_adapter
         self.tertiary_structure_adapter = runtime.tertiary_structure_adapter
@@ -298,6 +299,7 @@ class AptgentApp(App):
             molecule_resolver=kwargs.pop("molecule_resolver", None),
             spatial_rank_adapter=kwargs.pop("spatial_rank_adapter", None),
             pdb_analysis_adapter=kwargs.pop("pdb_analysis_adapter", None),
+            receptor_prep_adapter=kwargs.pop("receptor_prep_adapter", None),
             structure_lookup_adapter=kwargs.pop("structure_lookup_adapter", None),
             structure_fetch_adapter=kwargs.pop("structure_fetch_adapter", None),
             tertiary_structure_adapter=kwargs.pop("tertiary_structure_adapter", None),

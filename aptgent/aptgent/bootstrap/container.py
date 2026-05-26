@@ -21,6 +21,7 @@ class AppRuntime:
     molecule_resolver: Any
     spatial_rank_adapter: Any
     pdb_analysis_adapter: Any
+    receptor_prep_adapter: Any = None
     structure_lookup_adapter: Any = None
     structure_fetch_adapter: Any = None
     tertiary_structure_adapter: Any = None
@@ -108,11 +109,32 @@ def create_pdb_analysis_adapter(tools_config: dict[str, Any]) -> Any:
     )
 
 
+def create_receptor_prep_adapter(tools_config: dict[str, Any]) -> Any:
+    from aptgent.adapters.receptor_prep import ReceptorPreparationAdapter
+
+    cfg = tools_config.get("receptor_prep", {})
+    return ReceptorPreparationAdapter(
+        obabel_command=cfg.get("obabel", "obabel"),
+        default_padding=float(cfg.get("padding_angstrom", 4.0)),
+    )
+
+
+def create_rnacomposer_adapter(tools_config: dict[str, Any]) -> Any:
+    from aptgent.adapters.rnacomposer import RNAComposerAdapter
+
+    cfg = tools_config.get("rnacomposer", {})
+    return RNAComposerAdapter(
+        base_url=cfg.get("base_url", "https://rnacomposer.cs.put.poznan.pl"),
+        timeout_seconds=int(cfg.get("timeout_seconds", 60)),
+        max_poll_seconds=int(cfg.get("max_poll_seconds", 1800)),
+        poll_interval_seconds=int(cfg.get("poll_interval_seconds", 15)),
+    )
+
+
 def build_runtime(config_bundle: AppConfigBundle | None = None) -> AppRuntime:
     from aptgent.adapters.structure_services import (
         NoopStructureFetchAdapter,
         NoopStructureLookupAdapter,
-        NoopTertiaryStructureAdapter,
     )
     from aptgent.llm.skills import IntakeSkill, PdbReviewSkill
 
@@ -135,9 +157,10 @@ def build_runtime(config_bundle: AppConfigBundle | None = None) -> AppRuntime:
         molecule_resolver=create_molecule_resolver(),
         spatial_rank_adapter=create_spatial_rank_adapter(),
         pdb_analysis_adapter=create_pdb_analysis_adapter(tools_config),
+        receptor_prep_adapter=create_receptor_prep_adapter(tools_config),
         structure_lookup_adapter=NoopStructureLookupAdapter(),
         structure_fetch_adapter=NoopStructureFetchAdapter(),
-        tertiary_structure_adapter=NoopTertiaryStructureAdapter(),
+        tertiary_structure_adapter=create_rnacomposer_adapter(tools_config),
         intake_skill_factory=IntakeSkill,
         pdb_review_skill_factory=PdbReviewSkill,
     )

@@ -166,6 +166,11 @@ class MutationSitePanel(_BaseStructuredPanel):
     def on_mount(self) -> None:
         if self.selection_list is not None:
             self.selection_list.focus()
+        self.set_timer(0.05, self._deferred_focus)
+
+    def _deferred_focus(self) -> None:
+        if self.selection_list is not None:
+            self.selection_list.focus()
 
     def get_selected(self) -> list[int]:
         if self.selection_list is None:
@@ -370,7 +375,11 @@ class SpecificityPanel(_BaseStructuredPanel):
 
 
 class DockingStrategyPanel(_BaseStructuredPanel):
-    """Initial planner for docking strategy and optional time budget."""
+    """Phase 1: pick top-K + optional time budget, or skip docking.
+
+    Follows the methodology in Aptamers-2026.5.4.docx §2.4.4 where the top
+    candidates are docked individually; default top-k is 5 (paper value).
+    """
 
     DEFAULT_CSS = """
     DockingStrategyPanel > .panel-help {
@@ -392,29 +401,38 @@ class DockingStrategyPanel(_BaseStructuredPanel):
         *,
         machine_profile: dict | None = None,
         time_budget: int | None = None,
+        candidate_count: int = 0,
+        default_top_k: int = 5,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.machine_profile = machine_profile or {}
         self.time_budget = time_budget
+        self.candidate_count = candidate_count
+        self.default_top_k = max(1, min(default_top_k, candidate_count or default_top_k))
 
     def compose(self) -> ComposeResult:
-        yield Static("Docking Planning", classes="panel-title")
+        yield Static("Docking Selection \u2014 Step 7", classes="panel-title")
         yield Static(
-            "If you already know your parameter plan, open the manual form. "
-            "If not, you can optionally enter a time budget first and let the LLM draft the docking settings.",
+            "Choose how many top candidates to dock (paper default: top 5). "
+            "Each candidate gets its own 3D structure prepared in the next step.",
             classes="panel-help",
         )
         yield Static(f"[dim]{self._machine_info()}[/]")
+        yield Static(f"Available candidates: [bold]{self.candidate_count}[/bold]")
+        yield Static("Top-K candidates to dock:")
+        top_k_input = Input(id="dock-plan-top-k", placeholder="5")
+        top_k_input.value = str(self.default_top_k)
+        yield top_k_input
         yield Static("Optional time budget (hours):")
         budget_input = Input(id="dock-plan-budget", placeholder="e.g. 4")
         if self.time_budget is not None:
             budget_input.value = str(self.time_budget)
         yield budget_input
         with Horizontal():
-            yield Button("Get LLM Draft", id="btn-dock-plan-llm", variant="primary")
-            yield Button("Use My Own Parameters", id="btn-dock-plan-manual", variant="warning")
-            yield Button("Skip Docking", id="btn-dock-plan-skip")
+            yield Button("Continue", id="btn-dock-plan-continue", variant="primary")
+            yield Button("Get LLM Hint", id="btn-dock-plan-llm")
+            yield Button("Skip Docking", id="btn-dock-plan-skip", variant="warning")
 
     def _machine_info(self) -> str:
         if self.machine_profile:
@@ -427,24 +445,29 @@ class DockingStrategyPanel(_BaseStructuredPanel):
 
     def on_mount(self) -> None:
         try:
-            self.query_one("#dock-plan-budget", Input).focus()
+            self.query_one("#dock-plan-top-k", Input).focus()
         except NoMatches:
             _log.debug("Focus target missing during on_mount", exc_info=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         budget = self.query_one("#dock-plan-budget", Input).value.strip()
-        if event.button.id == "btn-dock-plan-llm":
+        top_k = self.query_one("#dock-plan-top-k", Input).value.strip() or str(self.default_top_k)
+        if event.button.id == "btn-dock-plan-continue":
             self.post_message(
-                StructuredActionRequested(
+                StructuredInputSubmitted(
                     Step.DOCKING_SELECTION,
-                    f"strategy:llm:{budget}",
+                    {
+                        "phase": "topk_selected",
+                        "top_k": top_k,
+                        "time_budget": budget,
+                    },
                 )
             )
-        elif event.button.id == "btn-dock-plan-manual":
+        elif event.button.id == "btn-dock-plan-llm":
             self.post_message(
                 StructuredActionRequested(
                     Step.DOCKING_SELECTION,
-                    f"strategy:manual:{budget}",
+                    f"llm-hint:{top_k}:{budget}",
                 )
             )
         elif event.button.id == "btn-dock-plan-skip":
@@ -456,8 +479,229 @@ class DockingStrategyPanel(_BaseStructuredPanel):
             )
 
 
+class DockingSourcePanel(_BaseStructuredPanel):
+    """Phase 2: choose receptor source (manual upload vs RNAComposer auto)."""
+
+    DEFAULT_CSS = """
+    DockingSourcePanel > .panel-help {
+        margin: 1 0;
+    }
+    DockingSourcePanel Horizontal {
+        height: auto;
+    }
+    DockingSourcePanel Horizontal > Button {
+        margin-right: 1;
+    }
+    """
+
+    def __init__(self, *, top_k: int = 5, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.top_k = top_k
+
+    def compose(self) -> ComposeResult:
+        yield Static("How will the receptor PDBQTs be prepared?", classes="panel-title")
+        yield Static(
+            "Each of the top candidates needs its own 3D structure. "
+            "Per Aptamers-2026.5.4.docx \u00a72.4.4, the paper predicts each "
+            "candidate via RNAComposer and adds hydrogens in AutoDockTools.",
+            classes="panel-help",
+        )
+        yield Static(f"Top candidates to prepare: [bold]{self.top_k}[/bold]")
+        with Horizontal():
+            yield Button(
+                "Manual upload",
+                id="btn-source-manual",
+                variant="primary",
+            )
+            yield Button(
+                "RNAComposer (auto)",
+                id="btn-source-rnacomposer",
+                variant="warning",
+            )
+
+    def on_mount(self) -> None:
+        try:
+            self.query_one("#btn-source-manual", Button).focus()
+        except NoMatches:
+            _log.debug("Focus target missing during on_mount", exc_info=True)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-source-manual":
+            self.post_message(
+                StructuredActionRequested(Step.DOCKING_SELECTION, "source:manual")
+            )
+        elif event.button.id == "btn-source-rnacomposer":
+            self.post_message(
+                StructuredActionRequested(Step.DOCKING_SELECTION, "source:rnacomposer")
+            )
+
+
+class DockingManualUploadPanel(_BaseStructuredPanel):
+    """Phase 3 (manual): user supplies a directory with `cand_<id>.pdb/.pdbqt`."""
+
+    DEFAULT_CSS = """
+    DockingManualUploadPanel > .panel-help {
+        margin: 1 0;
+    }
+    DockingManualUploadPanel > .panel-note {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    DockingManualUploadPanel > Input {
+        margin: 1 0;
+    }
+    DockingManualUploadPanel Horizontal {
+        height: auto;
+    }
+    DockingManualUploadPanel Horizontal > Button {
+        margin-right: 1;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        export_dir: str,
+        candidate_ids: list[str],
+        default_structures_dir: str = "",
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.export_dir = export_dir
+        self.candidate_ids = candidate_ids
+        self.default_structures_dir = default_structures_dir
+
+    def compose(self) -> ComposeResult:
+        yield Static("Manual receptor upload", classes="panel-title")
+        yield Static(
+            "The selected candidate sequences have been written to disk. "
+            "Predict each one's 3D structure (e.g. RNAComposer + ADT), then "
+            "drop the resulting files into a single directory named after each "
+            f"candidate id ({len(self.candidate_ids)} files total) using the "
+            "convention [bold]<candidate_id>.pdb[/bold] or "
+            "[bold]<candidate_id>.pdbqt[/bold].",
+            classes="panel-help",
+        )
+        if self.candidate_ids:
+            preview = ", ".join(f"{cid}.pdb" for cid in self.candidate_ids[:5])
+            extra = "" if len(self.candidate_ids) <= 5 else f", \u2026 ({len(self.candidate_ids)} total)"
+            yield Static(
+                f"[dim]Expected files: {preview}{extra}[/]",
+                classes="panel-note",
+            )
+        yield Static(f"Sequences exported to: [bold]{self.export_dir}[/bold]")
+        yield Static("Path to your prepared structures directory:")
+        dir_input = Input(
+            id="dock-structures-dir",
+            placeholder="/path/to/structures",
+        )
+        dir_input.value = self.default_structures_dir
+        yield dir_input
+        with Horizontal():
+            yield Button("Load structures", id="btn-load-structures", variant="primary")
+            yield Button("Back", id="btn-manual-back")
+
+    def on_mount(self) -> None:
+        try:
+            self.query_one("#dock-structures-dir", Input).focus()
+        except NoMatches:
+            _log.debug("Focus target missing during on_mount", exc_info=True)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-load-structures":
+            path = self.query_one("#dock-structures-dir", Input).value.strip()
+            self.post_message(
+                StructuredInputSubmitted(
+                    Step.DOCKING_SELECTION,
+                    {"phase": "manual_upload", "structures_dir": path},
+                )
+            )
+        elif event.button.id == "btn-manual-back":
+            self.post_message(
+                StructuredActionRequested(Step.DOCKING_SELECTION, "source:back")
+            )
+
+
+class DockingRNAComposerProgressPanel(_BaseStructuredPanel):
+    """Phase 3 (auto): show RNAComposer scraping progress + cancel button."""
+
+    DEFAULT_CSS = """
+    DockingRNAComposerProgressPanel > .panel-help {
+        margin: 1 0;
+    }
+    DockingRNAComposerProgressPanel > .panel-note {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    DockingRNAComposerProgressPanel Horizontal {
+        height: auto;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        total: int = 0,
+        completed: int = 0,
+        current_candidate: str = "",
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.total = total
+        self.completed = completed
+        self.current_candidate = current_candidate
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            "RNAComposer structure preparation",
+            classes="panel-title",
+        )
+        yield Static(
+            "Submitting each candidate sequence to RNAComposer, converting "
+            "RNA \u2192 DNA, adding hydrogens, and computing the search box. "
+            "This may take a few minutes per candidate.",
+            classes="panel-help",
+        )
+        progress = f"{self.completed} / {self.total} done"
+        if self.current_candidate:
+            progress += f" \u2014 current: {self.current_candidate}"
+        yield Static(progress, classes="panel-note", id="dock-rnacomposer-progress")
+        with Horizontal():
+            yield Button("Cancel", id="btn-rnacomposer-cancel", variant="warning")
+
+    def update_progress(
+        self,
+        *,
+        completed: int,
+        total: int,
+        current_candidate: str = "",
+    ) -> None:
+        self.completed = completed
+        self.total = total
+        self.current_candidate = current_candidate
+        try:
+            progress = f"{completed} / {total} done"
+            if current_candidate:
+                progress += f" \u2014 current: {current_candidate}"
+            self.query_one("#dock-rnacomposer-progress", Static).update(progress)
+        except NoMatches:
+            _log.debug("Progress label missing during update", exc_info=True)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-rnacomposer-cancel":
+            self.post_message(
+                StructuredActionRequested(Step.DOCKING_SELECTION, "rnacomposer:cancel")
+            )
+
+
 class DockingParamPanel(_BaseStructuredPanel):
-    """Inline widget for docking configuration parameters."""
+    """Final docking parameter confirmation.
+
+    Shows the per-candidate receptor + box overview (computed deterministically
+    upstream), lets the user tweak the global exhaustiveness and box padding,
+    and offers a "Cover whole aptamer" button that re-derives every box from
+    the receptor geometry.
+    """
 
     DEFAULT_CSS = """
     DockingParamPanel > .panel-help {
@@ -480,6 +724,11 @@ class DockingParamPanel(_BaseStructuredPanel):
     DockingParamPanel > Button {
         margin-top: 1;
     }
+    DockingParamPanel > .receptor-summary {
+        margin: 1 0;
+        max-height: 12;
+        overflow: auto;
+    }
     """
 
     def __init__(
@@ -489,15 +738,14 @@ class DockingParamPanel(_BaseStructuredPanel):
         machine_profile: dict | None = None,
         time_budget: int | None = None,
         recommended_top_k: int = 0,
-        recommended_grid_size: list[float] | None = None,
         recommended_exhaustiveness: int | None = None,
         recommendation_reason: str = "",
         receptor_path_note: str = "",
         grid_center_note: str = "",
         accepted_recommendation: bool = False,
-        receptor_path: str | None = None,
-        grid_center: list[float] | None = None,
-        grid_size: list[float] | None = None,
+        receptor_paths: dict[str, str] | None = None,
+        grid_boxes: dict[str, dict[str, list[float]]] | None = None,
+        grid_padding_angstrom: float = 4.0,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -505,85 +753,78 @@ class DockingParamPanel(_BaseStructuredPanel):
         self.machine_profile = machine_profile or {}
         self.time_budget = time_budget
         self.recommended_top_k = recommended_top_k
-        self.recommended_grid_size = recommended_grid_size or []
-        self.recommended_exhaustiveness = recommended_exhaustiveness
+        self.recommended_exhaustiveness = recommended_exhaustiveness or 8
         self.recommendation_reason = recommendation_reason
         self.receptor_path_note = receptor_path_note
         self.grid_center_note = grid_center_note
         self.accepted_recommendation = accepted_recommendation
-        self.receptor_path = receptor_path or ""
-        self.grid_center = grid_center or []
-        self.grid_size = grid_size or []
+        self.receptor_paths = dict(receptor_paths or {})
+        self.grid_boxes = dict(grid_boxes or {})
+        self.grid_padding_angstrom = grid_padding_angstrom
 
     def compose(self) -> ComposeResult:
         yield Static("Docking Configuration", classes="panel-title")
-        if self.mode == "llm":
-            yield Static(
-                "An LLM draft has been loaded. Review the suggested values, then confirm the tertiary-structure receptor path and grid center before continuing.",
-                classes="panel-help",
-            )
-            yield Static(
-                (
-                    f"Draft source: [bold]{'accepted recommendation' if self.accepted_recommendation else 'editable recommendation'}[/bold]\n"
-                    f"Reason: {self.recommendation_reason or 'Resource-balanced docking draft.'}"
-                ),
-                classes="panel-note",
-            )
-        else:
-            yield Static(
-                "Set the docking time budget, batch size, and receptor/grid parameters manually.",
-                classes="panel-help",
-            )
+        yield Static(
+            "Per Aptamers-2026.5.4.docx \u00a72.4.4: AutoDock Vina with default "
+            "num_modes (9) and energy_range (3.0); each candidate uses its own "
+            "receptor PDBQT and a search box that covers the whole aptamer.",
+            classes="panel-help",
+        )
+        if self.recommendation_reason:
+            yield Static(self.recommendation_reason, classes="panel-note")
         yield Static(f"[dim]{self._machine_info()}[/]")
+
         yield Static("Time budget (hours):")
         budget_input = Input(id="dock-time-budget", placeholder="e.g. 4")
         if self.time_budget is not None:
             budget_input.value = str(self.time_budget)
         yield budget_input
-        yield Static("Top-k candidates to dock:")
-        top_k_input = Input(id="dock-top-k", placeholder="e.g. 10")
-        if self.recommended_top_k > 0:
-            top_k_input.value = str(self.recommended_top_k)
-        yield top_k_input
-        yield Static("Receptor PDBQT file path (prepared or downloaded):")
-        if self.mode == "llm" and self.receptor_path_note:
-            yield Static(f"[dim]{self.receptor_path_note}[/]", classes="panel-note")
-        receptor_input = Input(id="dock-receptor", placeholder="/path/to/receptor.pdbqt")
-        receptor_input.value = self.receptor_path
-        yield receptor_input
-        yield Static("Grid box center (x, y, z):")
-        if self.mode == "llm" and self.grid_center_note:
-            yield Static(f"[dim]{self.grid_center_note}[/]", classes="panel-note")
-        with Horizontal():
-            cx_input = Input(id="dock-cx", placeholder="0.0")
-            cy_input = Input(id="dock-cy", placeholder="0.0")
-            cz_input = Input(id="dock-cz", placeholder="0.0")
-            if len(self.grid_center) == 3:
-                cx_input.value = str(self.grid_center[0])
-                cy_input.value = str(self.grid_center[1])
-                cz_input.value = str(self.grid_center[2])
-            yield cx_input
-            yield cy_input
-            yield cz_input
-        yield Static("Grid box size (x, y, z):")
-        with Horizontal():
-            sx_input = Input(id="dock-sx", placeholder="20.0")
-            sy_input = Input(id="dock-sy", placeholder="20.0")
-            sz_input = Input(id="dock-sz", placeholder="20.0")
-            size_values = self.grid_size or self.recommended_grid_size
-            if len(size_values) == 3:
-                sx_input.value = str(size_values[0])
-                sy_input.value = str(size_values[1])
-                sz_input.value = str(size_values[2])
-            yield sx_input
-            yield sy_input
-            yield sz_input
-        yield Static("Exhaustiveness (8, 16, or 32):")
+
+        yield Static(f"Per-receptor structures ({len(self.receptor_paths)} loaded)")
+        yield Static(self._receptor_summary(), classes="receptor-summary")
+
+        yield Static("Exhaustiveness (Vina default 8; 16/32 if compute is generous):")
         exh_input = Input(id="dock-exhaustiveness", placeholder="8")
-        if self.recommended_exhaustiveness is not None:
-            exh_input.value = str(self.recommended_exhaustiveness)
+        exh_input.value = str(self.recommended_exhaustiveness)
         yield exh_input
-        yield Button("Submit & Continue", id="btn-submit-dock", variant="success")
+
+        yield Static("Grid padding (\u00c5):")
+        pad_input = Input(id="dock-padding", placeholder="4.0")
+        pad_input.value = str(self.grid_padding_angstrom)
+        yield pad_input
+
+        with Horizontal():
+            yield Button(
+                "Cover whole aptamer (recompute boxes)",
+                id="btn-cover-aptamer",
+                variant="warning",
+            )
+            yield Button(
+                "Submit & Continue",
+                id="btn-submit-dock",
+                variant="success",
+            )
+
+    def _receptor_summary(self) -> str:
+        if not self.receptor_paths:
+            return "[red]No per-candidate receptors loaded yet.[/]"
+        rows: list[str] = []
+        for cand_id, path in list(self.receptor_paths.items())[:8]:
+            box = self.grid_boxes.get(cand_id)
+            if box:
+                center = box.get("center", [])
+                size = box.get("size", [])
+                if len(center) == 3 and len(size) == 3:
+                    rows.append(
+                        f"\u2022 {cand_id}: center=({center[0]:.1f}, "
+                        f"{center[1]:.1f}, {center[2]:.1f}) "
+                        f"size=({size[0]:.1f}, {size[1]:.1f}, {size[2]:.1f})"
+                    )
+                    continue
+            rows.append(f"\u2022 {cand_id}: [dim]{path}[/]")
+        if len(self.receptor_paths) > 8:
+            rows.append(f"\u2026 and {len(self.receptor_paths) - 8} more")
+        return "\n".join(rows)
 
     def _machine_info(self) -> str:
         import os
@@ -605,8 +846,7 @@ class DockingParamPanel(_BaseStructuredPanel):
 
     def on_mount(self) -> None:
         try:
-            focus_id = "#dock-receptor" if self.mode == "llm" else "#dock-time-budget"
-            self.query_one(focus_id, Input).focus()
+            self.query_one("#dock-time-budget", Input).focus()
         except NoMatches:
             _log.debug("Focus target missing during on_mount", exc_info=True)
 
@@ -616,40 +856,42 @@ class DockingParamPanel(_BaseStructuredPanel):
             self.post_message(
                 StructuredInputSubmitted(Step.DOCKING_SELECTION, data)
             )
+        elif event.button.id == "btn-cover-aptamer":
+            try:
+                padding = float(self.query_one("#dock-padding", Input).value.strip() or "4.0")
+            except (ValueError, AttributeError):
+                padding = self.grid_padding_angstrom
+            self.post_message(
+                StructuredActionRequested(
+                    Step.DOCKING_SELECTION,
+                    f"cover-aptamer:{padding}",
+                )
+            )
 
     def _collect_data(self) -> dict:
-        def fv(widget_id: str) -> float | None:
-            try:
-                return float(self.query_one(f"#{widget_id}", Input).value.strip())
-            except (ValueError, AttributeError):
-                return None
-
         def iv(widget_id: str) -> int | None:
             try:
                 return int(self.query_one(f"#{widget_id}", Input).value.strip())
             except (ValueError, AttributeError):
                 return None
 
-        cx, cy, cz = fv("dock-cx"), fv("dock-cy"), fv("dock-cz")
-        sx, sy, sz = fv("dock-sx"), fv("dock-sy"), fv("dock-sz")
+        def fv(widget_id: str) -> float | None:
+            try:
+                return float(self.query_one(f"#{widget_id}", Input).value.strip())
+            except (ValueError, AttributeError):
+                return None
 
-        budget_str = ""
-        top_k_str = ""
         budget_str = self.query_one("#dock-time-budget", Input).value.strip()
-        top_k_str = self.query_one("#dock-top-k", Input).value.strip()
-        receptor = self.query_one("#dock-receptor", Input).value.strip()
-
         exh_raw = iv("dock-exhaustiveness")
-        if exh_raw not in (8, 16, 32):
+        if exh_raw is None or exh_raw < 1:
             exh_raw = self.recommended_exhaustiveness
+        padding = fv("dock-padding") or self.grid_padding_angstrom
 
         return {
+            "phase": "param_submitted",
             "time_budget": int(budget_str) if budget_str.isdigit() else self.time_budget,
-            "top_k": int(top_k_str) if top_k_str.isdigit() else self.recommended_top_k,
-            "receptor_path": receptor or None,
-            "grid_center": [cx, cy, cz] if all(v is not None for v in (cx, cy, cz)) else None,
-            "grid_size": [sx, sy, sz] if all(v is not None for v in (sx, sy, sz)) else None,
             "exhaustiveness": exh_raw,
+            "grid_padding_angstrom": padding,
             "recommendation_reason": self.recommendation_reason,
             "uses_recommendation": self.mode == "llm",
             "accepted_recommendation": self.accepted_recommendation,

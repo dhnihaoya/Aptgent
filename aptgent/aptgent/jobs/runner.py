@@ -408,6 +408,14 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
     per_ligand_timeout = docking_cfg.get("per_ligand_timeout_seconds", 1800)
     exhaustiveness = plan.exhaustiveness
 
+    receptor_paths: dict[str, str] = dict(plan.receptor_paths or {})
+    grid_boxes: dict[str, dict[str, list[float]]] = {}
+    for cand_id, box in (plan.grid_boxes or {}).items():
+        grid_boxes[cand_id] = {
+            "center": list(box.center),
+            "size": list(box.size),
+        }
+
     existing_results: list[DockingResult] = []
     remaining_candidates = []
     for cand in top_candidates:
@@ -448,12 +456,12 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
     try:
         if remaining_candidates and not cancel_event.is_set():
             adapter = create_vina_adapter(tools_config)
-            if exhaustiveness is not None:
+            if exhaustiveness is not None and exhaustiveness != adapter.exhaustiveness:
                 adapter = VinaAdapter(
                     executable=adapter.executable,
                     exhaustiveness=exhaustiveness,
-                    num_modes=adapter.num_modes,
-                    energy_range=adapter.energy_range,
+                    num_modes=plan.num_modes or adapter.num_modes,
+                    energy_range=plan.energy_range or adapter.energy_range,
                     lazy=True,
                 )
 
@@ -463,9 +471,8 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
                 batch_results = adapter.run_batch(
                     candidates=[candidate],
                     target=target,
-                    receptor_pdbqt=plan.receptor_path,
-                    center=plan.grid_center,
-                    size=plan.grid_size,
+                    receptor_paths=receptor_paths,
+                    grid_boxes=grid_boxes,
                     work_dir=work_dir,
                     seed=seed,
                     per_ligand_timeout=per_ligand_timeout,
