@@ -211,6 +211,22 @@ async def test_ctrl_q_opens_quit_modal(tmp_path):
         await pilot.pause()
 
         assert isinstance(app.screen, QuitConfirmScreen)
+
+@pytest.mark.anyio
+async def test_quit_confirm_button_exits_app(tmp_path):
+    app = make_app(tmp_path)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("ctrl+q")
+        await pilot.pause()
+
+        assert isinstance(app.screen, QuitConfirmScreen)
+
+        await pilot.click("#quit-confirm")
+        await pilot.pause()
+
+        assert not app.is_running
 @pytest.mark.anyio
 async def test_final_report_palette_exposes_report_commands(tmp_path):
     app = make_app(tmp_path)

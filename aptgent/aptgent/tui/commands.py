@@ -34,7 +34,7 @@ QUIT_COMMAND = SlashCommand(
 
 EXPORT_COMMAND = SlashCommand(
     name="/export",
-    description="Export the final report JSON",
+    description="Export the final report Markdown",
 )
 
 FINISH_COMMAND = SlashCommand(

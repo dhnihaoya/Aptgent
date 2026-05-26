@@ -12,6 +12,7 @@ class QuitConfirmScreen(ModalScreen[bool]):
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
+        Binding("enter", "confirm", "Confirm"),
         Binding("q", "cancel", "Cancel"),
     ]
 
@@ -70,6 +71,12 @@ class QuitConfirmScreen(ModalScreen[bool]):
 
     def action_cancel(self) -> None:
         self.dismiss(False)
+
+    def action_confirm(self) -> None:
+        self.dismiss(True)
+
+    def on_mount(self) -> None:
+        self.query_one("#quit-confirm", Button).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "quit-confirm":

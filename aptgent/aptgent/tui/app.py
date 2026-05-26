@@ -393,7 +393,7 @@ class AptgentApp(App):
         if not should_quit:
             return
         self.save_state()
-        self.exit()
+        self.exit(message="Aptgent exited.")
 
 
 def run() -> None:
