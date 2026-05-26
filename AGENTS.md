@@ -131,7 +131,7 @@ LLM 输出是辅助信息，不应覆盖确定性计算结果。涉及评分、�
 - `site_proposal`：突变位点提议（含 rephrase 能力）。先产出区域级风险评估（`region_assessment`），将序列区域分为 `safer_scaffold`、`suspected_binding_core` 或 `uncertain`，解释每个区域的分类依据；再给出恰好 3 个备选 mutation 方案，按保守 → 激进（含保守位点）→ LLM 自选方向排序；每个方案包含独立的位点、推理和置信度，若使用了 suspected binding/core 风险位点需显式说明理由；首选方案会镜像到 legacy 字段保持兼容。UI 层以 `expanded` 模式展示全部选项。支持 retry feedback：当枚举或打分步骤未找到阳性候选时，通过 `extra_context.site_selection_feedback` 回传失败原因、上下文引导（`guidance`）、需保留的方案索引（`preserve_proposal_indexes`）和前一轮方案（`previous_proposals`），LLM 据此只替换失败的方案槽位。
 - `analog_suggestion`：结构类似物建议，用于特异性过滤步骤，LLM 推荐靶标的类似物供交叉预测。
 - `docking_planner`：对接参数建议（advisory 级别），LLM 可建议 `top_k`、`grid_size`、`exhaustiveness`，但所有数值经 `validate_docking_recommendation_result()` 钳位后才生效。
-- `report`：最终报告生成，LLM 辅助撰写结论性报告摘要。
+- `report`：最终报告生成，LLM 基于确定性 workflow 结果撰写 Markdown 报告。TUI 先直接展示 Markdown；导出时用户侧主产物为 `final_report.md`，同时保留 `final_report.json` 作为机器可读 sidecar。报告只详细展开进入 docking 的序列，未 docking 的候选只汇总预测、筛选、得分范围等概况，不逐条展示。
 
 LLM 调用日志记录到 `<run_dir>/logs/llm_calls.jsonl`，默认对用户输入做 SHA-256 脱敏（`APTGENT_LLM_REDACT=0` 关闭）。
 
@@ -141,7 +141,7 @@ LLM 调用日志记录到 `<run_dir>/logs/llm_calls.jsonl`，默认对用户输�
 
 长时间运行的步骤（如 docking）可以作为独立子进程执行，TUI 不需要保持运行：
 
-- `aptgent/aptgent/jobs/runner.py`：`aptgent run-job <run_id> <step>` 入口，在隔离进程中加载 RunState 并执行 step 逻辑。
+- `aptgent/aptgent/jobs/runner.py`：`aptgent run-job <run_id> <step>` 入口，在隔离进程中加载 RunState 并执行 step 逻辑。当前注册的 step：`candidate_enumeration`、`specificity_filter`、`docking_run`。
 - `aptgent/aptgent/jobs/events.py`：事件写入/读取（`runs/<id>/jobs/<step>/events.jsonl`）。
 - `aptgent/aptgent/jobs/pid.py`：PID 文件管理，用于检测子进程存活状态。
 - `aptgent/aptgent/tui/steps/job_mixin.py`：TUI 端 mixin，提供 `attach_or_spawn_job()`——自动判断附加到正在运行的 job、加载已完成结果、或启动新子进程。
@@ -202,6 +202,20 @@ intake step 内部包含 PDB 输入子流程（`tui/steps/pdb_intake.py`），�
 用户可通过命令文件（`<run_dir>/jobs/candidate_enumeration/cmd.jsonl`）发送取消信号。Runner 层使用独立的 `stop_cancel_poller` 事件控制轮询线程的生命周期，并在 `predict_mutation_batch()` 返回后 join 线程。取消来源有两个：用户主动取消（命令文件写入 `cancel`）和 adapter 内部取消（返回 `{"cancelled": true}`）。
 
 TUI 层（`enumeration.py`）在检测到取消时，显示警告信息并回退到 `site_proposal` 步骤（`rewind_to_step`），让用户重新选择突变位点，而非直接终止工作流。
+
+### specificity-batch 加速路径
+
+`EnsembleAdapter.predict_specificity_batch()` 把 `(candidates × targets)` 交叉打分搬到 predictor 子进程里流式执行，避免 in-process worker 长时间无响应。子进程通过 `runner.py specificity-batch` 子命令运行，stdout 协议与 mutation-batch 风格一致：
+
+- `ready`：模型加载完成（含 `device`、`model_order`、`total`）。
+- `row`：单个 `(target_idx, candidate_id)` 完成（含 `label`、`probability`、`target_name`）。
+- `progress`：每 `--progress-every` 个 row（以及 target 切换时）发一次。
+- `done` / `error`：终止事件。
+- stdin 接受 `cancel\n` 软取消信号。
+
+`SpecificityHandler`（`tui/steps/specificity.py`）继承 `JobAttachMixin`，`JOB_STEP="specificity_filter"`；analog 选择完成后通过 `attach_or_spawn_job()` 启动 detached job runner（`_run_specificity` in `jobs/runner.py`）。runner 持续维护 `runs/<id>/artifacts/specificity_results.jsonl`（首行为 meta，其余按 candidate 写入 kept/removed/failed_analogs），断点续跑时通过 meta 匹配 + `skip_pairs` 把已完成的 `(target_idx, candidate_id)` 让子进程跳过。
+
+UI 上 `ProgressBubble` 与 candidate enumeration 完全一致，信息行格式为 `Progress: X/Y | Kept: K | Removed: R | Target: <name>`。
 
 ## 7. 配置与环境注意事项
 
@@ -276,6 +290,7 @@ aptgent run-job <run_id> <step>
 - `test_enumeration_ui.py`：枚举步骤 UI 测试
 - `test_pdb_analysis.py`：PDB 分析 adapter 测试
 - `test_spatial_rank.py`：空间排序测试
+- `test_tui_report.py`：最终 Markdown 报告上下文、fallback 展示与导出测试
 
 修改以下内容后，至少应重新检查对应测试：
 
