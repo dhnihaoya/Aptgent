@@ -141,32 +141,34 @@ class VinaAdapter:
         self,
         candidates: list[CandidateSequence],
         target: TargetMolecule,
-        receptor_pdbqt: str | Path,
-        center: list[float],
-        size: list[float],
+        receptor_paths: dict[str, str | Path],
+        grid_boxes: dict[str, dict[str, list[float]]],
         work_dir: str | Path | None = None,
         cpu: int | None = None,
         seed: int | None = None,
         per_ligand_timeout: int | None = None,
     ) -> list[DockingResult]:
-        """Run Vina for each candidate against the target molecule.
+        """Run Vina once per candidate (each candidate has its own receptor).
 
-        For each candidate, the target SMILES is converted to PDBQT via meeko,
-        then Vina is called with the provided receptor and grid box.
+        For every candidate we prepare a single shared ligand PDBQT from the
+        target SMILES and run Vina with the candidate's own receptor PDBQT
+        and pre-computed search box.
 
         Args:
             candidates: List of candidate sequences.
             target: Target molecule with resolved SMILES.
-            receptor_pdbqt: Path to receptor PDBQT file.
-            center: Grid box center [x, y, z].
-            size: Grid box size [x, y, z].
+            receptor_paths: ``{candidate_id: pdbqt_path}`` mapping. Candidates
+                missing from the mapping yield ``status="missing_receptor"``
+                results without invoking Vina.
+            grid_boxes: ``{candidate_id: {"center": [x,y,z], "size": [x,y,z]}}``
+                mapping. Same missing-handling as ``receptor_paths``.
             work_dir: Directory for temp files (default: system temp).
             cpu: Number of CPUs per Vina run.
             seed: Random seed for reproducibility.
             per_ligand_timeout: Max seconds per ligand (default: 1800).
 
         Returns:
-            List of DockingResult, one per candidate.
+            List of DockingResult, one per candidate (in input order).
         """
         self._check_binary()
 
@@ -187,13 +189,31 @@ class VinaAdapter:
             results: list[DockingResult] = []
             for i, cand in enumerate(candidates):
                 cand_id = cand.candidate_id or f"cand_{i}"
+                receptor = receptor_paths.get(cand_id)
+                box = grid_boxes.get(cand_id) or {}
+                center = box.get("center")
+                size = box.get("size")
+                if not receptor or not center or not size:
+                    results.append(
+                        DockingResult(
+                            candidate_id=cand_id,
+                            docking_score=None,
+                            status="missing_receptor",
+                            raw_outputs={
+                                "has_receptor": bool(receptor),
+                                "has_center": bool(center),
+                                "has_size": bool(size),
+                            },
+                        )
+                    )
+                    continue
                 out_path = self.output_path(work_dir, cand_id)
                 try:
                     result = self.run_single(
-                        receptor_pdbqt=receptor_pdbqt,
+                        receptor_pdbqt=receptor,
                         ligand_pdbqt=ligand_path,
-                        center=center,
-                        size=size,
+                        center=list(center),
+                        size=list(size),
                         output_pdbqt=out_path,
                         cpu=cpu,
                         seed=seed,
