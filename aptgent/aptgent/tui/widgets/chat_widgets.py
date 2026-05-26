@@ -4,7 +4,7 @@ import logging
 import re
 
 from rich.markdown import Markdown
-from rich.markup import escape
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
@@ -147,7 +147,7 @@ class StreamingBubble(Static):
 
     def append_text(self, text: str) -> None:
         self._buffer += text
-        self.update(self._buffer + "▌")
+        self.update(Text(self._buffer + "▌"))
 
     def finalize(self) -> None:
         if self._markdown:
@@ -240,16 +240,19 @@ class ThinkingBubble(Static):
         style, icon = self._header_style()
         action_label = "collapse" if self._expanded else "expand"
         label_color = _theme_variable(self, "chat-thinking-label")
-        header = (
+        header_markup = (
             f"[{style}]{icon}[/] [bold {label_color}]Thinking[/] "
             f"[dim]{self.estimated_tokens} tokens {arrow} (ctrl+o to {action_label})[/dim]"
         )
         if not self._expanded:
-            self.update(header)
+            self.update(header_markup)
             return
 
-        body = escape(self._buffer) + ("▌" if self._streaming else "")
-        self.update(f"{header}\n{body}")
+        header = Text.from_markup(header_markup)
+        body = Text(self._buffer)
+        if self._streaming:
+            body.append("▌")
+        self.update(Text("\n").join([header, body]))
 
 
 class UserBubble(Static):

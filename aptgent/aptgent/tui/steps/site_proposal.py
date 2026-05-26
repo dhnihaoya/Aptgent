@@ -235,6 +235,7 @@ class SiteProposalHandler(StepHandler):
             seq = get_sequence(state) or ""
             panel = MutationSitePanel(seq, getattr(self, "_proposed_sites", []))
             self.screen.add_structured_widget(panel)
+            self.screen.set_input_enabled(False)
             self.screen.set_input_placeholder(
                 "Select sites in the panel, or type comma-separated positions."
             )

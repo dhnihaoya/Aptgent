@@ -10,6 +10,7 @@ from aptgent.tui.steps.common import (
     run_llm_interaction,
     validate_analog_suggestion_result,
 )
+from aptgent.tui.widgets.chat_widgets import ProgressBubble
 from aptgent.tui.widgets.structured_input import ActionMenuPanel, SpecificityPanel
 from aptgent.workflow.context import record_specificity_recommendation_context
 
@@ -126,6 +127,10 @@ class SpecificityHandler(StepHandler):
                 accepted=False,
             )
             self.screen.app.save_state()
+            if markdown:
+                self.screen.app.call_from_thread(
+                    lambda md=markdown: self.screen.add_system_message(md, markdown=True)
+                )
             if analog_names:
                 self.screen.app.call_from_thread(self._show_recommendation_choice_panel)
             else:
@@ -220,6 +225,8 @@ class SpecificityHandler(StepHandler):
         state.analogs = analogs
         self.screen.app.save_state()
 
+        self.screen.clear_structured_widget()
+
         self.screen.add_system_message(
             f"Running cross-prediction on {len(candidates)} candidates x {len(analogs)} analogs..."
         )
@@ -229,10 +236,29 @@ class SpecificityHandler(StepHandler):
         )
 
     def _filter_worker(self, candidates, target, analogs) -> None:
+        all_targets = [target] + analogs
+        total = len(all_targets)
+
+        progress = ProgressBubble(total, label="Specificity Cross-Prediction")
+        self.screen.app.call_from_thread(self.screen.add_structured_widget, progress)
+
         try:
-            results_by_target = self.screen.app.prediction_adapter.predict_batch_for_targets(
-                candidates, [target] + analogs
-            )
+            adapter = self.screen.app.prediction_adapter
+            results_by_target: dict[str, list] = {}
+
+            for idx, tgt in enumerate(all_targets):
+                if not tgt.smiles:
+                    results_by_target[tgt.smiles or ""] = []
+                else:
+                    results_by_target[tgt.smiles] = adapter._predict_batch_via_csv(
+                        candidates, tgt
+                    )
+                done = idx + 1
+                label = tgt.resolved_name or tgt.input_text or f"target {idx}"
+                self.screen.app.call_from_thread(
+                    progress.set_progress, done, f"Completed: {label}"
+                )
+
             specificity_results: list[SpecificityResult] = []
             kept_count = 0
 
@@ -274,10 +300,16 @@ class SpecificityHandler(StepHandler):
                 ]
                 msg += f"\nRemoved: {', '.join(removed[:10])}"
 
-            self.screen.app.call_from_thread(self.screen.add_system_message, msg)
-            ns = next_step(Step.SPECIFICITY_FILTER)
-            if ns:
-                self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
+            finish_msg = f"{total} target(s) predicted — {kept_count}/{len(candidates)} kept"
+
+            def _on_filter_complete() -> None:
+                progress.finish(finish_msg)
+                self.screen.add_system_message(msg)
+                ns = next_step(Step.SPECIFICITY_FILTER)
+                if ns:
+                    self.screen.advance_to_step(ns)
+
+            self.screen.app.call_from_thread(_on_filter_complete)
         except Exception as exc:
             self.screen.app.call_from_thread(
                 self.screen.add_system_message, f"Filter failed: {exc}", "error-text"
