@@ -22,7 +22,6 @@ class DockingPlannerSkill(BaseSkill):
         time_budget_hours: int | None,
         computed_top_k: int | None = None,
         computed_time_budget_hours: int | None = None,
-        computed_grid_size: list[float] | None = None,
         target_smiles: str | None = None,
         target_name: str | None = None,
     ) -> str:
@@ -32,7 +31,6 @@ class DockingPlannerSkill(BaseSkill):
             "time_budget_hours": time_budget_hours,
             "computed_top_k": computed_top_k,
             "computed_time_budget_hours": computed_time_budget_hours,
-            "computed_grid_size": computed_grid_size,
         }
         if target_smiles:
             payload["target_smiles"] = target_smiles
@@ -50,7 +48,6 @@ class DockingPlannerSkill(BaseSkill):
                 time_budget_hours=payload.get("time_budget_hours"),
                 computed_top_k=payload.get("computed_top_k"),
                 computed_time_budget_hours=payload.get("computed_time_budget_hours"),
-                computed_grid_size=payload.get("computed_grid_size"),
                 target_smiles=payload.get("target_smiles"),
                 target_name=payload.get("target_name"),
             )
@@ -64,7 +61,6 @@ class DockingPlannerSkill(BaseSkill):
         *,
         computed_top_k: int | None = None,
         computed_time_budget_hours: int | None = None,
-        computed_grid_size: list[float] | None = None,
         target_smiles: str | None = None,
         target_name: str | None = None,
     ) -> dict[str, Any]:
@@ -74,7 +70,6 @@ class DockingPlannerSkill(BaseSkill):
             time_budget_hours,
             computed_top_k,
             computed_time_budget_hours,
-            computed_grid_size,
             target_smiles,
             target_name,
         )
@@ -88,7 +83,6 @@ class DockingPlannerSkill(BaseSkill):
         *,
         computed_top_k: int | None = None,
         computed_time_budget_hours: int | None = None,
-        computed_grid_size: list[float] | None = None,
         target_smiles: str | None = None,
         target_name: str | None = None,
     ):
@@ -98,7 +92,6 @@ class DockingPlannerSkill(BaseSkill):
             time_budget_hours,
             computed_top_k,
             computed_time_budget_hours,
-            computed_grid_size,
             target_smiles,
             target_name,
         )
@@ -112,7 +105,6 @@ class DockingPlannerSkill(BaseSkill):
         *,
         computed_top_k: int | None = None,
         computed_time_budget_hours: int | None = None,
-        computed_grid_size: list[float] | None = None,
         target_smiles: str | None = None,
         target_name: str | None = None,
     ):
@@ -126,7 +118,6 @@ class DockingPlannerSkill(BaseSkill):
             time_budget_hours,
             computed_top_k,
             computed_time_budget_hours,
-            computed_grid_size,
             target_smiles,
             target_name,
         )

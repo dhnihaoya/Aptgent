@@ -6,8 +6,8 @@ Rules:
 - Do not use JSON or markdown code fences.
 - Include every parameter below as a list item:
   - time budget
-  - top-k
-  - grid box size
-  - receptor path status
-  - grid center status
+  - top-k (paper default is 5)
+  - exhaustiveness (Vina default is 8)
+  - receptor preparation status (manual vs. RNAComposer auto)
+  - grid box note (search box auto-covers each aptamer)
   - brief rationale

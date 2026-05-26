@@ -33,6 +33,10 @@ def _is_retryable(exc: BaseException) -> bool:
 
 
 class LLMClient:
+    _REPETITION_WINDOW = 200
+    _REPETITION_MIN_PATTERN = 40
+    _REPETITION_THRESHOLD = 3
+
     def __init__(self, config_path: str | Path | None = None) -> None:
         if config_path is None:
             config_path = Path(__file__).parent.parent / "config" / "llm.toml"
@@ -54,6 +58,7 @@ class LLMClient:
         self.temperature = self.config.get("temperature", 0.2)
         self.json_temperature = self.config.get("json_temperature", 0.2)
         self.max_tokens = self.config.get("max_tokens", 4096)
+        self.max_reasoning_tokens = self.config.get("max_reasoning_tokens", 16384)
         self.timeout = self.config.get("timeout_seconds", 60)
         self.max_retries = self.config.get("max_retries", 2)
         self._thinking_enabled = True
@@ -101,6 +106,8 @@ class LLMClient:
 
     def _supports_thinking(self, model: str | None = None) -> bool:
         m = model or self.model
+        if "flash" in m:
+            return False
         return m.startswith("glm-") or m.startswith("kimi-")
 
     def _load_config(self, path: Path) -> dict[str, Any]:
@@ -185,6 +192,32 @@ class LLMClient:
             pool=30.0,
         )
 
+    @staticmethod
+    def _detect_repetition(
+        buf: str,
+        window: int = _REPETITION_WINDOW,
+        min_pat: int = _REPETITION_MIN_PATTERN,
+        threshold: int = _REPETITION_THRESHOLD,
+    ) -> bool:
+        """Return True if the tail of *buf* contains a repeating pattern."""
+        tail = buf[-window:] if len(buf) > window else buf
+        if len(tail) < min_pat * threshold:
+            return False
+        for pat_len in range(min_pat, len(tail) // threshold + 1):
+            pattern = tail[-pat_len:]
+            count = 0
+            pos = len(tail) - pat_len
+            while pos >= 0:
+                candidate = tail[pos:pos + pat_len]
+                if candidate == pattern:
+                    count += 1
+                    if count >= threshold:
+                        return True
+                    pos -= pat_len
+                else:
+                    break
+        return False
+
     def _iter_sse_events(
         self,
         resp: httpx.Response,
@@ -195,7 +228,14 @@ class LLMClient:
         If ``should_cancel`` is supplied, the stream is polled between
         lines and :class:`LLMCancelled` is raised when it returns True so
         workers can abort without waiting for the full ``read`` timeout.
+
+        Reasoning events are suppressed (but the stream continues) when
+        either the cumulative reasoning text exceeds ``max_reasoning_tokens``
+        characters or a repetitive pattern is detected.
         """
+        reasoning_buf: list[str] = []
+        reasoning_chars = 0
+        reasoning_suppressed = False
         for line in resp.iter_lines():
             if should_cancel is not None and should_cancel():
                 raise LLMCancelled()
@@ -208,8 +248,30 @@ class LLMClient:
                 chunk = json.loads(data)
                 delta = chunk["choices"][0].get("delta", {})
                 reasoning = self._extract_content(delta.get("reasoning_content", ""))
-                if reasoning:
-                    yield {"type": "reasoning", "text": reasoning}
+                if reasoning and not reasoning_suppressed:
+                    reasoning_chars += len(reasoning)
+                    reasoning_buf.append(reasoning)
+                    if reasoning_chars > self.max_reasoning_tokens:
+                        reasoning_suppressed = True
+                        _log.info(
+                            "Reasoning suppressed: exceeded %d char limit",
+                            self.max_reasoning_tokens,
+                        )
+                        yield {
+                            "type": "reasoning",
+                            "text": "\n\n[reasoning truncated — token limit]",
+                        }
+                    elif len(reasoning_buf) % 8 == 0 and self._detect_repetition(
+                        "".join(reasoning_buf)
+                    ):
+                        reasoning_suppressed = True
+                        _log.info("Reasoning suppressed: repetitive loop detected")
+                        yield {
+                            "type": "reasoning",
+                            "text": "\n\n[reasoning truncated — repetitive loop detected]",
+                        }
+                    else:
+                        yield {"type": "reasoning", "text": reasoning}
                 content = self._extract_content(delta.get("content", ""))
                 if content:
                     yield {"type": "content", "text": content}
@@ -287,9 +349,11 @@ class LLMClient:
         user_prompt: str,
         *,
         should_cancel: Callable[[], bool] | None = None,
+        enable_thinking: bool = True,
     ):
         timeout = self._stream_timeout()
         last_exc: BaseException | None = None
+        use_model = self.model if enable_thinking else self.fast_model
         for attempt in range(self.max_retries + 1):
             if should_cancel is not None and should_cancel():
                 raise LLMCancelled()
@@ -306,8 +370,8 @@ class LLMClient:
                         temperature=self.json_temperature,
                         stream=True,
                         response_format={"type": "json_object"},
-                        enable_thinking=True,
-                        model=self.model,
+                        enable_thinking=enable_thinking,
+                        model=use_model,
                     ),
                     timeout=timeout,
                 ) as resp:
