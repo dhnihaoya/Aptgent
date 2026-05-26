@@ -288,6 +288,7 @@ class IntakeHandler(StepHandler):
         mod = result.get("modification_region")
         analogs = result.get("analogs", [])
         time_budget = result.get("time_budget_hours")
+        proposed_sites_raw = result.get("proposed_sites", [])
         mixed_input_detected = bool(result.get("mixed_input_detected") or (pdb_id and (seq or target_text)))
 
         if mod:
@@ -305,6 +306,20 @@ class IntakeHandler(StepHandler):
         elif not pdb_id:
             state.input_payload.pop("initial_sequence", None)
 
+        proposed_sites_0: list[int] = []
+        if proposed_sites_raw:
+            proposed_sites_0 = [s - 1 for s in proposed_sites_raw if isinstance(s, int) and s > 0]
+            if seq:
+                before = len(proposed_sites_0)
+                proposed_sites_0 = [s for s in proposed_sites_0 if 0 <= s < len(seq)]
+                if len(proposed_sites_0) < before:
+                    state.context.intake.proposed_sites = proposed_sites_0
+                    self.screen.app.call_from_thread(
+                        self.screen.add_system_message,
+                        f"Some proposed sites were out of range (sequence length {len(seq)}) and have been dropped.",
+                        "warning-text",
+                    )
+
         record_intake_context(
             state,
             user_brief=text,
@@ -312,6 +327,7 @@ class IntakeHandler(StepHandler):
             target_text=target_text,
             modification_region=mod,
             analogs=analogs,
+            proposed_sites=proposed_sites_0,
             time_budget_hours=time_budget,
             phase="initial",
             clear_resolution_error=True,
