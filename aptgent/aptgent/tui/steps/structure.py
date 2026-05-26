@@ -7,6 +7,11 @@ from aptgent.workflow.context import get_sequence, record_secondary_structure_co
 
 
 class StructureHandler(StepHandler):
+
+    def _has_pdb_context(self) -> bool:
+        pdb_ctx = self.screen.app.current_state.context.pdb_intake
+        return bool(pdb_ctx.artifact_path and pdb_ctx.selected_chain_id)
+
     def enter(self) -> None:
         state = self.screen.app.current_state
         seq = get_sequence(state) or ""
@@ -14,17 +19,54 @@ class StructureHandler(StepHandler):
             self.screen.add_system_message("Error: no sequence available.", "error-text")
             self.screen.set_input_enabled(True)
             return
-        self.screen.add_tool_message(
-            "\n".join(
-                [
-                    "**Secondary-structure prediction**",
-                    "",
-                    f"- Sequence length: **{len(seq)}**",
-                    "- Method: RNAfold",
-                ]
+
+        if self._has_pdb_context():
+            pdb_ctx = state.context.pdb_intake
+            self.screen.add_tool_message(
+                "\n".join(
+                    [
+                        "**Secondary-structure prediction**",
+                        "",
+                        f"- Sequence length: **{len(seq)}**",
+                        f"- Method: PDB-derived (PDB `{pdb_ctx.pdb_id}`, chain `{pdb_ctx.selected_chain_id}`)",
+                    ]
+                )
             )
-        )
-        self.run_worker(self._run_rnafold, activity="Running RNAfold...")
+            self.run_worker(self._run_pdb_derive, activity="Deriving structure from PDB...")
+        else:
+            self.screen.add_tool_message(
+                "\n".join(
+                    [
+                        "**Secondary-structure prediction**",
+                        "",
+                        f"- Sequence length: **{len(seq)}**",
+                        "- Method: RNAfold",
+                    ]
+                )
+            )
+            self.run_worker(self._run_rnafold, activity="Running RNAfold...")
+
+    def _run_pdb_derive(self) -> None:
+        state = self.screen.app.current_state
+        pdb_ctx = state.context.pdb_intake
+        try:
+            struct = self.screen.app.pdb_analysis_adapter.derive_secondary_structure(
+                pdb_id=pdb_ctx.pdb_id,
+                artifact_path=pdb_ctx.artifact_path,
+                chain_id=pdb_ctx.selected_chain_id,
+            )
+            struct.features.setdefault("source", "pdb")
+            self._store_secondary_structure(
+                struct,
+                source="pdb",
+                note="Using PDB-derived secondary structure.",
+            )
+        except Exception as exc:
+            self.screen.app.call_from_thread(
+                self.screen.add_tool_message,
+                f"PDB derivation failed ({exc}), falling back to RNAfold.",
+            )
+            self._run_rnafold()
 
     def _run_rnafold(self) -> None:
         state = self.screen.app.current_state
@@ -71,6 +113,10 @@ class StructureHandler(StepHandler):
             note=note,
         )
         self.screen.app.save_state()
+        if source == "pdb":
+            selection_label = "Using PDB-derived secondary structure."
+        else:
+            selection_label = "Using RNAfold-generated secondary structure."
         result_text = "\n".join(
             [
                 section_heading("Secondary Structure Ready"),
@@ -78,7 +124,7 @@ class StructureHandler(StepHandler):
                 f"- **Sequence**: `{struct.sequence}`",
                 f"- **Dot-bracket**: `{struct.dot_bracket}`",
                 f"- **MFE**: `{struct.mfe}` kcal/mol",
-                "- **Selection**: Using RNAfold-generated secondary structure.",
+                f"- **Selection**: {selection_label}",
                 f"- **Source**: `{struct.features.get('source', source)}`",
             ]
         )

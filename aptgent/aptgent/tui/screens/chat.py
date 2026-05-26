@@ -381,7 +381,7 @@ class ChatScreen(Screen):
 
     def _detect_resume_target(self, state) -> Step | None:
         """Detect which step to resume at, considering detached jobs."""
-        from aptgent.tui.steps.job_mixin import is_job_alive, is_job_done
+        from aptgent.tui.steps.job_mixin import is_job_alive
 
         persistence = self.app.persistence
         run_id = state.run_id

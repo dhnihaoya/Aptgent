@@ -43,7 +43,6 @@ from aptgent.llm.skills.site_proposal import (
     SiteProposalOutput,
     SiteProposalSkill,
     SiteRegionAssessment,
-    SiteRephraseOutput,
 )
 
 registry = SkillRegistry()
@@ -81,7 +80,6 @@ __all__ = [
     "SiteProposalInput",
     "SiteProposalOutput",
     "SiteRegionAssessment",
-    "SiteRephraseOutput",
     "SiteProposalSkill",
     "SkillMetadata",
     "SkillRegistry",

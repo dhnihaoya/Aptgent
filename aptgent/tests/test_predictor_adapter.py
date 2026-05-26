@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from aptgent.adapters.predictor import EnsembleAdapter
@@ -10,9 +11,9 @@ def test_prediction_adapter_uses_internal_runner_module():
     adapter = EnsembleAdapter(model_dir="/tmp/models")
 
     assert adapter._build_cmd() == [
-        "python",
+        sys.executable,
         "-m",
-        "aptgent.predictor_runtime.runner",
+        RUNNER_MODULE,
     ]
 
 

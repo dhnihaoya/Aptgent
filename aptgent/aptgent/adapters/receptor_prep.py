@@ -13,7 +13,6 @@ workflow described in Aptamers-2026.5.4.docx §2.4.4:
 from __future__ import annotations
 
 import logging
-import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -241,15 +240,6 @@ def _looks_like_rna(pdb_text: str) -> bool:
             if res in _RNA_RESIDUES:
                 return True
     return False
-
-
-_COORD_RE = re.compile(
-    r"^(?:ATOM|HETATM)"
-    r".{24}"
-    r"(?P<x>[-\d. ]{8})"
-    r"(?P<y>[-\d. ]{8})"
-    r"(?P<z>[-\d. ]{8})"
-)
 
 
 def _iter_atom_coordinates(pdb_text: str) -> Iterable[tuple[float, float, float]]:

@@ -7,6 +7,7 @@ import pytest
 
 from aptgent.domain.enums import Step
 from aptgent.domain.models import PdbChainCandidate, PdbLigandCandidate
+from aptgent.tui.steps.intake_heuristics import looks_like_full_intake
 from aptgent.tui.widgets.structured_input import PdbSelectionPanel
 from textual.widgets import Input
 
@@ -84,12 +85,13 @@ async def test_intake_retry_full_brief_heuristic_is_conservative_for_pdb_retry(t
         app.push_screen("chat")
         await pilot.pause()
 
-        handler = app.screen._handler
-        assert handler._looks_like_full_intake("try pdb 1abc") is False
-        assert handler._looks_like_full_intake("sequence ACGU target caffeine") is True
+        assert looks_like_full_intake("try pdb 1abc") is False
+        assert looks_like_full_intake("sequence ACGU target caffeine") is True
 @pytest.mark.anyio
 async def test_pdb_input_keeps_sequence_and_requests_missing_target(tmp_path):
     class FakeIntakeSkill:
+        client = SimpleNamespace(set_log_dir=lambda *_: None)
+
         def extract(self, user_text):
             return {
                 "pdb_id": "1EHZ",
@@ -99,7 +101,9 @@ async def test_pdb_input_keeps_sequence_and_requests_missing_target(tmp_path):
             }
 
     class FakePdbReviewSkill:
-        def review_summary(self, summary):
+        client = SimpleNamespace(set_log_dir=lambda *_: None)
+
+        def review(self, payload):
             return {"semantic_status": "aptamer_like", "note": "Looks like a nucleic-acid binder."}
 
     adapter = FakePdbAnalysisAdapter()
@@ -127,6 +131,8 @@ async def test_pdb_input_keeps_sequence_and_requests_missing_target(tmp_path):
 @pytest.mark.anyio
 async def test_pdb_input_with_multiple_candidates_opens_selection_panel(tmp_path):
     class FakeIntakeSkill:
+        client = SimpleNamespace(set_log_dir=lambda *_: None)
+
         def extract(self, user_text):
             return {
                 "pdb_id": "1EHZ",
@@ -136,7 +142,9 @@ async def test_pdb_input_with_multiple_candidates_opens_selection_panel(tmp_path
             }
 
     class FakePdbReviewSkill:
-        def review_summary(self, summary):
+        client = SimpleNamespace(set_log_dir=lambda *_: None)
+
+        def review(self, payload):
             return {"semantic_status": "uncertain", "note": "Needs manual review."}
 
     adapter = FakePdbAnalysisAdapter()
@@ -187,6 +195,8 @@ async def test_pdb_input_with_multiple_candidates_opens_selection_panel(tmp_path
 @pytest.mark.anyio
 async def test_mixed_pdb_input_prefers_pdb_sequence_over_user_sequence(tmp_path):
     class FakeIntakeSkill:
+        client = SimpleNamespace(set_log_dir=lambda *_: None)
+
         def extract(self, user_text):
             return {
                 "pdb_id": "1EHZ",
@@ -197,7 +207,9 @@ async def test_mixed_pdb_input_prefers_pdb_sequence_over_user_sequence(tmp_path)
             }
 
     class FakePdbReviewSkill:
-        def review_summary(self, summary):
+        client = SimpleNamespace(set_log_dir=lambda *_: None)
+
+        def review(self, payload):
             return {"semantic_status": "aptamer_like", "note": "PDB import looks usable."}
 
     app = make_app(

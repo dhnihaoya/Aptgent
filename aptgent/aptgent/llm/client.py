@@ -4,7 +4,6 @@ import hashlib
 import json
 import logging
 import os
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -138,15 +137,6 @@ class LLMClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-
-    @contextmanager
-    def without_thinking(self):
-        previous = self._thinking_enabled
-        self._thinking_enabled = False
-        try:
-            yield self
-        finally:
-            self._thinking_enabled = previous
 
     def _payload(
         self,

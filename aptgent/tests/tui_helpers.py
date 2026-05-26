@@ -114,7 +114,7 @@ def make_app(
     return AptgentApp(
         config={
             "paths": {"runs_dir": str(tmp_path / "runs")},
-            "enumeration": {"max_candidates": 5000},
+            "enumeration": {"top_k_keep": 500},
         },
         tools_config={},
         rna_fold_adapter=rna_fold_adapter or FakeRNAFoldAdapter(),

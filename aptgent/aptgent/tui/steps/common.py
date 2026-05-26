@@ -543,18 +543,6 @@ def validate_docking_recommendation_result(
     }
 
 
-def validate_report_summary(result: Any) -> dict[str, Any]:
-    if not isinstance(result, dict):
-        raise RuntimeError("Invalid report summary response.")
-    candidate_notes = result.get("candidate_notes")
-    if not isinstance(candidate_notes, dict):
-        candidate_notes = {}
-    return {
-        "summary": clean_text(result.get("summary")) or "",
-        "candidate_notes": candidate_notes,
-    }
-
-
 def format_docking_recommendation_markdown(
     *,
     candidate_count: int,

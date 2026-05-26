@@ -23,6 +23,7 @@ class IntakeOutput(BaseModel):
     target_molecule: str | None = None
     modification_region: str | None = None
     analogs: list[str] = Field(default_factory=list)
+    proposed_sites: list[int] = Field(default_factory=list)
     time_budget_hours: int | float | str | None = None
     mixed_input_detected: bool = False
     missing_fields: list[str] = Field(default_factory=list)

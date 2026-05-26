@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 
 from rich.markdown import Markdown
@@ -9,7 +10,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
-from textual.widgets import Button, Input, OptionList, Static
+from textual.widgets import Button, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
 from aptgent.domain.enums import Step
@@ -344,15 +345,6 @@ class StepDivider(Static):
 class ActivityBubble(Static):
     """A breathing status bubble that stays at the end of the chat log."""
 
-    _FRAMES = [
-        ("#6b7280", False, "·"),
-        ("#9ca3af", False, "•"),
-        ("#d1d5db", False, "•"),
-        ("#facc15", True, "✦"),
-        ("#d1d5db", False, "•"),
-        ("#9ca3af", False, "•"),
-    ]
-
     DEFAULT_CSS = """
     ActivityBubble {
         background: $chat-activity-background;
@@ -412,8 +404,23 @@ class ActivityBubble(Static):
         self.update(f"[bold {label}]run[/] [{style}]{icon} {self._text}[/]")
 
 
+class ChatInput(TextArea):
+    """Prompt-style text area with an Input-compatible value alias."""
+
+    @property
+    def value(self) -> str:
+        return self.text
+
+    @value.setter
+    def value(self, text: str) -> None:
+        self.load_text(text)
+
+
 class InputBar(Vertical):
     """Bottom input bar with text field and send button."""
+
+    MIN_INPUT_HEIGHT = 3
+    MAX_INPUT_HEIGHT = 8
 
     class Submitted(Message):
         """Posted when the user submits text."""
@@ -442,13 +449,15 @@ class InputBar(Vertical):
         display: block;
     }
     #input-row {
-        height: 3;
+        height: auto;
     }
-    #input-row > Input {
+    #input-row > TextArea {
         width: 1fr;
+        height: 3;
     }
     #input-row > Button {
         margin-left: 1;
+        height: 3;
     }
     InputBar.-disabled {
         background: $surface;
@@ -465,11 +474,16 @@ class InputBar(Vertical):
         self._enabled = True
         self._commands = commands
         self._filtered_commands: tuple[SlashCommand, ...] = ()
+        self._input_height = self.MIN_INPUT_HEIGHT
+
+    @property
+    def input_height(self) -> int:
+        return self._input_height
 
     def compose(self) -> ComposeResult:
         yield OptionList(id="command-list")
         with Horizontal(id="input-row"):
-            yield Input(placeholder="Type a message...", id="chat-input")
+            yield ChatInput(placeholder="Type a message...", id="chat-input", compact=True)
             yield Button("Send", id="btn-send", variant="primary")
 
     def set_enabled(self, enabled: bool) -> None:
@@ -477,7 +491,7 @@ class InputBar(Vertical):
         if not enabled:
             self.close_command_palette()
         try:
-            inp = self.query_one("#chat-input", Input)
+            inp = self.query_one("#chat-input", ChatInput)
             btn = self.query_one("#btn-send", Button)
             inp.disabled = not enabled
             btn.disabled = not enabled
@@ -487,21 +501,22 @@ class InputBar(Vertical):
 
     def set_placeholder(self, text: str) -> None:
         try:
-            self.query_one("#chat-input", Input).placeholder = text
+            self.query_one("#chat-input", ChatInput).placeholder = text
         except NoMatches:
             _log.debug("chat-input not yet mounted", exc_info=True)
 
     def set_commands(self, commands: tuple[SlashCommand, ...]) -> None:
         self._commands = commands
         try:
-            current_value = self.query_one("#chat-input", Input).value
+            current_value = self.query_one("#chat-input", ChatInput).value
         except NoMatches:
             current_value = ""
         self._update_command_palette(current_value)
 
     def clear_input(self) -> None:
         try:
-            self.query_one("#chat-input", Input).value = ""
+            self.query_one("#chat-input", ChatInput).value = ""
+            self._resize_input("")
         except NoMatches:
             _log.debug("chat-input not yet mounted", exc_info=True)
 
@@ -521,7 +536,7 @@ class InputBar(Vertical):
         if not self._enabled:
             return
         try:
-            inp = self.query_one("#chat-input", Input)
+            inp = self.query_one("#chat-input", ChatInput)
         except Exception:
             return
         text = inp.value.strip()
@@ -570,12 +585,33 @@ class InputBar(Vertical):
         option_list.highlighted = 0
         self.set_class(True, "-commands-visible")
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        self._update_command_palette(event.value)
+    def _resize_input(self, text: str) -> None:
+        try:
+            inp = self.query_one("#chat-input", ChatInput)
+            row = self.query_one("#input-row", Horizontal)
+            button = self.query_one("#btn-send", Button)
+        except NoMatches:
+            return
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        event.stop()
-        self._submit()
+        wrap_width = max(1, (inp.content_size.width or inp.size.width or 20) - 2)
+        visual_lines = 0
+        for line in text.splitlines() or [""]:
+            visual_lines += max(1, math.ceil(len(line) / wrap_width))
+        height = min(self.MAX_INPUT_HEIGHT, max(self.MIN_INPUT_HEIGHT, visual_lines + 2))
+
+        self._input_height = height
+        inp.styles.height = height
+        row.styles.height = height
+        button.styles.height = height
+
+    def on_mount(self) -> None:
+        self._resize_input("")
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if event.text_area.id != "chat-input":
+            return
+        self._update_command_palette(event.text_area.text)
+        self._resize_input(event.text_area.text)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-send":
@@ -591,6 +627,19 @@ class InputBar(Vertical):
             self._submit_command(command_name)
 
     def on_key(self, event) -> None:
+        if event.key == "enter":
+            event.stop()
+            if self.command_palette_open():
+                try:
+                    option_list = self.query_one("#command-list", OptionList)
+                except Exception:
+                    return
+                if option_list.highlighted is not None:
+                    option_list.action_select()
+                return
+            self._submit()
+            return
+
         if not self.command_palette_open():
             return
         try:
@@ -604,10 +653,6 @@ class InputBar(Vertical):
         elif event.key == "up":
             event.stop()
             option_list.action_cursor_up()
-        elif event.key == "enter":
-            event.stop()
-            if option_list.highlighted is not None:
-                option_list.action_select()
         elif event.key == "escape":
             event.stop()
             self.close_command_palette()

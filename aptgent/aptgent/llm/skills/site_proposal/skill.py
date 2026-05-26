@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from aptgent.domain.models import SecondaryStructure
-from aptgent.llm.skills.base import BaseSkill, load_prompt
+from aptgent.llm.skills.base import BaseSkill
 from aptgent.llm.skills.site_proposal.schema import SiteProposalOutput
 
 _SKILL_DIR = Path(__file__).resolve().parent
@@ -70,28 +70,6 @@ class SiteProposalSkill(BaseSkill):
         return self.explain_propose_stream_from_context(
             self._context_from_sequence(sequence, structure)
         )
-
-    # -- rephrase mode uses the secondary prompt file --
-    _rephrase_prompt: str | None = None
-
-    @classmethod
-    def _rephrase_system_prompt(cls) -> str:
-        if cls._rephrase_prompt is None:
-            prompt = load_prompt(_SKILL_DIR, "system_rephrase.md")
-            if prompt is None:
-                raise FileNotFoundError(
-                    "site_proposal skill: missing system_rephrase.md"
-                )
-            cls._rephrase_prompt = prompt
-        return cls._rephrase_prompt
-
-    def rephrase(self, sequence: str, user_text: str) -> dict[str, Any]:
-        user = f"Sequence length: {len(sequence)}\nUser request: {user_text}"
-        return self.client.chat_json(self._rephrase_system_prompt(), user)
-
-    def rephrase_stream(self, sequence: str, user_text: str):
-        user = f"Sequence length: {len(sequence)}\nUser request: {user_text}"
-        return self.client.chat_stream(self._rephrase_system_prompt(), user)
 
 
 SiteProposalSkill._bind_directory(_SKILL_DIR)

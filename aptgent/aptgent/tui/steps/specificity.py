@@ -71,6 +71,8 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
         text_lower = text.strip().lower()
         if text_lower == "skip":
             self._skip()
+        elif text_lower in {"prompt", "use prompt"}:
+            self._use_intake_analogs()
         elif text_lower in {"accept", "1"}:
             self._accept_recommended()
         elif text_lower in {"edit", "modify", "partial", "2"}:
@@ -91,7 +93,9 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
             self._run_filter(analogs_text, echo_user=bool(analogs_text.strip()))
 
     def handle_action(self, action: str) -> None:
-        if action == "accept-recommended-analogs":
+        if action == "use-intake-analogs":
+            self._use_intake_analogs()
+        elif action == "accept-recommended-analogs":
             self._accept_recommended()
         elif action == "edit-recommended-analogs":
             self._edit_recommended()
@@ -193,6 +197,21 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
             )
             self._customize()
             return
+        recommendation = self.screen.app.current_state.context.specificity_recommendation
+        recommendation.accepted = True
+        self.screen.app.save_state()
+        self._run_filter(analogs_text, echo_user=False)
+
+    def _use_intake_analogs(self) -> None:
+        intake_analogs = self.screen.app.current_state.context.intake.analogs
+        if not intake_analogs:
+            self.screen.add_system_message(
+                "No analogs were provided in the initial prompt.",
+                "warning-text",
+            )
+            return
+        analogs_text = ", ".join(intake_analogs)
+        self.screen.add_user_message(f"Use initial prompt analogs: {analogs_text}")
         recommendation = self.screen.app.current_state.context.specificity_recommendation
         recommendation.accepted = True
         self.screen.app.save_state()
@@ -375,9 +394,17 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
             self.screen.advance_to_step(ns)
 
     def _build_recommendation_choice_panel(self) -> ActionMenuPanel:
-        return ActionMenuPanel(
-            Step.SPECIFICITY_FILTER,
-            "Review the recommended analogs",
+        choices: list[tuple[str, str, str]] = []
+        intake_analogs = self.screen.app.current_state.context.intake.analogs
+        if intake_analogs:
+            choices.append(
+                (
+                    "use-intake-analogs",
+                    "Use Initial Prompt Analogs",
+                    f"Use the analogs you specified in your initial prompt: {', '.join(intake_analogs)}",
+                )
+            )
+        choices.extend(
             [
                 (
                     "accept-recommended-analogs",
@@ -399,7 +426,12 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
                     "Skip This Step",
                     "Continue without specificity filtering.",
                 ),
-            ],
+            ]
+        )
+        return ActionMenuPanel(
+            Step.SPECIFICITY_FILTER,
+            "Review the recommended analogs",
+            choices,
         )
 
     def _show_recommendation_choice_panel(self) -> None:

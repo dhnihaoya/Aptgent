@@ -64,16 +64,18 @@ class DockingPlannerSkill(BaseSkill):
         target_smiles: str | None = None,
         target_name: str | None = None,
     ) -> dict[str, Any]:
-        user = self._build_user_message(
-            candidate_count,
-            machine_profile,
-            time_budget_hours,
-            computed_top_k,
-            computed_time_budget_hours,
-            target_smiles,
-            target_name,
-        )
-        return self.client.chat_json(self.system_prompt, user)
+        payload: dict[str, Any] = {
+            "candidate_count": candidate_count,
+            "machine_profile": machine_profile,
+            "time_budget_hours": time_budget_hours,
+            "computed_top_k": computed_top_k,
+            "computed_time_budget_hours": computed_time_budget_hours,
+        }
+        if target_smiles is not None:
+            payload["target_smiles"] = target_smiles
+        if target_name is not None:
+            payload["target_name"] = target_name
+        return self.invoke(payload).raw
 
     def plan_stream(
         self,

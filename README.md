@@ -181,15 +181,13 @@ Important defaults:
 
 ```toml
 [enumeration]
-max_candidates = 5000
 top_k_keep = 500
 sub_batch_size = 65536
 progress_every = 10000
 mutation_batch_timeout_seconds = 0
 
 [docking]
-enabled = false
-top_k_strategy = "auto"
+enabled = false  # not yet wired; will be honored once Stage 4 lands
 per_ligand_timeout_seconds = 1800
 
 [paths]

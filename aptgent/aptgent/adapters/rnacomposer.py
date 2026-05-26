@@ -23,7 +23,6 @@ the user; they can then fall back to manual upload mode.
 """
 from __future__ import annotations
 
-import dataclasses
 import html
 import logging
 import re
@@ -443,8 +442,3 @@ def _looks_like_failure_page(body_text: str) -> bool:
     return False
 
 
-def dataclass_to_dict(value: Any) -> dict[str, Any]:
-    """Pickleable conversion helper used by job-runner serialization."""
-    if dataclasses.is_dataclass(value):
-        return dataclasses.asdict(value)
-    return dict(value)

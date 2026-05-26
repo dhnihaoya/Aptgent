@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 from aptgent.domain.enums import Status, Step
 from aptgent.domain.models import (
-    ArtifactRef,
     CandidateSequence,
     DockingPlan,
     DockingResult,
@@ -29,6 +28,7 @@ class IntakeContext(BaseModel):
     target_label: Optional[str] = None
     modification_region: Optional[str] = None
     analogs: list[str] = Field(default_factory=list)
+    proposed_sites: list[int] = Field(default_factory=list)
     time_budget_hours: Optional[int] = None
     phase: str = "initial"
     retry_count: int = 0
@@ -107,8 +107,8 @@ class DockingRecommendationContext(BaseModel):
     reason: str = ""
     display_markdown: str = ""
     strategy: str = ""
-    # phase progression: initial -> topk_selected -> source_selected
-    # -> awaiting_structures -> structures_ready -> editing_form -> skipped
+    # phase progression: initial -> topk_selected -> awaiting_structures
+    # -> structures_ready -> editing_form -> skipped
     phase: str = "initial"
     accepted: bool = False
     # Paths kept for UX (e.g. show user where exports went)
@@ -171,10 +171,6 @@ class RunState(BaseModel):
     recommendations: list[FinalRecommendation] = Field(default_factory=list)
     final_report_markdown: str = ""
     final_report_context: dict[str, Any] = Field(default_factory=dict)
-
-    # Artifacts & logs
-    artifacts: list[ArtifactRef] = Field(default_factory=list)
-    logs: list[dict[str, Any]] = Field(default_factory=list)
 
     # Pause/resume bookkeeping
     pending_input: Optional[dict[str, Any]] = None

@@ -402,7 +402,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Emit a progress message after roughly this many candidates.",
     )
-    mut_batch.add_argument("--output", default=None, help="Optional CSV output for hits")
     mut_batch.add_argument("--skip-first", type=int, default=0,
                            help="Skip the first N candidates (for resume)")
 

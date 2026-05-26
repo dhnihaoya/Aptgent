@@ -72,14 +72,10 @@ class DockingSelectionHandler(StepHandler):
             f"{len(state.candidates)} candidates available for docking."
         )
 
-        if phase in ("editing_form",):
+        if phase in ("editing_form", "structures_ready"):
             self._show_param_panel()
         elif phase == "awaiting_structures":
             self._show_manual_upload_panel()
-        elif phase == "structures_ready":
-            self._show_param_panel()
-        elif phase == "source_selected":
-            self._show_source_panel()
         elif phase == "topk_selected":
             self._show_source_panel()
         else:
@@ -702,11 +698,8 @@ class DockingSelectionHandler(StepHandler):
                 mode="llm" if recommendation.strategy == "llm" else "manual",
                 machine_profile=plan.machine_profile or self._machine_profile(state),
                 time_budget=plan.time_budget or state.time_budget,
-                recommended_top_k=plan.recommended_top_k,
                 recommended_exhaustiveness=plan.exhaustiveness,
                 recommendation_reason=recommendation.reason,
-                receptor_path_note=recommendation.receptor_path_note,
-                grid_center_note=recommendation.grid_center_note,
                 accepted_recommendation=recommendation.accepted,
                 receptor_paths=dict(plan.receptor_paths or {}),
                 grid_boxes=grid_boxes_view,

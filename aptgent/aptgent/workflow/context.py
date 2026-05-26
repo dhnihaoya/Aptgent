@@ -47,6 +47,7 @@ def record_intake_context(
     resolved_target: TargetMolecule | None = None,
     modification_region: str | None = None,
     analogs: list[str] | None = None,
+    proposed_sites: list[int] | None = None,
     time_budget_hours: int | None = None,
     phase: str | None = None,
     retry_count: int | None = None,
@@ -69,6 +70,8 @@ def record_intake_context(
         context.modification_region = _clean_text(modification_region)
     if analogs is not None:
         context.analogs = [text for item in analogs if (text := _clean_text(item))]
+    if proposed_sites is not None:
+        context.proposed_sites = proposed_sites
     if time_budget_hours is not None:
         context.time_budget_hours = time_budget_hours
     if phase is not None:

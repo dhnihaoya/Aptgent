@@ -737,11 +737,8 @@ class DockingParamPanel(_BaseStructuredPanel):
         mode: str = "manual",
         machine_profile: dict | None = None,
         time_budget: int | None = None,
-        recommended_top_k: int = 0,
         recommended_exhaustiveness: int | None = None,
         recommendation_reason: str = "",
-        receptor_path_note: str = "",
-        grid_center_note: str = "",
         accepted_recommendation: bool = False,
         receptor_paths: dict[str, str] | None = None,
         grid_boxes: dict[str, dict[str, list[float]]] | None = None,
@@ -752,11 +749,8 @@ class DockingParamPanel(_BaseStructuredPanel):
         self.mode = mode
         self.machine_profile = machine_profile or {}
         self.time_budget = time_budget
-        self.recommended_top_k = recommended_top_k
         self.recommended_exhaustiveness = recommended_exhaustiveness or 8
         self.recommendation_reason = recommendation_reason
-        self.receptor_path_note = receptor_path_note
-        self.grid_center_note = grid_center_note
         self.accepted_recommendation = accepted_recommendation
         self.receptor_paths = dict(receptor_paths or {})
         self.grid_boxes = dict(grid_boxes or {})

@@ -40,10 +40,3 @@ class SiteProposalOutput(BaseModel):
     proposed_sites: list[int] = Field(default_factory=list)
     reasoning: str = ""
     confidence: str = "unknown"
-
-
-class SiteRephraseOutput(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    proposed_sites: list[int] = Field(default_factory=list)
-    reasoning: str = ""

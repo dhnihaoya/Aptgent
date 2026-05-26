@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from aptgent.bootstrap.config import load_config
-from aptgent.jobs.events import EventWriter, read_last_event
+from aptgent.jobs.events import EventWriter
 from aptgent.jobs.pid import clear_pid, read_pid, write_pid
 from aptgent.workflow.persistence import Persistence
 

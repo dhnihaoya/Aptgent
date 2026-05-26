@@ -55,38 +55,8 @@ def test_json_payload_uses_fast_model(tmp_path):
 
     assert payload["model"] == "glm-4.7-flashx"
     assert "thinking" not in payload
-def test_without_thinking_context_disables_thinking(tmp_path):
-    config_path = tmp_path / "llm.toml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "[provider.openai]",
-                'base_url = "https://open.bigmodel.cn/api/paas/v4"',
-                'model = "glm-5.1"',
-                'api_key = "test-key"',
-            ]
-        ),
-        encoding="utf-8",
-    )
 
-    client = LLMClient(config_path=config_path)
-    with client.without_thinking():
-        payload = client._payload(
-            "system",
-            "user",
-            temperature=0.2,
-            response_format={"type": "json_object"},
-        )
 
-    assert "thinking" not in payload
-
-    restored_payload = client._payload(
-        "system",
-        "user",
-        temperature=0.2,
-        response_format={"type": "json_object"},
-    )
-    assert "thinking" not in restored_payload
 def test_iter_sse_events_emits_reasoning_before_content(tmp_path):
     config_path = tmp_path / "llm.toml"
     config_path.write_text(

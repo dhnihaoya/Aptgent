@@ -3,7 +3,6 @@ from aptgent.llm.skills.site_proposal.schema import (
     SiteProposalOutput,
     SiteProposalPlan,
     SiteRegionAssessment,
-    SiteRephraseOutput,
 )
 from aptgent.llm.skills.site_proposal.skill import SiteProposalSkill
 
@@ -12,6 +11,5 @@ __all__ = [
     "SiteProposalOutput",
     "SiteProposalPlan",
     "SiteRegionAssessment",
-    "SiteRephraseOutput",
     "SiteProposalSkill",
 ]
