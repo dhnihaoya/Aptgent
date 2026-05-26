@@ -183,6 +183,10 @@ class SiteProposalHandler(StepHandler):
             sites = getattr(self, "_proposed_sites", [])
             source = "llm"
             proposal_index = 0
+        elif text_lower in ("prompt", "use prompt") and state.context.intake.proposed_sites:
+            sites = list(state.context.intake.proposed_sites)
+            source = "intake"
+            proposal_index = None
         else:
             try:
                 sites = [int(x.strip()) for x in text.split(",") if x.strip()]
@@ -204,6 +208,11 @@ class SiteProposalHandler(StepHandler):
         self._confirm_sites(sites, source="custom", proposal_index=None)
 
     def handle_action(self, action: str) -> None:
+        if action == "use-intake-sites":
+            state = self.screen.app.current_state
+            sites = list(state.context.intake.proposed_sites)
+            self._confirm_sites(sites, source="intake", proposal_index=None)
+            return
         if action.startswith("use-recommended-sites-"):
             try:
                 index = int(action.rsplit("-", 1)[1])
@@ -248,6 +257,15 @@ class SiteProposalHandler(StepHandler):
         proposal_index: int | None,
     ) -> None:
         state = self.screen.app.current_state
+        seq = get_sequence(state) or ""
+        if seq and sites:
+            before = len(sites)
+            sites = [s for s in sites if 0 <= s < len(seq)]
+            if len(sites) < before:
+                self.screen.add_system_message(
+                    f"Dropped {before - len(sites)} site(s) outside sequence range (length {len(seq)}).",
+                    "warning-text",
+                )
         state.confirmed_mutation_sites = sites
         context = state.context.site_proposal
         context.selection_source = source
@@ -326,8 +344,19 @@ class SiteProposalHandler(StepHandler):
         return f"0-based {zero_based} / 1-based {one_based}"
 
     def _show_choice_panel(self, proposals: list[dict]) -> None:
+        choices: list[tuple[str, str, str]] = []
+        state = self.screen.app.current_state
+        intake_sites = state.context.intake.proposed_sites
+        if intake_sites:
+            choices.append(
+                (
+                    "use-intake-sites",
+                    "Use Initial Prompt Sites",
+                    f"Use the sites you specified in your initial prompt: {self._format_site_display(intake_sites)}",
+                )
+            )
         if proposals:
-            choices = [
+            choices.extend(
                 (
                     f"use-recommended-sites-{index}",
                     proposal.get("label") or f"Use Plan {index + 1}",
@@ -337,10 +366,10 @@ class SiteProposalHandler(StepHandler):
                     ).strip(),
                 )
                 for index, proposal in enumerate(proposals)
-            ]
+            )
         else:
             sites = getattr(self, "_proposed_sites", [])
-            choices = [
+            choices.append(
                 (
                     "use-recommended-sites",
                     "Use Recommended Sites",
@@ -350,7 +379,7 @@ class SiteProposalHandler(StepHandler):
                         else "No sites were suggested; continue with an empty selection."
                     ),
                 )
-            ]
+            )
         choices.append(
             (
                 "custom-sites",
