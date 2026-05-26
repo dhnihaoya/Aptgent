@@ -21,6 +21,7 @@
 - `aptgent/aptgent/tui/commands.py`：斜杠命令注册与主题预设。
 - `aptgent/aptgent/workflow/`：状态机、持久化、运行状态模型、工作流上下文。
 - `aptgent/aptgent/adapters/`：外部工具与外部能力边界。
+- `aptgent/aptgent/protocol/`：子进程通信共享原语（JSONL 读写、取消信号、流式子进程管理）。
 - `aptgent/aptgent/jobs/`：可分离的后台任务（detached job runner）。
 - `aptgent/aptgent/cli/doctor.py`：环境诊断工具（`aptgent doctor`）。
 - `aptgent/aptgent/bootstrap/config.py`：配置加载与 `${VAR:-default}` 环境变量展开。
@@ -63,6 +64,7 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme` 等�
 
 - `aptgent/aptgent/tui/screens/`：chat、welcome、quit_confirm、resume、theme_picker。
 - `aptgent/aptgent/tui/steps/`：每个 workflow step 一个模块（`intake.py`、`pdb_intake.py`、`structure.py`、`site_proposal.py`、`enumeration.py`、`scoring.py`、`specificity.py`、`docking_selection.py`、`docking_run.py`、`spatial_rank.py`、`report.py`），由 `factory.py` 分发。
+- `aptgent/aptgent/tui/steps/common/`：跨 step 共用工具（`__init__.py` 重新导出所有公共符号，保持 `from aptgent.tui.steps.common import X` 兼容）。子模块：`coercion.py`（类型转换）、`docking_plan.py`（对接参数校验）、`intake_format.py`（intake 输出格式化）、`llm_ui.py`（LLM UI 辅助）、`site_proposal_validate.py`（位点方案校验）、`specificity_format.py`（特异性结果格式化）。
 - `aptgent/aptgent/tui/steps/empty_candidates.py`：空候选统一处理（`is_empty_enumeration_result`、`prepare_empty_candidate_recovery`、`clear_site_selection_retry_feedback`），被 enumeration、scoring、chat back-handler 共用。
 - `aptgent/aptgent/tui/steps/base.py`：`StepHandler` 基类。
 - `aptgent/aptgent/tui/steps/job_mixin.py`：可分离后台任务 mixin（attach/spawn detached subprocess）。
@@ -89,8 +91,19 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme` 等�
 
 - `aptgent/aptgent/domain/models.py`
 - `aptgent/aptgent/domain/enums.py`
+- `aptgent/aptgent/domain/text_utils.py`：文本规范化（`clean_text`：strip + 折叠内部空白）。
 
 涉及跨层数据传递时，优先复用这里的模型，不要在 UI 或 adapter 层重新发明结构。
+
+### Protocol 层
+
+子进程通信的共享原语，被 adapter、jobs、predictor_runtime 共用：
+
+- `aptgent/aptgent/protocol/line_json.py`：`JsonlEmitter`（行式 JSON 写入）和 `iter_jsonl`（行式 JSON 迭代读取）。
+- `aptgent/aptgent/protocol/cancel.py`：`CmdFileCancelPoller`（命令文件轮询取消）和 `StdinCancelWatcher`（stdin cancel 信号监听）。
+- `aptgent/aptgent/protocol/subprocess_stream.py`：`SubprocessSession`（流式子进程生命周期管理：stdout JSONL 读取、stderr 收集、cancel/terminate/kill 三阶段终止）。
+
+不要在 adapter 或 jobs 层内联新的子进程协议实现，优先复用或扩展 protocol 层的原语。
 
 ### Adapter 层
 
@@ -105,6 +118,8 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme` 等�
 - `MoleculeAdapter`（协议）：分子解析。实现：`SimpleMoleculeResolver`（`molecule.py`）。
 - `SpatialRankAdapter`（协议 + 实现）：空间互作排序（`spatial_rank.py`）。
 - `VinaAdapter`：AutoDock Vina 对接（`docking.py`）。
+- `ReceptorPrepAdapter`：受体 PDBQT 准备（`receptor_prep.py`）。
+- `RNAComposerAdapter`：RNAComposer 三级结构预测（`rnacomposer.py`）。
 - `PdbAnalysisAdapter`：PDB 文件下载、解析、链/配体提取（`pdb_analysis.py`）。
 - `StructureLookupAdapter`（协议）：3D 结构数据库查询（`structure_services.py`）。
 - `StructureFetchAdapter`（协议）：3D 结构文件下载（`structure_services.py`）。
@@ -135,7 +150,7 @@ LLM 输出是辅助信息，不应覆盖确定性计算结果。涉及评分、�
 
 LLM 调用日志记录到 `<run_dir>/logs/llm_calls.jsonl`，默认对用户输入做 SHA-256 脱敏（`APTGENT_LLM_REDACT=0` 关闭）。
 
-`LLMClient` 支持三种调用模式：`chat_json`（同步 JSON 请求）、`chat_json_events`（流式 SSE，逐步 yield reasoning/content 事件，最终 yield `{"type": "result", "value": parsed_json}`）、`chat_stream`（纯文本流式）。site proposal skill 已通过 `propose_events_from_context` 接入 `chat_json_events`，在生成方案时实时展示 LLM reasoning。analog_suggestion skill 正在迁移到统一的 `suggest_events` 流式接口（测试已更新，生产代码待迁移）。
+`LLMClient` 支持四种调用模式：`chat_json`（同步 JSON 请求）、`chat_json_events`（流式 SSE，逐步 yield reasoning/content 事件，最终 yield `{"type": "result", "value": parsed_json}`）、`chat_json_stream`（流式 JSON 文本，`chat_stream` 为其旧别名）、`chat_text_stream`（纯文本流式）。site proposal skill 已通过 `propose_events_from_context` 接入 `chat_json_events`，在生成方案时实时展示 LLM reasoning。analog_suggestion skill 正在迁移到统一的 `suggest_events` 流式接口（测试已更新，生产代码待迁移）。
 
 ### Jobs 层（可分离后台任务）
 
@@ -156,7 +171,7 @@ LLM 调用日志记录到 `<run_dir>/logs/llm_calls.jsonl`，默认对用户输�
 4. `candidate_enumeration`
 5. `primary_scoring`
 6. `specificity_filter`
-7. `docking_selection`
+7. `docking_selection`（可跳过 docking 直接到 `spatial_rank`，见下方 docking skip 说明）
 8. `docking_run`
 9. `spatial_rank`
 10. `final_report`
@@ -164,6 +179,10 @@ LLM 调用日志记录到 `<run_dir>/logs/llm_calls.jsonl`，默认对用户输�
 `ChatScreen.advance_to_step()` 会调用 `WorkflowEngine.transition_to()` 并保存状态；如果你看到状态推进异常，优先沿这条链检查。
 
 intake step 内部包含 PDB 输入子流程（`tui/steps/pdb_intake.py`），当用户提供 PDB ID 时会自动触发 PDB 下载、解析、链/配体选择和 LLM 语义审查。这是 intake step 内部的分支，不是独立的 workflow step。
+
+### Docking skip 路径
+
+当 docking 不可用（Vina 未安装或配置禁用）时，`docking_selection` step 可直接跳转到 `spatial_rank`，跳过 `docking_run`。`DOCKING_SELECTION → SPATIAL_RANK` 转换已在 `TRANSITIONS` 中注册。TUI 层通过 `_is_docking_enabled()` 检测可用性，`_skip()` 执行跳转。
 
 ## 6. Predictor 集成事实
 
@@ -277,13 +296,14 @@ aptgent run-job <run_id> <step>
 - `test_llm_client_payloads.py`：LLM 请求 payload、thinking 与 SSE 事件测试
 - `test_llm_result_validation.py`：LLM 输出校验与展示格式测试
 - `test_workflow_context_helpers.py`：workflow context 构建与记录辅助测试
-- `test_predictor_adapter_mutation_protocol.py`：mutation-batch 子进程行式 JSON 协议测试
+- `test_predictor_adapter_mutation_protocol_success.py`、`test_predictor_adapter_mutation_protocol_cancel.py`、`test_predictor_adapter_mutation_protocol_errors.py`：mutation-batch 子进程行式 JSON 协议成功/取消/错误测试
 - `test_predictor_feature_matrix_batch.py`：批量特征矩阵测试
 - `test_predictor_mutation_batch_runtime.py`：predictor runtime mutation-batch 规则测试
+- `test_predictor_specificity_batch_protocol.py`：specificity-batch 子进程协议测试
 - `test_tui_enumeration_acceleration.py`：TUI enumeration detached mutation-batch job 启动测试
 - `test_feature_matrix.py`：特征矩阵计算测试
 - `test_predictor_adapter.py`：预测器 adapter 测试
-- `test_jobs_events.py`、`test_jobs_persistence_paths.py`、`test_jobs_pid.py`、`test_jobs_runner_cli.py`：jobs 层事件、路径、PID 与 CLI 测试
+- `test_jobs_events.py`、`test_jobs_persistence_paths.py`、`test_jobs_pid.py`、`test_jobs_runner_cli.py`、`test_jobs_specificity_runner.py`：jobs 层事件、路径、PID、CLI 与 specificity runner 测试
 - `test_tui_job_mixin.py`：TUI detached job attach/spawn 行为测试
 - `test_tui_app_navigation.py`、`test_tui_chat_widgets.py`、`test_tui_docking_selection.py`、`test_tui_intake_pdb.py`、`test_tui_scoring_retry.py`、`test_tui_secondary_structure.py`、`test_tui_site_proposal.py`、`test_tui_specificity.py`：TUI 行为测试
 - `test_tui_markdown_theme.py`：chat markdown 主题测试
@@ -291,16 +311,26 @@ aptgent run-job <run_id> <step>
 - `test_pdb_analysis.py`：PDB 分析 adapter 测试
 - `test_spatial_rank.py`：空间排序测试
 - `test_tui_report.py`：最终 Markdown 报告上下文、fallback 展示与导出测试
+- `test_receptor_prep.py`：受体 PDBQT 准备 adapter 测试
+- `test_rnacomposer_adapter.py`：RNAComposer adapter 测试
+- `test_protocol_cancel.py`、`test_protocol_line_json.py`、`test_protocol_subprocess_stream.py`：protocol 层取消、JSONL、子进程流测试
+- `test_domain_text_utils.py`：domain 文本工具测试
+- `test_docking_skip_path.py`：docking skip 路径测试
 
 修改以下内容后，至少应重新检查对应测试：
 
 - workflow step / 状态流转 → `test_workflow_engine.py`、`test_persistence.py`
 - LLM skill 行为 / 输出校验 → `test_skills.py`、`test_llm_client_retry.py`、`test_llm_client_payloads.py`、`test_llm_result_validation.py`、`test_workflow_context_helpers.py`
-- predictor / 特征提取 → `test_predictor_adapter_mutation_protocol.py`、`test_predictor_feature_matrix_batch.py`、`test_predictor_mutation_batch_runtime.py`、`test_tui_enumeration_acceleration.py`、`test_feature_matrix.py`、`test_predictor_adapter.py`
+- predictor / 特征提取 → `test_predictor_adapter_mutation_protocol_*.py`、`test_predictor_feature_matrix_batch.py`、`test_predictor_mutation_batch_runtime.py`、`test_predictor_specificity_batch_protocol.py`、`test_tui_enumeration_acceleration.py`、`test_feature_matrix.py`、`test_predictor_adapter.py`
 - TUI step handler / UI → `test_tui_*.py`、`test_enumeration_ui.py`、`test_tui_markdown_theme.py`
 - PDB / 结构分析 → `test_pdb_analysis.py`
+- 受体准备 → `test_receptor_prep.py`
+- RNAComposer → `test_rnacomposer_adapter.py`
 - 空间排序 → `test_spatial_rank.py`
 - detached job 系统 → `test_jobs_*.py`、`test_tui_job_mixin.py`
+- protocol 层子进程通信 → `test_protocol_*.py`
+- domain 文本工具 → `test_domain_text_utils.py`
+- docking skip 路径 → `test_docking_skip_path.py`
 - workflow 辅助逻辑 → `test_workflow.py`
 
 ## 10. 推荐修改策略
@@ -323,6 +353,12 @@ aptgent run-job <run_id> <step>
 - 模型子进程集成
 - 分子解析、空间打分、对接调用
 - PDB 分析与 3D 结构服务
+
+### 适合改在 Protocol 层的问题
+
+- 子进程 JSONL 通信协议
+- 取消信号（命令文件轮询、stdin 监听）
+- 流式子进程生命周期管理（启动、stderr 收集、三阶段终止）
 
 ### 适合改在 predictor runtime 的问题
 
