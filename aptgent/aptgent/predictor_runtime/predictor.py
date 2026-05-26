@@ -188,11 +188,25 @@ class EnsemblePredictor:
         smiles_list: list[str],
         labels: Optional[list[int]] = None,
         ids: Optional[list[object]] = None,
+        *,
+        row_callback: Optional[Callable[[dict], None]] = None,
+        should_cancel: Optional[Callable[[], bool]] = None,
     ) -> list[dict]:
-        """Run the batch predictor and return per-sample ensemble details."""
+        """Run the batch predictor and return per-sample ensemble details.
+
+        ``row_callback``, when set, is invoked with each finalized sample dict
+        as rows complete; cooperators (e.g. the streaming CLI) use this to
+        emit progress events without waiting for the full batch.
+
+        ``should_cancel`` is checked between rows; if it returns ``True``,
+        :class:`PredictionCancelled` is raised so the caller can finalize the
+        partial result set.
+        """
         all_results: list[dict] = []
 
         for index, (sequence, smiles) in enumerate(zip(sequences, smiles_list)):
+            if should_cancel and should_cancel():
+                raise PredictionCancelled()
             sample: dict[str, object] = {"sequence": sequence, "smiles": smiles}
             if ids is not None:
                 sample["id"] = ids[index]
@@ -201,6 +215,7 @@ class EnsemblePredictor:
 
             individual: dict[str, dict[str, float | int]] = {}
             model_labels: list[int] = []
+            model_probs: list[float] = []
 
             for model, mer, filename in self.models:
                 if mer is None or mer not in MER_K_MAP:
@@ -219,15 +234,22 @@ class EnsemblePredictor:
                     "probability": round(prob, 6),
                 }
                 model_labels.append(pred)
+                model_probs.append(prob)
 
             sample["individual"] = individual
             if not model_labels:
                 sample["ensemble_label"] = 0
+                sample["mean_probability"] = 0.0
             else:
                 sample["ensemble_label"] = (
                     1 if all(label == 1 for label in model_labels) else 0
                 )
+                sample["mean_probability"] = round(
+                    sum(model_probs) / len(model_probs), 6
+                )
             all_results.append(sample)
+            if row_callback:
+                row_callback(sample)
 
         return all_results
 

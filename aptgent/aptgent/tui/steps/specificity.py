@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from aptgent.domain.enums import Step
 from aptgent.domain.models import SpecificityResult, TargetMolecule
 from aptgent.llm.skills import AnalogSuggestionSkill
@@ -10,12 +12,31 @@ from aptgent.tui.steps.common import (
     run_llm_interaction,
     validate_analog_suggestion_result,
 )
+from aptgent.tui.steps.job_mixin import JobAttachMixin
 from aptgent.tui.widgets.chat_widgets import ProgressBubble
 from aptgent.tui.widgets.structured_input import ActionMenuPanel, SpecificityPanel
 from aptgent.workflow.context import record_specificity_recommendation_context
 
 
-class SpecificityHandler(StepHandler):
+class SpecificityHandler(JobAttachMixin, StepHandler):
+    """Specificity filter with detached cross-prediction job.
+
+    The recommendation/edit phases stay in-process; once analogs are
+    confirmed, the actual cross-prediction is dispatched to the detached
+    ``specificity_filter`` job runner so progress streams back through the
+    same ``events.jsonl`` protocol as candidate enumeration.
+    """
+
+    JOB_STEP = "specificity_filter"
+
+    def __init__(self, screen: Any) -> None:
+        super().__init__(screen)
+        self._progress_done = 0
+        self._progress_total = 0
+        self._kept_count = 0
+        self._removed_count = 0
+        self._current_target = ""
+
     def enter(self) -> None:
         state = self.screen.app.current_state
         recommendation = state.context.specificity_recommendation
@@ -203,7 +224,6 @@ class SpecificityHandler(StepHandler):
             self.screen.add_user_message(f"Filter with: {analogs_text}")
 
         state = self.screen.app.current_state
-        target = state.target_molecule
         candidates = state.candidates
 
         if not analogs_text.strip():
@@ -227,94 +247,120 @@ class SpecificityHandler(StepHandler):
 
         self.screen.clear_structured_widget()
 
+        valid_analogs = [a for a in analogs if a.smiles]
+        all_targets_count = 1 + len(valid_analogs)
+        total_pairs = len(candidates) * all_targets_count
+
         self.screen.add_system_message(
-            f"Running cross-prediction on {len(candidates)} candidates x {len(analogs)} analogs..."
+            f"Running cross-prediction on {len(candidates)} candidates x "
+            f"{all_targets_count} target(s) ({len(valid_analogs)} analog(s) + 1 primary)."
         )
-        self.run_worker(
-            lambda: self._filter_worker(candidates, target, analogs),
+
+        self._progress_done = 0
+        self._progress_total = total_pairs
+        self._kept_count = 0
+        self._removed_count = 0
+        self._current_target = ""
+
+        progress = self._create_progress_bubble(total_pairs)
+
+        self.attach_or_spawn_job(
+            on_event=lambda evt: self._on_job_event(evt, progress),
+            on_done=lambda summary: self._on_job_done(summary, progress),
+            on_error=lambda msg: self._on_job_error(msg),
             activity="Running specificity cross-prediction...",
         )
 
-    def _filter_worker(self, candidates, target, analogs) -> None:
-        all_targets = [target] + analogs
-        total = len(all_targets)
-
+    def _create_progress_bubble(self, total: int) -> ProgressBubble:
         progress = ProgressBubble(total, label="Specificity Cross-Prediction")
-        self.screen.app.call_from_thread(self.screen.add_structured_widget, progress)
+        self.screen.add_structured_widget(progress)
+        return progress
 
-        try:
-            adapter = self.screen.app.prediction_adapter
-            results_by_target: dict[str, list] = {}
+    def _on_job_event(self, evt: dict, progress: ProgressBubble) -> None:
+        etype = evt.get("type", "")
+        if etype == "progress":
+            done = int(evt.get("done", 0))
+            total = int(evt.get("total", self._progress_total))
+            self._progress_done = done
+            self._progress_total = total
+            extra = evt.get("extra", {}) or {}
+            kept = extra.get("kept")
+            removed = extra.get("removed")
+            current_target = extra.get("current_target")
+            if isinstance(kept, int):
+                self._kept_count = kept
+            if isinstance(removed, int):
+                self._removed_count = removed
+            if isinstance(current_target, str) and current_target:
+                self._current_target = current_target
+            progress.set_progress(done, self._progress_info())
+        elif etype == "hit":
+            extra = evt.get("extra", {}) or {}
+            status = extra.get("status")
+            if status == "kept":
+                self._kept_count += 1
+            elif status == "removed":
+                self._removed_count += 1
+            progress.set_progress(self._progress_done, self._progress_info())
 
-            for idx, tgt in enumerate(all_targets):
-                if not tgt.smiles:
-                    results_by_target[tgt.smiles or ""] = []
-                else:
-                    results_by_target[tgt.smiles] = adapter._predict_batch_via_csv(
-                        candidates, tgt
-                    )
-                done = idx + 1
-                label = tgt.resolved_name or tgt.input_text or f"target {idx}"
-                self.screen.app.call_from_thread(
-                    progress.set_progress, done, f"Completed: {label}"
-                )
+    def _progress_info(self) -> str:
+        parts = [f"Progress: {self._progress_done:,}/{self._progress_total:,}"]
+        parts.append(f"Kept: {self._kept_count:,}")
+        parts.append(f"Removed: {self._removed_count:,}")
+        if self._current_target:
+            parts.append(f"Target: {self._current_target}")
+        return " | ".join(parts)
 
-            specificity_results: list[SpecificityResult] = []
-            kept_count = 0
+    def _on_job_done(self, summary: dict, progress: ProgressBubble) -> None:
+        # Reload state because the runner saves it from the detached process.
+        state = self.screen.app.current_state
+        self.screen.app._state = self.screen.app.engine.load_run(state.run_id)
+        state = self.screen.app.current_state
 
-            for cand in candidates:
-                cand_id = cand.candidate_id or ""
-                failed: list[str] = []
-                for analog in analogs:
-                    if not analog.smiles:
-                        continue
-                    analog_preds = results_by_target.get(analog.smiles, [])
-                    analog_pred = next(
-                        (pred for pred in analog_preds if pred.candidate_id == cand_id),
-                        None,
-                    )
-                    if analog_pred and analog_pred.label == 1:
-                        failed.append(analog.input_text)
+        kept = int(summary.get("kept", self._kept_count))
+        removed = int(summary.get("removed", self._removed_count))
+        total_candidates = int(
+            summary.get("candidates", len(state.candidates))
+        )
+        cancelled = bool(summary.get("cancelled"))
 
-                status_str = "removed" if failed else "kept"
-                if not failed:
-                    kept_count += 1
-                specificity_results.append(
-                    SpecificityResult(
-                        candidate_id=cand_id,
-                        status=status_str,
-                        failed_analogs=failed,
-                    )
-                )
+        finish_msg = f"{kept}/{total_candidates} kept ({removed} removed)"
+        if cancelled:
+            finish_msg += " — cancelled"
+        results_path = summary.get("results_path")
+        if results_path:
+            finish_msg += f"\nResults: {results_path}"
+        progress.finish(finish_msg)
 
-            state = self.screen.app.current_state
-            state.specificity_results = specificity_results
-            self.screen.app.save_state()
-
-            msg = f"Filter complete. {kept_count}/{len(candidates)} candidates kept."
-            if kept_count < len(candidates):
-                removed = [
-                    result.candidate_id
-                    for result in specificity_results
-                    if result.status == "removed"
-                ]
-                msg += f"\nRemoved: {', '.join(removed[:10])}"
-
-            finish_msg = f"{total} target(s) predicted — {kept_count}/{len(candidates)} kept"
-
-            def _on_filter_complete() -> None:
-                progress.finish(finish_msg)
-                self.screen.add_system_message(msg)
-                ns = next_step(Step.SPECIFICITY_FILTER)
-                if ns:
-                    self.screen.advance_to_step(ns)
-
-            self.screen.app.call_from_thread(_on_filter_complete)
-        except Exception as exc:
-            self.screen.app.call_from_thread(
-                self.screen.add_system_message, f"Filter failed: {exc}", "error-text"
+        if cancelled:
+            self.screen.add_system_message(
+                "Specificity filter was cancelled. You can re-enter the step "
+                "to resume from where it left off.",
+                "warning-text",
             )
-            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+            self.screen.set_input_enabled(True)
+            return
+
+        msg = f"Filter complete. {kept}/{total_candidates} candidates kept."
+        if removed > 0:
+            removed_ids = [
+                result.candidate_id
+                for result in state.specificity_results
+                if result.status == "removed"
+            ]
+            if removed_ids:
+                msg += f"\nRemoved: {', '.join(removed_ids[:10])}"
+        self.screen.add_system_message(msg)
+
+        ns = next_step(Step.SPECIFICITY_FILTER)
+        if ns:
+            self.screen.advance_to_step(ns)
+
+    def _on_job_error(self, msg: str) -> None:
+        self.screen.add_system_message(
+            f"Specificity filter failed: {msg}", "error-text"
+        )
+        self.screen.set_input_enabled(True)
 
     def _skip(self) -> None:
         state = self.screen.app.current_state

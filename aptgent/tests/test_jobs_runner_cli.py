@@ -71,10 +71,15 @@ class TestJobRunnerCLI:
     def test_job_runners_registry_has_enum_and_docking(self):
         assert "candidate_enumeration" in _JOB_RUNNERS
         assert "docking_run" in _JOB_RUNNERS
+        assert "specificity_filter" in _JOB_RUNNERS
 
     def test_job_runners_registry_only_has_known_steps(self):
         for step_name in _JOB_RUNNERS:
-            assert step_name in ("candidate_enumeration", "docking_run")
+            assert step_name in (
+                "candidate_enumeration",
+                "specificity_filter",
+                "docking_run",
+            )
 
 
 def test_enumeration_runner_normal_completion_finalizes_hits(tmp_path, monkeypatch):

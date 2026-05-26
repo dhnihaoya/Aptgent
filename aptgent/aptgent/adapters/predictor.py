@@ -207,53 +207,26 @@ class EnsembleAdapter:
 
         return results_by_target
 
-    def predict_mutation_batch(
+    def _run_streaming_subprocess(
         self,
-        base_sequence: str,
-        target: TargetMolecule,
-        sites: list[int],
+        cmd: list[str],
         *,
-        progress_callback: Callable[[int, int, dict], None] | None = None,
-        result_callback: Callable[[dict], None] | None = None,
-        progress_every: int = 10000,
-        cancel_event: threading.Event | None = None,
-        timeout_seconds: int | None = 3600,
-        skip_first: int = 0,
-        batch_size: int | None = None,
-    ) -> dict[str, Any]:
-        """Run mutation-batch via subprocess with line-JSON protocol.
+        on_line: Callable[[dict], None],
+        cancel_event: threading.Event | None,
+        timeout_seconds: int | None,
+    ) -> tuple[int, str, bool]:
+        """Spawn a streaming predictor subprocess and dispatch JSON lines.
 
-        Streams positives-only hits through ``result_callback``.
-        Returns summary dict with total, hits, device, model_order.
+        ``on_line`` is invoked with each parsed JSON object (except ``error``
+        messages, which are intercepted and raised at the end). The helper
+        handles cooperative cancel (``cancel\\n`` on stdin), wall-clock
+        timeout, stderr pump, and three-stage termination
+        (cancel -> terminate -> kill).
 
-        The subprocess lifecycle is guarded by:
-
-        * a dedicated stderr-pump thread (stderr is ``PIPE``-backed and the OS
-          pipe buffer would otherwise block the child once full);
-        * a total wall-clock watchdog (``timeout_seconds``) that triggers the
-          same three-stage termination as a cooperative cancel
-          (``cancel\\n`` on stdin -> ``terminate()`` -> ``kill()``).
+        Returns ``(returncode, stderr_output, timed_out)`` once the process
+        has exited.  Raises :class:`RuntimeError` on subprocess-reported
+        errors.
         """
-        smiles = target.smiles or ""
-        if not smiles:
-            raise ValueError("Target molecule must have a resolved SMILES string.")
-
-        effective_progress_every = progress_every
-        if batch_size is not None:
-            effective_progress_every = batch_size
-
-        sites_str = ",".join(str(s) for s in sites)
-        cmd = self._build_cmd() + [
-            "--model-dir", self.model_dir,
-            "mutation-batch",
-            "--base-sequence", base_sequence,
-            "--smiles", smiles,
-            "--sites", sites_str,
-            "--progress-every", str(int(effective_progress_every)),
-        ]
-        if skip_first > 0:
-            cmd.extend(["--skip-first", str(skip_first)])
-
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -265,7 +238,6 @@ class EnsembleAdapter:
             env=os.environ.copy(),
         )
 
-        summary: dict[str, Any] = {"total": 0, "hits": 0}
         stderr_chunks: list[str] = []
         subprocess_error: dict[str, Any] = {}
 
@@ -279,40 +251,22 @@ class EnsembleAdapter:
                         obj = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-
-                    msg_type = obj.get("type")
-                    if msg_type == "progress" and progress_callback:
-                        progress_callback(obj["done"], obj["total"], {})
-                    elif msg_type == "hit" and result_callback:
-                        result_callback({
-                            "sequence": obj["sequence"],
-                            "ensemble_label": 1,
-                            "probability": obj["mean_probability"],
-                            "model_probabilities": obj.get("model_probabilities", []),
-                        })
-                    elif msg_type == "done":
-                        summary["total"] = obj.get("total", 0)
-                        summary["hits"] = obj.get("hits", 0)
-                        if "device" in obj:
-                            summary["device"] = obj["device"]
-                        if "model_order" in obj:
-                            summary["model_order"] = obj["model_order"]
-                        if obj.get("cancelled"):
-                            summary["cancelled"] = True
-                    elif msg_type == "ready":
-                        summary["device"] = obj.get("device", "cpu")
-                        summary["model_order"] = obj.get("model_order", [])
-                    elif msg_type == "error":
+                    if obj.get("type") == "error":
                         subprocess_error["message"] = obj.get("message", "")
+                        continue
+                    try:
+                        on_line(obj)
+                    except Exception as exc:
+                        _log.debug("streaming on_line callback raised: %s", exc)
             except Exception as exc:
-                _log.debug("mutation-batch stdout reader aborted: %s", exc)
+                _log.debug("streaming stdout reader aborted: %s", exc)
 
         def _stderr_pump() -> None:
             try:
                 for line in proc.stderr:
                     stderr_chunks.append(line)
             except Exception as exc:
-                _log.debug("mutation-batch stderr pump aborted: %s", exc)
+                _log.debug("streaming stderr pump aborted: %s", exc)
 
         reader_thread = threading.Thread(target=_reader, daemon=True)
         stderr_thread = threading.Thread(target=_stderr_pump, daemon=True)
@@ -339,7 +293,7 @@ class EnsembleAdapter:
                 if timeout_seconds is not None and (time.monotonic() - start) > timeout_seconds:
                     timed_out = True
                     _log.warning(
-                        "mutation-batch subprocess exceeded %ss; requesting cancel.",
+                        "streaming subprocess exceeded %ss; requesting cancel.",
                         timeout_seconds,
                     )
                     _send_cancel()
@@ -348,12 +302,12 @@ class EnsembleAdapter:
             try:
                 proc.wait(timeout=30)
             except subprocess.TimeoutExpired:
-                _log.warning("mutation-batch subprocess did not exit; terminating.")
+                _log.warning("streaming subprocess did not exit; terminating.")
                 proc.terminate()
                 try:
                     proc.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    _log.warning("mutation-batch subprocess still alive; killing.")
+                    _log.warning("streaming subprocess still alive; killing.")
                     proc.kill()
                     try:
                         proc.wait(timeout=5)
@@ -372,19 +326,242 @@ class EnsembleAdapter:
                 pass
 
         stderr_output = "".join(stderr_chunks)
+        if timed_out and cancel_event is not None:
+            cancel_event.set()
+
+        if subprocess_error:
+            raise RuntimeError(
+                "Predictor subprocess reported error: "
+                f"{subprocess_error.get('message', '')[:500]}"
+            )
+
+        return proc.returncode, stderr_output, timed_out
+
+    def predict_specificity_batch(
+        self,
+        candidates: list[CandidateSequence],
+        targets: list[TargetMolecule],
+        *,
+        progress_callback: Callable[[int, int, dict], None] | None = None,
+        row_callback: Callable[[dict], None] | None = None,
+        cancel_event: threading.Event | None = None,
+        timeout_seconds: int | None = 3600,
+        progress_every: int = 1,
+        skip_pairs: list[tuple[int, str]] | None = None,
+    ) -> dict[str, Any]:
+        """Run streaming specificity cross-prediction via the predictor CLI.
+
+        Streams events through ``progress_callback(done, total, extra)`` and
+        ``row_callback({target_idx, target_name, candidate_id, label, probability})``.
+        Returns a summary dict with ``total``, ``device``, ``model_order``, and
+        optionally ``cancelled`` when the subprocess exits cooperatively.
+
+        ``skip_pairs`` is an optional list of ``(target_idx, candidate_id)``
+        tuples that the subprocess should skip; the caller (the job runner)
+        uses this to resume after a partial run.
+        """
+        for target in targets:
+            if not target.smiles:
+                raise ValueError(
+                    "All target molecules must have a resolved SMILES string."
+                )
+
+        candidates_payload = [
+            {
+                "candidate_id": c.candidate_id or f"cand_{idx}",
+                "sequence": c.sequence,
+            }
+            for idx, c in enumerate(candidates)
+        ]
+        targets_payload = [
+            {
+                "name": (t.resolved_name or t.input_text or ""),
+                "smiles": t.smiles or "",
+            }
+            for t in targets
+        ]
+
+        cleanup_paths: list[str] = []
+        skip_file_path: str | None = None
+        try:
+            cand_file = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False, prefix="spec_cands_"
+            )
+            cleanup_paths.append(cand_file.name)
+            json.dump(candidates_payload, cand_file)
+            cand_file.flush()
+            cand_file.close()
+
+            tgt_file = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False, prefix="spec_tgts_"
+            )
+            cleanup_paths.append(tgt_file.name)
+            json.dump(targets_payload, tgt_file)
+            tgt_file.flush()
+            tgt_file.close()
+
+            cmd = self._build_cmd() + [
+                "--model-dir", self.model_dir,
+                "specificity-batch",
+                "--candidates-json", cand_file.name,
+                "--targets-json", tgt_file.name,
+                "--progress-every", str(int(progress_every)),
+            ]
+            if skip_pairs:
+                skip_file = tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".json", delete=False, prefix="spec_skip_"
+                )
+                json.dump(
+                    [[int(idx), str(cid)] for idx, cid in skip_pairs],
+                    skip_file,
+                )
+                skip_file.flush()
+                skip_file.close()
+                skip_file_path = skip_file.name
+                cmd.extend(["--skip-pairs-json", skip_file_path])
+
+            summary: dict[str, Any] = {"total": len(candidates) * len(targets)}
+
+            def _on_line(obj: dict) -> None:
+                msg_type = obj.get("type")
+                if msg_type == "ready":
+                    summary["device"] = obj.get("device", "cpu")
+                    summary["model_order"] = obj.get("model_order", [])
+                    if "total" in obj:
+                        summary["total"] = obj["total"]
+                elif msg_type == "progress" and progress_callback:
+                    extra = {
+                        k: obj[k]
+                        for k in ("target_idx", "target_name")
+                        if k in obj
+                    }
+                    progress_callback(
+                        int(obj.get("done", 0)),
+                        int(obj.get("total", summary["total"])),
+                        extra,
+                    )
+                elif msg_type == "row" and row_callback:
+                    row_callback({
+                        "target_idx": int(obj.get("target_idx", 0)),
+                        "target_name": str(obj.get("target_name", "")),
+                        "candidate_id": str(obj.get("candidate_id", "")),
+                        "label": int(obj.get("label", 0)),
+                        "probability": float(obj.get("probability", 0.0)),
+                    })
+                elif msg_type == "done":
+                    if obj.get("cancelled"):
+                        summary["cancelled"] = True
+                    if "total" in obj:
+                        summary["total"] = obj["total"]
+
+            rc, stderr_output, _timed_out = self._run_streaming_subprocess(
+                cmd,
+                on_line=_on_line,
+                cancel_event=cancel_event,
+                timeout_seconds=timeout_seconds,
+            )
+
+            if cancel_event is not None and cancel_event.is_set():
+                summary["cancelled"] = True
+
+            # rc == 0 success; rc == 1 is a cooperative cancel
+            if rc not in (0, 1):
+                raise RuntimeError(
+                    f"Predictor specificity-batch failed (exit {rc}): "
+                    f"{stderr_output[:500]}"
+                )
+
+            return summary
+        finally:
+            for path in cleanup_paths:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+            if skip_file_path is not None:
+                try:
+                    os.unlink(skip_file_path)
+                except OSError:
+                    pass
+
+    def predict_mutation_batch(
+        self,
+        base_sequence: str,
+        target: TargetMolecule,
+        sites: list[int],
+        *,
+        progress_callback: Callable[[int, int, dict], None] | None = None,
+        result_callback: Callable[[dict], None] | None = None,
+        progress_every: int = 10000,
+        cancel_event: threading.Event | None = None,
+        timeout_seconds: int | None = 3600,
+        skip_first: int = 0,
+        batch_size: int | None = None,
+    ) -> dict[str, Any]:
+        """Run mutation-batch via subprocess with line-JSON protocol.
+
+        Streams positives-only hits through ``result_callback``.
+        Returns summary dict with total, hits, device, model_order.
+        """
+        smiles = target.smiles or ""
+        if not smiles:
+            raise ValueError("Target molecule must have a resolved SMILES string.")
+
+        effective_progress_every = progress_every
+        if batch_size is not None:
+            effective_progress_every = batch_size
+
+        sites_str = ",".join(str(s) for s in sites)
+        cmd = self._build_cmd() + [
+            "--model-dir", self.model_dir,
+            "mutation-batch",
+            "--base-sequence", base_sequence,
+            "--smiles", smiles,
+            "--sites", sites_str,
+            "--progress-every", str(int(effective_progress_every)),
+        ]
+        if skip_first > 0:
+            cmd.extend(["--skip-first", str(skip_first)])
+
+        summary: dict[str, Any] = {"total": 0, "hits": 0}
+
+        def _on_line(obj: dict) -> None:
+            msg_type = obj.get("type")
+            if msg_type == "progress" and progress_callback:
+                progress_callback(obj["done"], obj["total"], {})
+            elif msg_type == "hit" and result_callback:
+                result_callback({
+                    "sequence": obj["sequence"],
+                    "ensemble_label": 1,
+                    "probability": obj["mean_probability"],
+                    "model_probabilities": obj.get("model_probabilities", []),
+                })
+            elif msg_type == "done":
+                summary["total"] = obj.get("total", 0)
+                summary["hits"] = obj.get("hits", 0)
+                if "device" in obj:
+                    summary["device"] = obj["device"]
+                if "model_order" in obj:
+                    summary["model_order"] = obj["model_order"]
+                if obj.get("cancelled"):
+                    summary["cancelled"] = True
+            elif msg_type == "ready":
+                summary["device"] = obj.get("device", "cpu")
+                summary["model_order"] = obj.get("model_order", [])
+
+        rc, stderr_output, timed_out = self._run_streaming_subprocess(
+            cmd,
+            on_line=_on_line,
+            cancel_event=cancel_event,
+            timeout_seconds=timeout_seconds,
+        )
+
         if timed_out:
             summary["cancelled"] = True
             summary["timed_out"] = True
         if cancel_event is not None and cancel_event.is_set():
             summary["cancelled"] = True
 
-        if subprocess_error:
-            raise RuntimeError(
-                "Predictor mutation-batch reported error: "
-                f"{subprocess_error.get('message', '')[:500]}"
-            )
-
-        rc = proc.returncode
         # rc == 0 success; rc == 1 is a cooperative cancel (PredictionCancelled)
         if rc not in (0, 1):
             raise RuntimeError(

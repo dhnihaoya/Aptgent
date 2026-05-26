@@ -185,6 +185,191 @@ def cmd_mutation_batch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_specificity_batch(args: argparse.Namespace) -> int:
+    """Run cross-prediction of a candidate list against a list of targets.
+
+    Emits a streaming, line-JSON protocol that mirrors ``mutation-batch``:
+
+    * ``ready`` once on startup
+    * ``row``    per finalized (target, candidate) prediction
+    * ``progress`` every ``--progress-every`` rows (and on target switch)
+    * ``done``   on completion or cooperative cancel
+    * ``error``  on unrecoverable failure
+
+    Stdin accepts a single ``cancel`` line for soft cancellation, matching
+    the mutation-batch protocol.
+    """
+    from aptgent.predictor_runtime.cuda import get_device
+    from aptgent.predictor_runtime.predictor import (
+        EnsemblePredictor,
+        PredictionCancelled,
+    )
+
+    model_dir = Path(args.model_dir) if args.model_dir else default_model_dir()
+
+    candidates_path = Path(args.candidates_json)
+    targets_path = Path(args.targets_json)
+    if not candidates_path.is_file():
+        _emit({"type": "error", "message": f"candidates json not found: {candidates_path}"})
+        return 1
+    if not targets_path.is_file():
+        _emit({"type": "error", "message": f"targets json not found: {targets_path}"})
+        return 1
+
+    with candidates_path.open("r", encoding="utf-8") as f:
+        candidates = json.load(f)
+    with targets_path.open("r", encoding="utf-8") as f:
+        targets = json.load(f)
+
+    if not isinstance(candidates, list) or not isinstance(targets, list):
+        _emit({"type": "error", "message": "candidates and targets must be JSON arrays"})
+        return 1
+
+    skip_pairs: set[tuple[int, str]] = set()
+    if args.skip_pairs_json:
+        try:
+            with open(args.skip_pairs_json, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            if isinstance(raw, list):
+                for entry in raw:
+                    if (
+                        isinstance(entry, list)
+                        and len(entry) == 2
+                        and isinstance(entry[0], int)
+                    ):
+                        skip_pairs.add((entry[0], str(entry[1])))
+        except (OSError, json.JSONDecodeError) as exc:
+            _emit({"type": "error", "message": f"failed to read skip_pairs_json: {exc}"})
+            return 1
+
+    progress_every = max(1, int(args.progress_every or 1))
+
+    cancelled = False
+
+    def _stdin_reader() -> None:
+        nonlocal cancelled
+        try:
+            for line in sys.stdin:
+                if line.strip() == "cancel":
+                    cancelled = True
+                    break
+        except Exception:
+            pass
+
+    import threading
+
+    reader_thread = threading.Thread(target=_stdin_reader, daemon=True)
+    reader_thread.start()
+
+    try:
+        predictor = EnsemblePredictor(model_dir)
+    except Exception as exc:
+        _emit({"type": "error", "message": f"failed to load models: {exc}"})
+        return 1
+
+    device = get_device()
+    model_order = [fname for _, _, fname in predictor.models]
+
+    total = len(candidates) * len(targets)
+    _emit({
+        "type": "ready",
+        "device": device,
+        "model_order": model_order,
+        "total": total,
+    })
+
+    done = 0
+    rows_since_progress = 0
+
+    def _check_cancel() -> bool:
+        return cancelled
+
+    try:
+        for target_idx, target in enumerate(targets):
+            if cancelled:
+                break
+            target_name = str(target.get("name", "") or "")
+            smiles = str(target.get("smiles", "") or "")
+            if not smiles:
+                _emit({
+                    "type": "error",
+                    "message": f"target {target_idx} ({target_name}) missing smiles",
+                })
+                return 1
+
+            # Emit a target-switch progress beat so the UI can update the
+            # "current target" label even before any row events arrive.
+            _emit({
+                "type": "progress",
+                "done": done,
+                "total": total,
+                "target_idx": target_idx,
+                "target_name": target_name,
+            })
+
+            pending: list[tuple[str, str]] = []
+            for candidate in candidates:
+                cand_id = str(candidate.get("candidate_id", "") or "")
+                sequence = str(candidate.get("sequence", "") or "")
+                if (target_idx, cand_id) in skip_pairs:
+                    continue
+                if not sequence or not cand_id:
+                    continue
+                pending.append((cand_id, sequence))
+
+            if not pending:
+                continue
+
+            sequences = [seq for _, seq in pending]
+            smiles_list = [smiles] * len(pending)
+            ids = [cand_id for cand_id, _ in pending]
+
+            def _on_row(sample: dict, *, _target_idx=target_idx, _target_name=target_name) -> None:
+                nonlocal done, rows_since_progress
+                cand_id = str(sample.get("id", ""))
+                _emit({
+                    "type": "row",
+                    "target_idx": _target_idx,
+                    "target_name": _target_name,
+                    "candidate_id": cand_id,
+                    "label": int(sample.get("ensemble_label", 0)),
+                    "probability": float(sample.get("mean_probability", 0.0)),
+                })
+                done += 1
+                rows_since_progress += 1
+                if rows_since_progress >= progress_every or done == total:
+                    _emit({
+                        "type": "progress",
+                        "done": done,
+                        "total": total,
+                        "target_idx": _target_idx,
+                        "target_name": _target_name,
+                    })
+                    rows_since_progress = 0
+
+            predictor.predict_batch(
+                sequences,
+                smiles_list,
+                ids=ids,
+                row_callback=_on_row,
+                should_cancel=_check_cancel,
+            )
+
+        if rows_since_progress:
+            _emit({"type": "progress", "done": done, "total": total})
+
+        _emit({"type": "done", "total": total, "cancelled": cancelled})
+
+    except PredictionCancelled:
+        _emit({"type": "done", "total": total, "cancelled": True})
+        return 1
+    except Exception as exc:
+        _emit({"type": "error", "message": str(exc)})
+        return 1
+
+    return 0
+
+
 def _emit(obj: dict) -> None:
     sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
     sys.stdout.flush()
@@ -221,6 +406,26 @@ def build_parser() -> argparse.ArgumentParser:
     mut_batch.add_argument("--skip-first", type=int, default=0,
                            help="Skip the first N candidates (for resume)")
 
+    spec_batch = sub.add_parser(
+        "specificity-batch",
+        help="Stream cross-prediction of candidates against multiple targets.",
+    )
+    spec_batch.add_argument("--candidates-json", required=True,
+                            help="Path to JSON file: [{candidate_id, sequence}, ...]")
+    spec_batch.add_argument("--targets-json", required=True,
+                            help="Path to JSON file: [{name, smiles}, ...]")
+    spec_batch.add_argument(
+        "--progress-every",
+        type=int,
+        default=1,
+        help="Emit a progress message after this many row events.",
+    )
+    spec_batch.add_argument(
+        "--skip-pairs-json",
+        default=None,
+        help="Optional JSON file with [[target_idx, candidate_id], ...] pairs to skip (resume).",
+    )
+
     return parser
 
 
@@ -230,6 +435,8 @@ def main() -> int:
         return cmd_predict(args)
     if args.command == "mutation-batch":
         return cmd_mutation_batch(args)
+    if args.command == "specificity-batch":
+        return cmd_specificity_batch(args)
     raise ValueError(f"Unsupported command: {args.command}")
 
 
