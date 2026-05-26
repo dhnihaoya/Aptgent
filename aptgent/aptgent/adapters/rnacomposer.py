@@ -24,6 +24,7 @@ the user; they can then fall back to manual upload mode.
 from __future__ import annotations
 
 import dataclasses
+import html
 import logging
 import re
 import time
@@ -38,10 +39,13 @@ from aptgent.adapters.structure_services import TertiaryStructureJob
 _log = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = "https://rnacomposer.cs.put.poznan.pl"
-_INTERACTIVE_PATH = "/Home/computing"
+_INTERACTIVE_PATH = "/"
+_DEFAULT_TASK_NAME = "aptgent"
+_DEFAULT_2D_TOOL = "RNAfold"
 
 
 HttpTransport = Callable[[str, dict[str, Any] | None, dict[str, str] | None], "HttpResponse"]
+_OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor())
 
 
 @dataclass
@@ -72,7 +76,7 @@ def _default_transport(
         headers=headers or {"User-Agent": "Aptgent/1.0 (RNAComposer client)"},
         method="POST" if data is not None else "GET",
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with _OPENER.open(req, timeout=60) as resp:
         body = resp.read()
         return HttpResponse(
             status=resp.status,
@@ -113,16 +117,18 @@ class RNAComposerAdapter:
         if not sequence:
             raise ValueError("RNAComposer submit requires a non-empty sequence")
 
-        payload = {
-            "sequence": sequence,
-            "secondaryStructure": secondary_structure or "",
-        }
         url = f"{self.base_url}{self.interactive_path}"
         try:
+            form_response = self._transport(url, None, _default_headers())
+            if form_response.status >= 400:
+                raise RuntimeError(f"RNAComposer form returned HTTP {form_response.status}")
+
+            form_text = form_response.text()
+            submit_url = _extract_compose_action(form_text, form_response.url) or url
             response = self._transport(
-                url,
-                payload,
-                {"User-Agent": "Aptgent/1.0 (RNAComposer client)"},
+                submit_url,
+                _build_submit_payload(sequence, secondary_structure),
+                _default_headers(referer=form_response.url),
             )
         except Exception as exc:
             raise RuntimeError(
@@ -138,7 +144,7 @@ class RNAComposerAdapter:
 
         body_text = response.text()
         pdb_text = _maybe_extract_pdb_from_response(body_text, response.headers)
-        job_id = _extract_job_id(body_text, response.url)
+        job_id = _extract_task_id(body_text) or _extract_job_id(body_text, response.url)
         status = "completed" if pdb_text else "queued"
         if not job_id:
             job_id = f"interactive_{int(time.time() * 1000)}"
@@ -150,6 +156,10 @@ class RNAComposerAdapter:
             "headers": response.headers,
             "pdb_text": pdb_text,
             "status": status,
+            "status_url": _extract_form_action(body_text, "progressForm", response.url)
+            or urllib.parse.urljoin(response.url, "task/progress"),
+            "result_url": _extract_form_action(body_text, "resultsForm", response.url)
+            or urllib.parse.urljoin(response.url, "task/result"),
             "submitted_at": time.time(),
         }
         return TertiaryStructureJob(
@@ -176,9 +186,13 @@ class RNAComposerAdapter:
                 job_id=job_id,
             )
 
-        url = entry.get("status_url") or f"{self.base_url}/jobs/{job_id}"
+        url = entry.get("status_url") or urllib.parse.urljoin(self.base_url + "/", "task/progress")
         try:
-            response = self._transport(url, None, None)
+            response = self._transport(
+                url,
+                {"taskID": job_id},
+                _default_headers(referer=self.base_url + "/"),
+            )
         except Exception as exc:
             return TertiaryStructureJob(
                 provider="rnacomposer",
@@ -197,6 +211,47 @@ class RNAComposerAdapter:
                 status="completed",
                 job_id=job_id,
             )
+
+        if _processing_finished(body_text):
+            result_url = entry.get("result_url") or urllib.parse.urljoin(self.base_url + "/", "task/result")
+            try:
+                result_response = self._transport(
+                    result_url,
+                    {"taskID": job_id},
+                    _default_headers(referer=self.base_url + "/"),
+                )
+                result_text = result_response.text()
+                pdb_text = _maybe_extract_pdb_from_response(
+                    result_text,
+                    result_response.headers,
+                )
+                if not pdb_text:
+                    pdb_url = _extract_pdb_download_url(result_text, result_response.url)
+                    if pdb_url:
+                        pdb_response = self._transport(
+                            pdb_url,
+                            None,
+                            _default_headers(referer=result_response.url),
+                        )
+                        pdb_text = _maybe_extract_pdb_from_response(
+                            pdb_response.text(),
+                            pdb_response.headers,
+                        )
+                if pdb_text:
+                    entry["pdb_text"] = pdb_text
+                    entry["status"] = "completed"
+                    return TertiaryStructureJob(
+                        provider="rnacomposer",
+                        status="completed",
+                        job_id=job_id,
+                    )
+            except Exception as exc:
+                return TertiaryStructureJob(
+                    provider="rnacomposer",
+                    status="pending",
+                    job_id=job_id,
+                    note=f"Result fetch failed: {exc}",
+                )
 
         # Heuristic: detect explicit failure language
         if _looks_like_failure_page(body_text):
@@ -268,6 +323,33 @@ class RNAComposerAdapter:
 # ---------------------------------------------------------------------------
 
 
+def _default_headers(*, referer: str | None = None) -> dict[str, str]:
+    headers = {"User-Agent": "Aptgent/1.0 (RNAComposer client)"}
+    if referer:
+        headers["Referer"] = referer
+    return headers
+
+
+def _build_submit_payload(
+    sequence: str,
+    secondary_structure: str,
+    *,
+    task_name: str = _DEFAULT_TASK_NAME,
+) -> dict[str, str]:
+    secondary = secondary_structure.strip() or _DEFAULT_2D_TOOL
+    payload = {
+        "content": f">{task_name}\n{sequence}\n{secondary}",
+        "_addPredict2dTool": "on",
+        "send": "Compose",
+        "_sendEmail": "on",
+        "email": "",
+    }
+    if not secondary_structure.strip():
+        payload["addPredict2dTool"] = "true"
+        payload["predict2dTool"] = _DEFAULT_2D_TOOL.lower()
+    return payload
+
+
 _PDB_LINE_RE = re.compile(r"^(?:ATOM|HETATM)\s", re.MULTILINE)
 
 
@@ -291,6 +373,55 @@ def _maybe_extract_pdb_from_response(
 
 
 _JOB_ID_HINT_RE = re.compile(r"(?:jobId|task|job)[=/]([A-Za-z0-9_\-]+)")
+_COMPOSE_FORM_RE = re.compile(
+    r"<form[^>]+id=[\"']composeForm[\"'][^>]+action=[\"']([^\"']+)",
+    re.IGNORECASE,
+)
+_FORM_ACTION_RE = re.compile(
+    r"<form[^>]+id=[\"'](?P<form_id>[^\"']+)[\"'][^>]+action=[\"'](?P<action>[^\"']+)",
+    re.IGNORECASE,
+)
+_TASK_ID_RE = re.compile(
+    r"name=[\"']taskID[\"'][^>]+value=[\"']([^\"']+)",
+    re.IGNORECASE,
+)
+_PROCESSING_FINISHED_RE = re.compile(
+    r"name=[\"']processingFinished[\"'][^>]+value=[\"']true[\"']",
+    re.IGNORECASE,
+)
+_PDB_DOWNLOAD_RE = re.compile(r"href=[\"']([^\"']*/Home/GetResult\?[^\"']+)", re.IGNORECASE)
+
+
+def _extract_compose_action(body_text: str, page_url: str) -> str | None:
+    match = _COMPOSE_FORM_RE.search(body_text)
+    if not match:
+        return None
+    return urllib.parse.urljoin(page_url, match.group(1))
+
+
+def _extract_form_action(body_text: str, form_id: str, page_url: str) -> str | None:
+    for match in _FORM_ACTION_RE.finditer(body_text):
+        if match.group("form_id") == form_id:
+            return urllib.parse.urljoin(page_url, match.group("action"))
+    return None
+
+
+def _extract_task_id(body_text: str) -> str | None:
+    match = _TASK_ID_RE.search(body_text)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _processing_finished(body_text: str) -> bool:
+    return bool(_PROCESSING_FINISHED_RE.search(body_text))
+
+
+def _extract_pdb_download_url(body_text: str, page_url: str) -> str | None:
+    match = _PDB_DOWNLOAD_RE.search(body_text)
+    if not match:
+        return None
+    return urllib.parse.urljoin(page_url, html.unescape(match.group(1)))
 
 
 def _extract_job_id(body_text: str, url: str) -> str | None:
