@@ -116,6 +116,7 @@ def test_thinking_bubble_toggles_expansion():
         asyncio.set_event_loop(asyncio.new_event_loop())
 
     bubble = ThinkingBubble()
+    bubble.update = lambda _: None
     bubble.append_text("First thought.")
 
     assert bubble.expanded is False
@@ -134,6 +135,7 @@ def test_thinking_bubble_expands_markup_sensitive_reasoning_text():
         asyncio.set_event_loop(asyncio.new_event_loop())
 
     bubble = ThinkingBubble()
+    bubble.update = lambda _: None
     bubble.append_text('Checking molecule ["C1=C(C(=O)N(C(=O)N2C)C)"] in JSON.')
 
     bubble.toggle()

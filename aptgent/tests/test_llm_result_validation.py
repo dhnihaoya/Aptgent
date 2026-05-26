@@ -176,8 +176,21 @@ def test_validate_docking_recommendation_result_uses_fallback_for_invalid_top_k(
 
     assert result["recommended_top_k"] == 12
     assert result["recommended_time_budget_hours"] == 2
-    assert result["recommended_grid_size"] == [20.0, 20.0, 20.0]
-    assert "resources" in result["reason"].lower()
+    assert result["recommended_exhaustiveness"] in (8, 16, 32)
+    assert "grid_size" not in result
+    assert "recommended_grid_size" not in result
+
+
+def test_validate_docking_recommendation_result_ignores_grid_size_field():
+    """Old LLM responses may still carry recommended_grid_size; ignore it."""
+    result = _validate_docking_recommendation_result(
+        {"recommended_top_k": 3, "recommended_grid_size": [99, 99, 99]},
+        candidate_count=20,
+        machine_profile={"cpu_count": 4},
+        time_budget_hours=4,
+    )
+    assert result["recommended_top_k"] == 3
+    assert "recommended_grid_size" not in result
 def test_format_intake_confirmation_includes_structured_details():
     message = _format_intake_confirmation(
         sequence="ACGU",

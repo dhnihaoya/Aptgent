@@ -90,7 +90,7 @@ def test_record_docking_recommendation_context_persists_reason():
         time_budget_hours=4,
         recommended_time_budget_hours=4,
         recommended_top_k=12,
-        recommended_grid_size=[22.0, 24.0, 20.0],
+        recommended_exhaustiveness=16,
         receptor_path_note="Provide the receptor path manually.",
         grid_center_note="Confirm the grid center from the binding site.",
         reason="Fits the available CPU budget.",
@@ -98,17 +98,22 @@ def test_record_docking_recommendation_context_persists_reason():
         strategy="llm",
         phase="awaiting_decision",
         accepted=True,
+        sequences_export_dir="/tmp/seqs",
+        structures_dir="/tmp/structs",
     )
 
     context = state.context.docking_recommendation
     assert context.recommended_time_budget_hours == 4
     assert context.recommended_top_k == 12
-    assert context.recommended_grid_size == [22.0, 24.0, 20.0]
+    assert context.recommended_exhaustiveness == 16
+    assert context.recommended_grid_size == []
     assert context.display_markdown == "- Time budget: 4"
     assert context.strategy == "llm"
     assert context.phase == "awaiting_decision"
     assert context.reason == "Fits the available CPU budget."
     assert context.accepted is True
+    assert context.sequences_export_dir == "/tmp/seqs"
+    assert context.structures_dir == "/tmp/structs"
 def test_record_specificity_recommendation_context_persists_names_and_phase():
     state = RunState(run_id="spec_ctx_case")
 
