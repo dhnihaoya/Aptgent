@@ -6,9 +6,12 @@ import argparse
 import csv
 import json
 import sys
+import threading
 from pathlib import Path
 
 from aptgent.predictor_runtime.paths import default_model_dir
+from aptgent.protocol.cancel import StdinCancelWatcher
+from aptgent.protocol.line_json import JsonlEmitter
 
 
 def _find_col(header_lower: list[str], candidates: list[str]) -> int | None:
@@ -115,41 +118,27 @@ def cmd_mutation_batch(args: argparse.Namespace) -> int:
 
     device = get_device()
     model_order = [fname for _, _, fname in predictor.models]
+    emitter = JsonlEmitter(sys.stdout)
 
     # Emit ready signal
-    _emit({"type": "ready", "model_order": model_order, "device": device})
+    emitter.emit({"type": "ready", "model_order": model_order, "device": device})
 
-    cancelled = False
+    cancel_event = threading.Event()
+    _watcher = StdinCancelWatcher(cancel_event)  # noqa: F841 — daemon thread; prevent GC
 
     def _check_stdin_cancel() -> bool:
-        return cancelled
+        return cancel_event.is_set()
 
     def _on_progress(done: int, total: int, info: dict) -> None:
-        _emit({"type": "progress", "done": done, "total": total})
+        emitter.emit({"type": "progress", "done": done, "total": total})
 
     def _on_result(result: dict) -> None:
-        _emit({
+        emitter.emit({
             "type": "hit",
             "sequence": result["sequence"],
             "mean_probability": result["mean_probability"],
             "model_probabilities": result["model_probabilities"],
         })
-
-    # Background thread to read cancel from stdin
-    import threading
-
-    def _stdin_reader() -> None:
-        nonlocal cancelled
-        try:
-            for line in sys.stdin:
-                if line.strip() == "cancel":
-                    cancelled = True
-                    break
-        except Exception:
-            pass
-
-    reader_thread = threading.Thread(target=_stdin_reader, daemon=True)
-    reader_thread.start()
 
     total = 4 ** len(sites)
     hits = 0
@@ -173,13 +162,13 @@ def cmd_mutation_batch(args: argparse.Namespace) -> int:
             skip_first=skip_first,
         )
 
-        _emit({"type": "done", "total": total, "hits": hits})
+        emitter.emit({"type": "done", "total": total, "hits": hits})
 
     except PredictionCancelled:
-        _emit({"type": "done", "total": total, "hits": hits, "cancelled": True})
+        emitter.emit({"type": "done", "total": total, "hits": hits, "cancelled": True})
         return 1
     except Exception as exc:
-        _emit({"type": "error", "message": str(exc)})
+        emitter.emit({"type": "error", "message": str(exc)})
         return 1
 
     return 0
@@ -206,14 +195,15 @@ def cmd_specificity_batch(args: argparse.Namespace) -> int:
     )
 
     model_dir = Path(args.model_dir) if args.model_dir else default_model_dir()
+    emitter = JsonlEmitter(sys.stdout)
 
     candidates_path = Path(args.candidates_json)
     targets_path = Path(args.targets_json)
     if not candidates_path.is_file():
-        _emit({"type": "error", "message": f"candidates json not found: {candidates_path}"})
+        emitter.emit({"type": "error", "message": f"candidates json not found: {candidates_path}"})
         return 1
     if not targets_path.is_file():
-        _emit({"type": "error", "message": f"targets json not found: {targets_path}"})
+        emitter.emit({"type": "error", "message": f"targets json not found: {targets_path}"})
         return 1
 
     with candidates_path.open("r", encoding="utf-8") as f:
@@ -222,7 +212,7 @@ def cmd_specificity_batch(args: argparse.Namespace) -> int:
         targets = json.load(f)
 
     if not isinstance(candidates, list) or not isinstance(targets, list):
-        _emit({"type": "error", "message": "candidates and targets must be JSON arrays"})
+        emitter.emit({"type": "error", "message": "candidates and targets must be JSON arrays"})
         return 1
 
     skip_pairs: set[tuple[int, str]] = set()
@@ -239,39 +229,25 @@ def cmd_specificity_batch(args: argparse.Namespace) -> int:
                     ):
                         skip_pairs.add((entry[0], str(entry[1])))
         except (OSError, json.JSONDecodeError) as exc:
-            _emit({"type": "error", "message": f"failed to read skip_pairs_json: {exc}"})
+            emitter.emit({"type": "error", "message": f"failed to read skip_pairs_json: {exc}"})
             return 1
 
     progress_every = max(1, int(args.progress_every or 1))
 
-    cancelled = False
-
-    def _stdin_reader() -> None:
-        nonlocal cancelled
-        try:
-            for line in sys.stdin:
-                if line.strip() == "cancel":
-                    cancelled = True
-                    break
-        except Exception:
-            pass
-
-    import threading
-
-    reader_thread = threading.Thread(target=_stdin_reader, daemon=True)
-    reader_thread.start()
+    cancel_event = threading.Event()
+    _watcher = StdinCancelWatcher(cancel_event)  # noqa: F841 — daemon thread; prevent GC
 
     try:
         predictor = EnsemblePredictor(model_dir)
     except Exception as exc:
-        _emit({"type": "error", "message": f"failed to load models: {exc}"})
+        emitter.emit({"type": "error", "message": f"failed to load models: {exc}"})
         return 1
 
     device = get_device()
     model_order = [fname for _, _, fname in predictor.models]
 
     total = len(candidates) * len(targets)
-    _emit({
+    emitter.emit({
         "type": "ready",
         "device": device,
         "model_order": model_order,
@@ -282,16 +258,16 @@ def cmd_specificity_batch(args: argparse.Namespace) -> int:
     rows_since_progress = 0
 
     def _check_cancel() -> bool:
-        return cancelled
+        return cancel_event.is_set()
 
     try:
         for target_idx, target in enumerate(targets):
-            if cancelled:
+            if cancel_event.is_set():
                 break
             target_name = str(target.get("name", "") or "")
             smiles = str(target.get("smiles", "") or "")
             if not smiles:
-                _emit({
+                emitter.emit({
                     "type": "error",
                     "message": f"target {target_idx} ({target_name}) missing smiles",
                 })
@@ -299,7 +275,7 @@ def cmd_specificity_batch(args: argparse.Namespace) -> int:
 
             # Emit a target-switch progress beat so the UI can update the
             # "current target" label even before any row events arrive.
-            _emit({
+            emitter.emit({
                 "type": "progress",
                 "done": done,
                 "total": total,
@@ -327,7 +303,7 @@ def cmd_specificity_batch(args: argparse.Namespace) -> int:
             def _on_row(sample: dict, *, _target_idx=target_idx, _target_name=target_name) -> None:
                 nonlocal done, rows_since_progress
                 cand_id = str(sample.get("id", ""))
-                _emit({
+                emitter.emit({
                     "type": "row",
                     "target_idx": _target_idx,
                     "target_name": _target_name,
@@ -338,7 +314,7 @@ def cmd_specificity_batch(args: argparse.Namespace) -> int:
                 done += 1
                 rows_since_progress += 1
                 if rows_since_progress >= progress_every or done == total:
-                    _emit({
+                    emitter.emit({
                         "type": "progress",
                         "done": done,
                         "total": total,
@@ -356,23 +332,18 @@ def cmd_specificity_batch(args: argparse.Namespace) -> int:
             )
 
         if rows_since_progress:
-            _emit({"type": "progress", "done": done, "total": total})
+            emitter.emit({"type": "progress", "done": done, "total": total})
 
-        _emit({"type": "done", "total": total, "cancelled": cancelled})
+        emitter.emit({"type": "done", "total": total, "cancelled": cancel_event.is_set()})
 
     except PredictionCancelled:
-        _emit({"type": "done", "total": total, "cancelled": True})
+        emitter.emit({"type": "done", "total": total, "cancelled": True})
         return 1
     except Exception as exc:
-        _emit({"type": "error", "message": str(exc)})
+        emitter.emit({"type": "error", "message": str(exc)})
         return 1
 
     return 0
-
-
-def _emit(obj: dict) -> None:
-    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
 
 
 def build_parser() -> argparse.ArgumentParser:

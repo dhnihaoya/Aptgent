@@ -20,6 +20,7 @@ from typing import Any, Callable
 from aptgent.bootstrap.config import load_config
 from aptgent.jobs.events import EventWriter
 from aptgent.jobs.pid import clear_pid, read_pid, write_pid
+from aptgent.protocol.cancel import CmdFileCancelPoller
 from aptgent.workflow.persistence import Persistence
 
 _log = logging.getLogger(__name__)
@@ -211,20 +212,7 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
     stop_cancel_poller = threading.Event()
     cmd_file = persistence.job_cmd_file(state.run_id, "candidate_enumeration")
 
-    def _cancel_poller() -> None:
-        while not stop_cancel_poller.is_set() and not cancel_event.is_set():
-            if cmd_file.exists():
-                try:
-                    content = cmd_file.read_text().strip()
-                    if content == "cancel":
-                        cancel_event.set()
-                        return
-                except OSError:
-                    pass
-            stop_cancel_poller.wait(2)
-
-    cancel_thread = threading.Thread(target=_cancel_poller, daemon=True)
-    cancel_thread.start()
+    cancel_poller = CmdFileCancelPoller(cmd_file, cancel_event, stop_cancel_poller)
     adapter_summary: dict[str, Any] = {}
 
     try:
@@ -274,6 +262,7 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
             cancel_event=cancel_event,
             timeout_seconds=timeout_seconds,
             skip_first=skip_first,
+            sub_batch_size=sub_batch_size,
         )
         if isinstance(result_summary, dict):
             adapter_summary = result_summary
@@ -283,7 +272,7 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
         return
     finally:
         stop_cancel_poller.set()
-        cancel_thread.join(timeout=2)
+        cancel_poller.join(timeout=2)
         file_handle.close()
 
     if cancel_event.is_set() or adapter_summary.get("cancelled"):
@@ -481,20 +470,7 @@ def _run_specificity(writer: EventWriter, state: Any, persistence: Persistence) 
     stop_cancel_poller = threading.Event()
     cmd_file = persistence.job_cmd_file(state.run_id, "specificity_filter")
 
-    def _cancel_poller() -> None:
-        while not stop_cancel_poller.is_set() and not cancel_event.is_set():
-            if cmd_file.exists():
-                try:
-                    content = cmd_file.read_text().strip()
-                    if content == "cancel":
-                        cancel_event.set()
-                        return
-                except OSError:
-                    pass
-            stop_cancel_poller.wait(2)
-
-    cancel_thread = threading.Thread(target=_cancel_poller, daemon=True)
-    cancel_thread.start()
+    cancel_poller = CmdFileCancelPoller(cmd_file, cancel_event, stop_cancel_poller)
 
     current_target_name: str = target_names[0] if target_names else ""
     initial_done = len(done_status) * len(all_targets)
@@ -596,7 +572,7 @@ def _run_specificity(writer: EventWriter, state: Any, persistence: Persistence) 
         return
     finally:
         stop_cancel_poller.set()
-        cancel_thread.join(timeout=2)
+        cancel_poller.join(timeout=2)
         if file_handle is not None:
             file_handle.close()
 
@@ -745,22 +721,10 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
     )
 
     cancel_event = threading.Event()
+    stop_cancel_poller = threading.Event()
     cmd_file = persistence.job_cmd_file(state.run_id, "docking_run")
 
-    def _cancel_poller() -> None:
-        while not cancel_event.is_set():
-            if cmd_file.exists():
-                try:
-                    content = cmd_file.read_text().strip()
-                    if content == "cancel":
-                        cancel_event.set()
-                        return
-                except OSError:
-                    pass
-            cancel_event.wait(2)
-
-    cancel_thread = threading.Thread(target=_cancel_poller, daemon=True)
-    cancel_thread.start()
+    cancel_poller = CmdFileCancelPoller(cmd_file, cancel_event, stop_cancel_poller)
 
     try:
         if remaining_candidates and not cancel_event.is_set():
@@ -805,7 +769,8 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
         writer.write_error(message=f"Docking failed: {exc}")
         return
     finally:
-        cancel_event.set()
+        stop_cancel_poller.set()
+        cancel_poller.join(timeout=2)
 
     state.docking_results = existing_results
     persistence.save(state)

@@ -5,11 +5,12 @@ All events are written as one JSON object per line to an events.jsonl file.
 """
 from __future__ import annotations
 
-import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+
+from aptgent.protocol.line_json import JsonlEmitter, iter_jsonl
 
 
 def _now_ts() -> str:
@@ -22,10 +23,10 @@ class EventWriter:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._file = open(path, "a", encoding="utf-8")
+        self._emitter = JsonlEmitter(self._file)
 
     def _write(self, obj: dict[str, Any]) -> None:
-        self._file.write(json.dumps(obj, ensure_ascii=False) + "\n")
-        self._file.flush()
+        self._emitter.emit(obj)
 
     def write_started(self, *, pid: int, extra: dict[str, Any] | None = None) -> None:
         evt: dict[str, Any] = {"type": "started", "ts": _now_ts(), "pid": pid}
@@ -76,14 +77,7 @@ class EventReader:
         if not self._path.exists():
             return
         with open(self._path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    yield json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+            yield from iter_jsonl(f)
 
     def iter_events_from(self, start_offset: int) -> Iterator[dict[str, Any]]:
         """Yield events starting from byte offset *start_offset*."""
@@ -91,14 +85,7 @@ class EventReader:
             return
         with open(self._path, "r", encoding="utf-8") as f:
             f.seek(start_offset)
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    yield json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+            yield from iter_jsonl(f)
 
     def file_size(self) -> int:
         if not self._path.exists():
@@ -113,14 +100,8 @@ def read_last_event(path: Path) -> dict[str, Any] | None:
     last = None
     try:
         with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    last = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+            for obj in iter_jsonl(f):
+                last = obj
     except OSError:
         return None
     return last

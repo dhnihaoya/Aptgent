@@ -6,12 +6,12 @@ import os
 import subprocess
 import tempfile
 import threading
-import time
 from pathlib import Path
 from typing import Any, Callable
 
 from aptgent.domain.models import CandidateSequence, PredictionResult, TargetMolecule
 from aptgent.predictor_runtime.paths import RUNNER_MODULE, default_model_dir
+from aptgent.protocol.subprocess_stream import SubprocessSession
 
 _log = logging.getLogger(__name__)
 
@@ -217,125 +217,12 @@ class EnsembleAdapter:
     ) -> tuple[int, str, bool]:
         """Spawn a streaming predictor subprocess and dispatch JSON lines.
 
-        ``on_line`` is invoked with each parsed JSON object (except ``error``
-        messages, which are intercepted and raised at the end). The helper
-        handles cooperative cancel (``cancel\\n`` on stdin), wall-clock
-        timeout, stderr pump, and three-stage termination
-        (cancel -> terminate -> kill).
-
-        Returns ``(returncode, stderr_output, timed_out)`` once the process
-        has exited.  Raises :class:`RuntimeError` on subprocess-reported
-        errors.
+        Delegates to :class:`SubprocessSession` for process lifecycle
+        management.  Returns ``(returncode, stderr_output, timed_out)``.
+        Raises :class:`RuntimeError` on subprocess-reported errors.
         """
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            stdin=subprocess.PIPE,
-            bufsize=1,
-            text=True,
-            cwd=self._project_root,
-            env=os.environ.copy(),
-        )
-
-        stderr_chunks: list[str] = []
-        subprocess_error: dict[str, Any] = {}
-
-        def _reader() -> None:
-            try:
-                for line in proc.stdout:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if obj.get("type") == "error":
-                        subprocess_error["message"] = obj.get("message", "")
-                        continue
-                    try:
-                        on_line(obj)
-                    except Exception as exc:
-                        _log.debug("streaming on_line callback raised: %s", exc)
-            except Exception as exc:
-                _log.debug("streaming stdout reader aborted: %s", exc)
-
-        def _stderr_pump() -> None:
-            try:
-                for line in proc.stderr:
-                    stderr_chunks.append(line)
-            except Exception as exc:
-                _log.debug("streaming stderr pump aborted: %s", exc)
-
-        reader_thread = threading.Thread(target=_reader, daemon=True)
-        stderr_thread = threading.Thread(target=_stderr_pump, daemon=True)
-        reader_thread.start()
-        stderr_thread.start()
-
-        timed_out = False
-        start = time.monotonic()
-
-        def _send_cancel() -> None:
-            try:
-                if proc.stdin and not proc.stdin.closed:
-                    proc.stdin.write("cancel\n")
-                    proc.stdin.flush()
-            except (OSError, ValueError):
-                pass
-
-        try:
-            while reader_thread.is_alive():
-                reader_thread.join(timeout=0.5)
-                if cancel_event is not None and cancel_event.is_set():
-                    _send_cancel()
-                    break
-                if timeout_seconds is not None and (time.monotonic() - start) > timeout_seconds:
-                    timed_out = True
-                    _log.warning(
-                        "streaming subprocess exceeded %ss; requesting cancel.",
-                        timeout_seconds,
-                    )
-                    _send_cancel()
-                    break
-        finally:
-            try:
-                proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                _log.warning("streaming subprocess did not exit; terminating.")
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    _log.warning("streaming subprocess still alive; killing.")
-                    proc.kill()
-                    try:
-                        proc.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        pass
-            reader_thread.join(timeout=5)
-            stderr_thread.join(timeout=5)
-            try:
-                if proc.stdout:
-                    proc.stdout.close()
-                if proc.stderr:
-                    proc.stderr.close()
-                if proc.stdin:
-                    proc.stdin.close()
-            except OSError:
-                pass
-
-        stderr_output = "".join(stderr_chunks)
-        if timed_out and cancel_event is not None:
-            cancel_event.set()
-
-        if subprocess_error:
-            raise RuntimeError(
-                "Predictor subprocess reported error: "
-                f"{subprocess_error.get('message', '')[:500]}"
-            )
-
-        return proc.returncode, stderr_output, timed_out
+        session = SubprocessSession(cmd, env=os.environ.copy(), cwd=self._project_root)
+        return session.run(on_line=on_line, cancel_event=cancel_event, timeout_seconds=timeout_seconds)
 
     def predict_specificity_batch(
         self,
@@ -497,6 +384,7 @@ class EnsembleAdapter:
         timeout_seconds: int | None = 3600,
         skip_first: int = 0,
         batch_size: int | None = None,
+        sub_batch_size: int | None = None,
     ) -> dict[str, Any]:
         """Run mutation-batch via subprocess with line-JSON protocol.
 
@@ -520,6 +408,8 @@ class EnsembleAdapter:
             "--sites", sites_str,
             "--progress-every", str(int(effective_progress_every)),
         ]
+        if sub_batch_size is not None:
+            cmd.extend(["--sub-batch-size", str(sub_batch_size)])
         if skip_first > 0:
             cmd.extend(["--skip-first", str(skip_first)])
 
