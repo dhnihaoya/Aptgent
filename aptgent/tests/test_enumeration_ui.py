@@ -99,6 +99,9 @@ def test_enumeration_done_with_no_hits_after_llm_choice_sets_regeneration_feedba
             self.saved = True
             self.persistence.save(self._state)
 
+        def reload_current_state(self, run_id):
+            self._state = self.engine.load_run(run_id)
+
     class RewindScreen(FakeScreen):
         def __init__(self):
             super().__init__()
@@ -155,6 +158,9 @@ def test_enumeration_done_with_no_hits_after_custom_sites_reuses_choices(tmp_pat
         def save_state(self):
             self.persistence.save(self._state)
 
+        def reload_current_state(self, run_id):
+            self._state = self.engine.load_run(run_id)
+
     class RewindScreen(FakeScreen):
         def __init__(self):
             super().__init__()
@@ -198,6 +204,9 @@ def test_enumeration_done_when_cancelled_rewinds_to_site_proposal(tmp_path):
         @property
         def current_state(self):
             return self._state
+
+        def reload_current_state(self, run_id):
+            self._state = self.engine.load_run(run_id)
 
     class CancelScreen(FakeScreen):
         def __init__(self):

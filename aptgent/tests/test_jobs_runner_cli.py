@@ -3,9 +3,16 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from aptgent.domain.enums import Step
-from aptgent.domain.models import TargetMolecule
+from aptgent.domain.models import (
+    CandidateSequence,
+    DockingPlan,
+    DockingResult,
+    GridBox,
+    PredictionResult,
+    TargetMolecule,
+)
 from aptgent.jobs.events import EventReader, EventWriter
-from aptgent.jobs.runner import _JOB_RUNNERS, _run_enumeration, build_parser
+from aptgent.jobs.runner import _JOB_RUNNERS, _run_docking, _run_enumeration, build_parser
 from aptgent.workflow.persistence import Persistence
 
 
@@ -25,6 +32,7 @@ class _FakeMutationBatchAdapter:
         cancel_event,
         timeout_seconds,
         skip_first,
+        sub_batch_size=None,
     ):
         progress_callback(0, 4, {})
         if self.cancel:
@@ -38,6 +46,31 @@ class _FakeMutationBatchAdapter:
             }
         )
         progress_callback(4, 4, {})
+
+
+class _FakeVinaAdapter:
+    exhaustiveness = 8
+    num_modes = 9
+    energy_range = 3.0
+
+    def run_batch(
+        self,
+        *,
+        candidates,
+        target,
+        receptor_paths,
+        grid_boxes,
+        work_dir,
+        seed,
+        per_ligand_timeout,
+    ):
+        return [
+            DockingResult(
+                candidate_id=candidates[0].candidate_id or "",
+                docking_score=-5.5,
+                status="completed",
+            )
+        ]
 
 
 def _fake_config(tmp_path):
@@ -156,3 +189,59 @@ def test_enumeration_runner_cancelled_completion_does_not_finalize(tmp_path, mon
     assert saved is not None
     assert saved.candidates == []
     assert saved.predictions == []
+
+
+def test_docking_runner_normal_completion_is_not_cancelled(tmp_path, monkeypatch):
+    persistence = Persistence(runs_dir=tmp_path)
+    state = persistence.init_run("dock_normal")
+    state.current_step = Step.DOCKING_RUN
+    state.target_molecule = TargetMolecule(
+        input_text="theophylline",
+        smiles="CN1C2=C(C(=O)N(C1=O)C)NC=N2",
+        resolution_status="resolved",
+    )
+    state.candidates = [CandidateSequence(sequence="AA", candidate_id="cand_0")]
+    state.predictions = [
+        PredictionResult(
+            candidate_id="cand_0",
+            model_name="ensemble",
+            target="theophylline",
+            score=0.9,
+            label=1,
+            probability=0.9,
+        )
+    ]
+    state.docking_plan = DockingPlan(
+        recommended_top_k=1,
+        receptor_paths={"cand_0": str(tmp_path / "cand_0.pdbqt")},
+        grid_boxes={
+            "cand_0": GridBox(
+                center=[0.0, 0.0, 0.0],
+                size=[10.0, 10.0, 10.0],
+            )
+        },
+    )
+    persistence.save(state)
+
+    monkeypatch.setattr("aptgent.jobs.runner.load_config", lambda: _fake_config(tmp_path))
+    monkeypatch.setattr(
+        "aptgent.bootstrap.container.create_vina_adapter",
+        lambda _tools_config: _FakeVinaAdapter(),
+    )
+
+    events_path = persistence.job_events_file(state.run_id, "docking_run")
+    writer = EventWriter(events_path)
+    try:
+        _run_docking(writer, state, persistence)
+    finally:
+        writer.close()
+
+    events = list(EventReader(events_path).iter_events())
+    done = events[-1]
+    saved = persistence.load(state.run_id)
+
+    assert done["type"] == "done"
+    assert done["summary"]["completed"] == 1
+    assert done["summary"]["cancelled"] is False
+    assert saved is not None
+    assert len(saved.docking_results) == 1

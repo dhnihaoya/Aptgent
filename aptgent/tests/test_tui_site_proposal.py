@@ -141,10 +141,17 @@ def test_site_proposal_regeneration_replaces_only_third_plan(tmp_path, monkeypat
             captured_display_events.append(event)
         return structured_call()
 
+    class FakeRuntime:
+        llm_client = None
+
+        def create_skill(self, cls):
+            return cls()
+
     class FakeApp:
         def __init__(self, state):
             self._state = state
             self.saved = False
+            self.runtime = FakeRuntime()
 
         @property
         def current_state(self):
