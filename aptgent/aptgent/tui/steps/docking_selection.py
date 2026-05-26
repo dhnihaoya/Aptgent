@@ -51,6 +51,46 @@ from aptgent.workflow.context import (
 _log = logging.getLogger(__name__)
 
 
+def _candidate_id(cand: Any, index: int) -> str:
+    return cand.candidate_id or f"cand_{index}"
+
+
+def _top_k_bundle(state: Any) -> tuple[int, list[Any]]:
+    top_k = state.context.docking_recommendation.recommended_top_k or 5
+    return top_k, list(state.candidates[:top_k])
+
+
+def _machine_profile(state: Any) -> dict[str, Any]:
+    recommendation = state.context.docking_recommendation
+    profile = recommendation.machine_profile or HardwareProbeAdapter().probe()
+    return dict(profile)
+
+
+def _apply_docking_plan(
+    state: Any,
+    *,
+    receptor_paths: dict[str, str],
+    grid_boxes: dict[str, dict[str, list[float]]],
+    source: str,
+    top_k: int,
+) -> None:
+    recommendation = state.context.docking_recommendation
+    plan = state.docking_plan or DockingPlan(
+        machine_profile=_machine_profile(state),
+        recommended_top_k=top_k,
+        exhaustiveness=recommendation.recommended_exhaustiveness or 8,
+    )
+    plan.receptor_paths = receptor_paths
+    plan.grid_boxes = {
+        cid: GridBox(center=box["center"], size=box["size"])
+        for cid, box in grid_boxes.items()
+    }
+    plan.receptor_source = source
+    plan.recommended_top_k = top_k
+    state.docking_plan = plan
+    recommendation.phase = "structures_ready"
+
+
 class DockingSelectionHandler(StepHandler):
     """Multi-phase docking setup handler."""
 
@@ -64,6 +104,12 @@ class DockingSelectionHandler(StepHandler):
 
     def enter(self) -> None:
         state = self.screen.app.current_state
+
+        # If docking is disabled in config, skip directly to spatial_rank.
+        if not self._is_docking_enabled():
+            self._skip()
+            return
+
         recommendation = state.context.docking_recommendation
         phase = recommendation.phase or "initial"
 
@@ -232,7 +278,7 @@ class DockingSelectionHandler(StepHandler):
             time_budget_hours=time_budget,
         )
         try:
-            skill = DockingPlannerSkill()
+            skill = self.screen.app.runtime.create_skill(DockingPlannerSkill)
             result = run_llm_interaction(
                 self.screen,
                 display_stream=lambda: skill.explain_plan_stream(
@@ -311,8 +357,7 @@ class DockingSelectionHandler(StepHandler):
 
     def _show_source_panel(self) -> None:
         state = self.screen.app.current_state
-        recommendation = state.context.docking_recommendation
-        top_k = recommendation.recommended_top_k or 5
+        top_k, _ = _top_k_bundle(state)
         self.screen.add_structured_widget(DockingSourcePanel(top_k=top_k))
         self.screen.set_input_placeholder(
             "Choose how the per-candidate structures will be prepared."
@@ -320,9 +365,8 @@ class DockingSelectionHandler(StepHandler):
 
     def _on_source_selected(self, source: str) -> None:
         state = self.screen.app.current_state
+        top_k, top_candidates = _top_k_bundle(state)
         recommendation = state.context.docking_recommendation
-        top_k = recommendation.recommended_top_k or 5
-        top_candidates = state.candidates[:top_k]
 
         export_dir = (
             self.screen.app.persistence.run_dir(state.run_id)
@@ -334,7 +378,7 @@ class DockingSelectionHandler(StepHandler):
         )
 
         seq_pairs = [
-            (cand.candidate_id or f"cand_{i}", cand.sequence)
+            (_candidate_id(cand, i), cand.sequence)
             for i, cand in enumerate(top_candidates)
         ]
         try:
@@ -384,7 +428,7 @@ class DockingSelectionHandler(StepHandler):
             self.run_worker(
                 lambda: self._rnacomposer_worker(
                     [
-                        (cand.candidate_id or f"cand_{i}", cand.sequence)
+                        (_candidate_id(cand, i), cand.sequence)
                         for i, cand in enumerate(top_candidates)
                     ],
                     structures_dir,
@@ -405,10 +449,9 @@ class DockingSelectionHandler(StepHandler):
     def _show_manual_upload_panel(self) -> None:
         state = self.screen.app.current_state
         recommendation = state.context.docking_recommendation
-        top_k = recommendation.recommended_top_k or 5
-        top_candidates = state.candidates[:top_k]
+        top_k, top_candidates = _top_k_bundle(state)
         candidate_ids = [
-            cand.candidate_id or f"cand_{i}"
+            _candidate_id(cand, i)
             for i, cand in enumerate(top_candidates)
         ]
         export_dir = recommendation.sequences_export_dir or str(
@@ -451,10 +494,9 @@ class DockingSelectionHandler(StepHandler):
 
         recommendation = state.context.docking_recommendation
         recommendation.structures_dir = str(directory)
-        top_k = recommendation.recommended_top_k or 5
-        top_candidates = state.candidates[:top_k]
+        top_k, top_candidates = _top_k_bundle(state)
         candidate_ids = [
-            cand.candidate_id or f"cand_{i}"
+            _candidate_id(cand, i)
             for i, cand in enumerate(top_candidates)
         ]
         matches = scan_structure_directory(directory, candidate_ids)
@@ -480,20 +522,13 @@ class DockingSelectionHandler(StepHandler):
             self._show_manual_upload_panel()
             return
 
-        plan = state.docking_plan or DockingPlan(
-            machine_profile=self._machine_profile(state),
-            recommended_top_k=top_k,
-            exhaustiveness=recommendation.recommended_exhaustiveness or 8,
+        _apply_docking_plan(
+            state,
+            receptor_paths=receptor_paths,
+            grid_boxes=grid_boxes,
+            source="manual",
+            top_k=top_k,
         )
-        plan.receptor_paths = receptor_paths
-        plan.grid_boxes = {
-            cid: GridBox(center=box["center"], size=box["size"])
-            for cid, box in grid_boxes.items()
-        }
-        plan.receptor_source = "manual"
-        plan.recommended_top_k = top_k
-        state.docking_plan = plan
-        recommendation.phase = "structures_ready"
         record_tertiary_structure_context(
             state,
             provider="manual",
@@ -622,20 +657,13 @@ class DockingSelectionHandler(StepHandler):
             self.screen.app.call_from_thread(self._show_topk_panel)
             return
 
-        plan = state.docking_plan or DockingPlan(
-            machine_profile=self._machine_profile(state),
-            recommended_top_k=total,
-            exhaustiveness=recommendation.recommended_exhaustiveness or 8,
+        _apply_docking_plan(
+            state,
+            receptor_paths=receptor_paths,
+            grid_boxes=grid_boxes,
+            source="rnacomposer",
+            top_k=total,
         )
-        plan.receptor_paths = receptor_paths
-        plan.grid_boxes = {
-            cid: GridBox(center=box["center"], size=box["size"])
-            for cid, box in grid_boxes.items()
-        }
-        plan.receptor_source = "rnacomposer"
-        plan.recommended_top_k = total
-        state.docking_plan = plan
-        recommendation.phase = "structures_ready"
         record_tertiary_structure_context(
             state,
             provider="rnacomposer",
@@ -821,9 +849,7 @@ class DockingSelectionHandler(StepHandler):
         recommendation.grid_center_note = ""
         self.screen.app.save_state()
         self.screen.add_system_message("Docking skipped.")
-        ns = next_step(Step.DOCKING_SELECTION)
-        if ns:
-            self.screen.advance_to_step(ns)
+        self.screen.advance_to_step(Step.SPATIAL_RANK)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -835,8 +861,11 @@ class DockingSelectionHandler(StepHandler):
             return ReceptorPreparationAdapter()
         return adapter
 
+    def _is_docking_enabled(self) -> bool:
+        config = getattr(self.screen.app, "config", {})
+        docking_cfg = config.get("docking", {}) if isinstance(config, dict) else {}
+        return docking_cfg.get("enabled", True)
+
     @staticmethod
     def _machine_profile(state: Any) -> dict[str, Any]:
-        recommendation = state.context.docking_recommendation
-        profile = recommendation.machine_profile or HardwareProbeAdapter().probe()
-        return dict(profile)
+        return _machine_profile(state)

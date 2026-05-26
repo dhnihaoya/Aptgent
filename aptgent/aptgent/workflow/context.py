@@ -1,20 +1,39 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable
 
 from aptgent.domain.models import TargetMolecule
+from aptgent.domain.text_utils import clean_text
 from aptgent.workflow.state import RunState
 
 
-def _clean_text(value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    value = " ".join(value.split())
-    return value or None
+def patch_context(
+    ctx: Any,
+    updates: dict[str, Any],
+    *,
+    str_keys: Iterable[str] = (),
+    list_keys: Iterable[str] = (),
+) -> None:
+    """Apply *updates* to *ctx*, skipping None values.
+
+    String-valued keys listed in *str_keys* are run through
+    :func:`clean_text` before assignment.  Keys listed in
+    *list_keys* are shallow-copied via ``list()``.
+    """
+    str_set = set(str_keys)
+    list_set = set(list_keys)
+    for k, v in updates.items():
+        if v is None:
+            continue
+        if k in str_set and isinstance(v, str):
+            v = clean_text(v)
+        if k in list_set:
+            v = list(v)
+        setattr(ctx, k, v)
 
 
 def get_sequence(state: RunState) -> str | None:
-    return _clean_text(state.context.intake.sequence) or _clean_text(
+    return clean_text(state.context.intake.sequence) or clean_text(
         state.input_payload.get("initial_sequence")
     )
 
@@ -22,18 +41,18 @@ def get_sequence(state: RunState) -> str | None:
 def get_target_label(state: RunState) -> str | None:
     if state.target_molecule is not None:
         resolved = state.target_molecule.resolved_name or state.target_molecule.input_text
-        text = _clean_text(resolved)
+        text = clean_text(resolved)
         if text:
             return text
     return (
-        _clean_text(state.context.intake.target_label)
-        or _clean_text(state.context.intake.target_input)
-        or _clean_text(state.input_payload.get("target_molecule"))
+        clean_text(state.context.intake.target_label)
+        or clean_text(state.context.intake.target_input)
+        or clean_text(state.input_payload.get("target_molecule"))
     )
 
 
 def get_user_brief(state: RunState) -> str | None:
-    return _clean_text(state.context.intake.user_brief) or _clean_text(
+    return clean_text(state.context.intake.user_brief) or clean_text(
         state.input_payload.get("user_text")
     )
 
@@ -56,34 +75,36 @@ def record_intake_context(
     resolved_once: bool | None = None,
 ) -> None:
     context = state.context.intake
-    if user_brief is not None:
-        context.user_brief = _clean_text(user_brief)
-    if sequence is not None:
-        context.sequence = _clean_text(sequence)
-    if target_text is not None:
-        context.target_input = _clean_text(target_text)
+    updates: dict[str, Any] = {
+        "user_brief": user_brief,
+        "sequence": sequence,
+        "target_input": target_text,
+        "modification_region": modification_region,
+        "proposed_sites": proposed_sites,
+        "time_budget_hours": time_budget_hours,
+        "phase": phase,
+        "retry_count": retry_count,
+        "resolved_once": resolved_once,
+    }
     if resolved_target is not None:
-        context.target_label = _clean_text(
+        updates["target_label"] = (
             resolved_target.resolved_name or resolved_target.input_text
         )
-    if modification_region is not None:
-        context.modification_region = _clean_text(modification_region)
-    if analogs is not None:
-        context.analogs = [text for item in analogs if (text := _clean_text(item))]
-    if proposed_sites is not None:
-        context.proposed_sites = proposed_sites
-    if time_budget_hours is not None:
-        context.time_budget_hours = time_budget_hours
-    if phase is not None:
-        context.phase = phase
-    if retry_count is not None:
-        context.retry_count = retry_count
     if last_resolution_error is not None:
-        context.last_resolution_error = _clean_text(last_resolution_error)
+        updates["last_resolution_error"] = last_resolution_error
     elif clear_resolution_error:
         context.last_resolution_error = None
-    if resolved_once is not None:
-        context.resolved_once = resolved_once
+    if analogs is not None:
+        context.analogs = [text for item in analogs if (text := clean_text(item))]
+    patch_context(
+        context,
+        updates,
+        str_keys={
+            "user_brief", "sequence", "target_input", "target_label",
+            "modification_region", "last_resolution_error",
+        },
+        list_keys={"proposed_sites"},
+    )
 
 
 def record_pdb_intake_context(
@@ -119,52 +140,41 @@ def record_pdb_intake_context(
         reset = state.context.pdb_intake.__class__()
         state.context.pdb_intake = reset
         context = reset
-    if pdb_id is not None:
-        context.pdb_id = _clean_text(pdb_id)
-    if input_mode is not None:
-        context.input_mode = input_mode
-    if mixed_input_detected is not None:
-        context.mixed_input_detected = mixed_input_detected
-    if download_status is not None:
-        context.download_status = download_status
-    if analysis_status is not None:
-        context.analysis_status = analysis_status
-    if artifact_path is not None:
-        context.artifact_path = _clean_text(artifact_path)
-    if title is not None:
-        context.title = _clean_text(title)
-    if chains is not None:
-        context.chains = list(chains)
-    if ligands is not None:
-        context.ligands = list(ligands)
-    if recommended_chain_id is not None:
-        context.recommended_chain_id = _clean_text(recommended_chain_id)
-    if recommended_ligand_key is not None:
-        context.recommended_ligand_key = _clean_text(recommended_ligand_key)
-    if selected_chain_id is not None:
-        context.selected_chain_id = _clean_text(selected_chain_id)
-    if selected_ligand_key is not None:
-        context.selected_ligand_key = _clean_text(selected_ligand_key)
-    if user_sequence is not None:
-        context.user_sequence = _clean_text(user_sequence)
-    if derived_sequence is not None:
-        context.derived_sequence = _clean_text(derived_sequence)
-    if sequence_match_status is not None:
-        context.sequence_match_status = sequence_match_status
-    if semantic_validation_status is not None:
-        context.semantic_validation_status = semantic_validation_status
-    if semantic_note is not None:
-        context.semantic_note = _clean_text(semantic_note)
-    if review_category is not None:
-        context.review_category = review_category
-    if review_target_match is not None:
-        context.review_target_match = review_target_match
-    if review_confidence is not None:
-        context.review_confidence = review_confidence
-    if needs_user_selection is not None:
-        context.needs_user_selection = needs_user_selection
-    if error is not None:
-        context.error = _clean_text(error)
+    patch_context(
+        context,
+        {
+            "pdb_id": pdb_id,
+            "input_mode": input_mode,
+            "mixed_input_detected": mixed_input_detected,
+            "download_status": download_status,
+            "analysis_status": analysis_status,
+            "artifact_path": artifact_path,
+            "title": title,
+            "chains": chains,
+            "ligands": ligands,
+            "recommended_chain_id": recommended_chain_id,
+            "recommended_ligand_key": recommended_ligand_key,
+            "selected_chain_id": selected_chain_id,
+            "selected_ligand_key": selected_ligand_key,
+            "user_sequence": user_sequence,
+            "derived_sequence": derived_sequence,
+            "sequence_match_status": sequence_match_status,
+            "semantic_validation_status": semantic_validation_status,
+            "semantic_note": semantic_note,
+            "review_category": review_category,
+            "review_target_match": review_target_match,
+            "review_confidence": review_confidence,
+            "needs_user_selection": needs_user_selection,
+            "error": error,
+        },
+        str_keys={
+            "pdb_id", "artifact_path", "title",
+            "recommended_chain_id", "recommended_ligand_key",
+            "selected_chain_id", "selected_ligand_key",
+            "user_sequence", "derived_sequence", "semantic_note", "error",
+        },
+        list_keys={"chains", "ligands"},
+    )
 
 
 def record_secondary_structure_context(
@@ -178,18 +188,19 @@ def record_secondary_structure_context(
     note: str | None = None,
 ) -> None:
     context = state.context.secondary_structure
-    if lookup_status is not None:
-        context.lookup_status = lookup_status
-    if source is not None:
-        context.source = source
-    if query_sequence is not None:
-        context.query_sequence = _clean_text(query_sequence)
     if match_ids is not None:
-        context.match_ids = [text for item in match_ids if (text := _clean_text(item))]
-    if downloaded_artifact_path is not None:
-        context.downloaded_artifact_path = _clean_text(downloaded_artifact_path)
-    if note is not None:
-        context.note = _clean_text(note)
+        context.match_ids = [text for item in match_ids if (text := clean_text(item))]
+    patch_context(
+        context,
+        {
+            "lookup_status": lookup_status,
+            "source": source,
+            "query_sequence": query_sequence,
+            "downloaded_artifact_path": downloaded_artifact_path,
+            "note": note,
+        },
+        str_keys={"query_sequence", "downloaded_artifact_path", "note"},
+    )
 
 
 def record_site_proposal_context(
@@ -210,29 +221,27 @@ def record_site_proposal_context(
 ) -> None:
     context = state.context.site_proposal
     if proposals is not None:
-        context.proposals = [dict(proposal) for proposal in proposals]
-    if proposed_sites is not None:
-        context.proposed_sites = list(proposed_sites)
-    if reasoning is not None:
-        context.reasoning = _clean_text(reasoning)
-    if confidence is not None:
-        context.confidence = _clean_text(confidence)
-    if confirmed_sites is not None:
-        context.confirmed_sites = list(confirmed_sites)
+        context.proposals = [dict(p) for p in proposals]
     if llm_context is not None:
         context.llm_context = dict(llm_context)
     if extra_context is not None:
         context.extra_context = dict(extra_context)
-    if selection_source is not None:
-        context.selection_source = _clean_text(selection_source) or ""
-    if selected_proposal_index is not None:
-        context.selected_proposal_index = selected_proposal_index
-    if needs_regeneration is not None:
-        context.needs_regeneration = needs_regeneration
-    if regeneration_reason is not None:
-        context.regeneration_reason = _clean_text(regeneration_reason)
-    if preserve_proposal_indexes is not None:
-        context.preserve_proposal_indexes = list(preserve_proposal_indexes)
+    patch_context(
+        context,
+        {
+            "proposed_sites": proposed_sites,
+            "reasoning": reasoning,
+            "confidence": confidence,
+            "confirmed_sites": confirmed_sites,
+            "selection_source": selection_source,
+            "selected_proposal_index": selected_proposal_index,
+            "needs_regeneration": needs_regeneration,
+            "regeneration_reason": regeneration_reason,
+            "preserve_proposal_indexes": preserve_proposal_indexes,
+        },
+        str_keys={"reasoning", "confidence", "selection_source", "regeneration_reason"},
+        list_keys={"proposed_sites", "confirmed_sites", "preserve_proposal_indexes"},
+    )
 
 
 def build_site_proposal_llm_context(state: RunState) -> dict[str, Any]:
@@ -335,24 +344,31 @@ def record_docking_recommendation_context(
     structures_dir: str = "",
 ) -> None:
     context = state.context.docking_recommendation
-    context.candidate_count = candidate_count
     context.machine_profile = dict(machine_profile)
-    context.time_budget_hours = time_budget_hours
-    context.recommended_time_budget_hours = recommended_time_budget_hours
-    context.recommended_top_k = recommended_top_k
-    context.recommended_exhaustiveness = recommended_exhaustiveness
-    context.receptor_path_note = _clean_text(receptor_path_note) or ""
-    context.grid_center_note = _clean_text(grid_center_note) or ""
-    context.reason = reason
-    context.display_markdown = display_markdown
-    context.strategy = strategy
-    context.phase = phase
-    context.accepted = accepted
+    dirs: dict[str, Any] = {}
     if sequences_export_dir:
-        context.sequences_export_dir = sequences_export_dir
+        dirs["sequences_export_dir"] = sequences_export_dir
     if structures_dir:
-        context.structures_dir = structures_dir
-    # Clear legacy grid_size (kept on the model for old-run compat).
+        dirs["structures_dir"] = structures_dir
+    patch_context(
+        context,
+        {
+            "candidate_count": candidate_count,
+            "time_budget_hours": time_budget_hours,
+            "recommended_time_budget_hours": recommended_time_budget_hours,
+            "recommended_top_k": recommended_top_k,
+            "recommended_exhaustiveness": recommended_exhaustiveness,
+            "receptor_path_note": receptor_path_note,
+            "grid_center_note": grid_center_note,
+            "reason": reason,
+            "display_markdown": display_markdown,
+            "strategy": strategy,
+            "phase": phase,
+            "accepted": accepted,
+            **dirs,
+        },
+        str_keys={"receptor_path_note", "grid_center_note"},
+    )
     context.recommended_grid_size = []
 
 
@@ -366,19 +382,18 @@ def record_tertiary_structure_context(
     result_path: str | None = None,
     error: str | None = None,
 ) -> None:
-    context = state.context.tertiary_structure
-    if provider is not None:
-        context.provider = _clean_text(provider)
-    if receptor_source is not None:
-        context.receptor_source = _clean_text(receptor_source)
-    if receptor_status is not None:
-        context.receptor_status = receptor_status
-    if job_id is not None:
-        context.job_id = _clean_text(job_id)
-    if result_path is not None:
-        context.result_path = _clean_text(result_path)
-    if error is not None:
-        context.error = _clean_text(error)
+    patch_context(
+        state.context.tertiary_structure,
+        {
+            "provider": provider,
+            "receptor_source": receptor_source,
+            "receptor_status": receptor_status,
+            "job_id": job_id,
+            "result_path": result_path,
+            "error": error,
+        },
+        str_keys={"provider", "receptor_source", "job_id", "result_path", "error"},
+    )
 
 
 def record_specificity_recommendation_context(
@@ -391,13 +406,20 @@ def record_specificity_recommendation_context(
     accepted: bool = False,
 ) -> None:
     context = state.context.specificity_recommendation
-    context.analog_names = [
-        text for item in (analog_names or []) if (text := _clean_text(item))
-    ]
-    context.display_markdown = display_markdown
-    context.note = _clean_text(note) or ""
-    context.phase = phase
-    context.accepted = accepted
+    if analog_names is not None:
+        context.analog_names = [
+            text for item in analog_names if (text := clean_text(item))
+        ]
+    patch_context(
+        context,
+        {
+            "display_markdown": display_markdown,
+            "note": note,
+            "phase": phase,
+            "accepted": accepted,
+        },
+        str_keys={"note"},
+    )
 
 
 def build_run_overview(state: RunState) -> str:

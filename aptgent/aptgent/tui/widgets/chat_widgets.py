@@ -7,6 +7,7 @@ import re
 from rich.markdown import Markdown
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
@@ -407,6 +408,13 @@ class ActivityBubble(Static):
 class ChatInput(TextArea):
     """Prompt-style text area with an Input-compatible value alias."""
 
+    BINDINGS = [
+        Binding("enter", "submit", show=False, priority=True),
+    ]
+
+    class Submitted(Message):
+        """Posted when Enter should submit the prompt."""
+
     @property
     def value(self) -> str:
         return self.text
@@ -414,6 +422,9 @@ class ChatInput(TextArea):
     @value.setter
     def value(self, text: str) -> None:
         self.load_text(text)
+
+    def action_submit(self) -> None:
+        self.post_message(self.Submitted())
 
 
 class InputBar(Vertical):
@@ -612,6 +623,10 @@ class InputBar(Vertical):
             return
         self._update_command_palette(event.text_area.text)
         self._resize_input(event.text_area.text)
+
+    def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
+        event.stop()
+        self._submit()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-send":

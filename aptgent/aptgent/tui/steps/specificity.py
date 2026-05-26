@@ -111,7 +111,7 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
         target = self.screen.app.current_state.target_molecule
 
         try:
-            skill = AnalogSuggestionSkill()
+            skill = self.screen.app.runtime.create_skill(AnalogSuggestionSkill)
             streamed_result: dict[str, object] = {}
 
             def display_stream():
@@ -333,7 +333,7 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
     def _on_job_done(self, summary: dict, progress: ProgressBubble) -> None:
         # Reload state because the runner saves it from the detached process.
         state = self.screen.app.current_state
-        self.screen.app._state = self.screen.app.engine.load_run(state.run_id)
+        self.screen.app.reload_current_state(state.run_id)
         state = self.screen.app.current_state
 
         kept = int(summary.get("kept", self._kept_count))

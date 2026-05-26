@@ -324,6 +324,13 @@ class AptgentApp(App):
         self.progress_bar.set_step(self._state.current_step)
         self.status_panel.set_status(run_id, self._state.status.value)
 
+    def reload_current_state(self, run_id: str) -> None:
+        """Reload state from persistence and refresh UI widgets."""
+        self._state = self.engine.load_run(run_id)
+        if self._state is not None:
+            self.progress_bar.set_step(self._state.current_step)
+            self.status_panel.set_status(run_id, self._state.status.value)
+
     def start_new_run(self, *, initial_message: str | None = None) -> RunState:
         state = self.engine.create_run()
         self._state = state

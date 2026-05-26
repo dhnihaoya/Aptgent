@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Type
 
 from aptgent.bootstrap.config import AppConfigBundle, load_config
 from aptgent.workflow.engine import WorkflowEngine
@@ -25,9 +25,16 @@ class AppRuntime:
     structure_lookup_adapter: Any = None
     structure_fetch_adapter: Any = None
     tertiary_structure_adapter: Any = None
+    llm_client: Any = None
     intake_skill_factory: Callable[[], Any] | None = None
     pdb_review_skill_factory: Callable[[], Any] | None = None
     extras: dict[str, Any] = field(default_factory=dict)
+
+    def create_skill(self, cls: Type) -> Any:
+        """Instantiate a skill class with the shared LLMClient."""
+        if self.llm_client is not None:
+            return cls(client=self.llm_client)
+        return cls()
 
 
 def create_persistence(config: dict[str, Any]) -> Persistence:
@@ -131,6 +138,13 @@ def create_rnacomposer_adapter(tools_config: dict[str, Any]) -> Any:
     )
 
 
+def _create_llm_client(llm_config: dict[str, Any]) -> Any:
+    from aptgent.llm.client import LLMClient
+
+    provider_cfg = llm_config.get("provider", {}).get("openai", llm_config)
+    return LLMClient(config=provider_cfg)
+
+
 def build_runtime(config_bundle: AppConfigBundle | None = None) -> AppRuntime:
     from aptgent.adapters.structure_services import (
         NoopStructureFetchAdapter,
@@ -144,6 +158,7 @@ def build_runtime(config_bundle: AppConfigBundle | None = None) -> AppRuntime:
 
     persistence = create_persistence(config)
     engine = create_engine(persistence, tools_config=tools_config, llm_config=bundle.llm)
+    llm_client = _create_llm_client(bundle.llm)
 
     return AppRuntime(
         config=config,
@@ -161,6 +176,7 @@ def build_runtime(config_bundle: AppConfigBundle | None = None) -> AppRuntime:
         structure_lookup_adapter=NoopStructureLookupAdapter(),
         structure_fetch_adapter=NoopStructureFetchAdapter(),
         tertiary_structure_adapter=create_rnacomposer_adapter(tools_config),
-        intake_skill_factory=IntakeSkill,
-        pdb_review_skill_factory=PdbReviewSkill,
+        llm_client=llm_client,
+        intake_skill_factory=lambda: IntakeSkill(client=llm_client),
+        pdb_review_skill_factory=lambda: PdbReviewSkill(client=llm_client),
     )

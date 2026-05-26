@@ -345,8 +345,12 @@ class ChatScreen(Screen):
 
     def rewind_to_step(self, step: Step, metadata: dict | None = None) -> None:
         """Move back to an earlier workflow step outside the normal transition DAG."""
+        from aptgent.tui.steps.state_reset import _reset_candidate_outputs
+
         state = self.app.current_state
         self.app.engine.rewind_to(state, step, metadata=metadata)
+        if step == Step.SITE_PROPOSAL:
+            _reset_candidate_outputs(state)
         self.app.progress_bar.set_step(step)
         self.app.save_state()
         self.clear_structured_widget()
@@ -388,15 +392,15 @@ class ChatScreen(Screen):
         current = state.current_step
 
         # Check enumeration job status
-        if current.value in ("candidate_enumeration", "primary_scoring",
-                             "specificity_filter", "docking_selection", "docking_run",
-                             "spatial_rank", "final_report"):
+        if current in (Step.CANDIDATE_ENUMERATION, Step.PRIMARY_SCORING,
+                       Step.SPECIFICITY_FILTER, Step.DOCKING_SELECTION,
+                       Step.DOCKING_RUN, Step.SPATIAL_RANK, Step.FINAL_REPORT):
             if is_job_alive(persistence, run_id, "candidate_enumeration"):
                 self.add_system_message("Enumeration job is still running, attaching...")
                 return Step.CANDIDATE_ENUMERATION
 
         # Check docking job status
-        if current.value in ("docking_run", "spatial_rank", "final_report"):
+        if current in (Step.DOCKING_RUN, Step.SPATIAL_RANK, Step.FINAL_REPORT):
             if is_job_alive(persistence, run_id, "docking_run"):
                 self.add_system_message("Docking job is still running, attaching...")
                 return Step.DOCKING_RUN

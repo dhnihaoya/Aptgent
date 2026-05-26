@@ -75,7 +75,7 @@ class SiteProposalHandler(StepHandler):
             }
 
         try:
-            skill = SiteProposalSkill()
+            skill = self.screen.app.runtime.create_skill(SiteProposalSkill)
             self.screen.app.call_from_thread(
                 self.screen.update_activity,
                 "Preparing site-proposal context...",

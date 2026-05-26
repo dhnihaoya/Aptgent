@@ -277,7 +277,7 @@ class ReportHandler(StepHandler):
 
         markdown = ""
         try:
-            skill = ReportSkill()
+            skill = self.screen.app.runtime.create_skill(ReportSkill)
             if hasattr(self.screen.app, "_configure_llm_logging"):
                 self.screen.app._configure_llm_logging(skill)
             chunks: list[str] = []
@@ -306,19 +306,13 @@ class ReportHandler(StepHandler):
         except Exception:
             markdown = format_deterministic_report_markdown(context)
             self.screen.app.call_from_thread(
-                self.screen.add_system_message,
-                markdown,
-                "",
-                True,
+                self.screen.add_system_message, markdown, extra_class="", markdown=True,
             )
 
         if not markdown:
             markdown = format_deterministic_report_markdown(context)
             self.screen.app.call_from_thread(
-                self.screen.add_system_message,
-                markdown,
-                "",
-                True,
+                self.screen.add_system_message, markdown, extra_class="", markdown=True,
             )
 
         state.final_report_markdown = markdown
@@ -326,8 +320,8 @@ class ReportHandler(StepHandler):
         self.screen.app.call_from_thread(
             self.screen.add_system_message,
             "Report is ready. Type `export` to save Markdown, or `finish` to exit.",
-            "",
-            True,
+            extra_class="",
+            markdown=True,
         )
         self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
         self.screen.app.call_from_thread(

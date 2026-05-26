@@ -100,7 +100,7 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
     def _on_job_done(self, summary: dict, progress: ProgressBubble) -> None:
         # Reload state (the job runner saves it)
         state = self.screen.app.current_state
-        self.screen.app._state = self.screen.app.engine.load_run(state.run_id)
+        self.screen.app.reload_current_state(state.run_id)
         state = self.screen.app.current_state
 
         total = summary.get("total", 0)
