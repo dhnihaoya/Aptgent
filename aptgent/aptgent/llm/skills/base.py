@@ -222,7 +222,7 @@ class BaseSkill:
 
     def invoke_stream(self, payload: Any) -> Generator[str, None, None]:
         user = self.build_user_message(payload)
-        yield from self.client.chat_stream(self.system_prompt, user)
+        yield from self.client.chat_json_stream(self.system_prompt, user)
 
     def explain_stream(self, payload: Any) -> Iterable[Any]:
         if self.display_prompt is None:

@@ -97,7 +97,7 @@ class DockingPlannerSkill(BaseSkill):
             target_smiles,
             target_name,
         )
-        return self.client.chat_stream(self.system_prompt, user)
+        return self.client.chat_json_stream(self.system_prompt, user)
 
     def explain_plan_stream(
         self,

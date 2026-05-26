@@ -6,15 +6,67 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator, TypeVar
 
 import httpx
 
 _log = logging.getLogger(__name__)
 
+T = TypeVar("T")
+
 
 class LLMCancelled(Exception):
     """Raised when a caller's ``should_cancel`` hook signals cancellation."""
+
+
+class LLMCallLogger:
+    """Handles LLM call logging to JSONL files."""
+
+    def __init__(self, *, redact: bool = True) -> None:
+        self._log_dir: Path | None = None
+        self._redact = redact
+
+    def set_log_dir(self, log_dir: str | Path) -> None:
+        self._log_dir = Path(log_dir)
+        self._log_dir.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def log_dir(self) -> Path | None:
+        return self._log_dir
+
+    @staticmethod
+    def redact_text(text: str) -> str:
+        return "sha256:" + hashlib.sha256(text.encode()).hexdigest()[:16]
+
+    def log_call(
+        self,
+        *,
+        method: str,
+        system_prompt: str,
+        user_prompt: str,
+        response: Any = None,
+        model: str = "",
+    ) -> None:
+        if self._log_dir is None:
+            return
+        entry: dict[str, Any] = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "method": method,
+            "provider": "openai",
+            "model": model,
+            "system_prompt": system_prompt[:200] if len(system_prompt) > 200 else system_prompt,
+            "user_message": (
+                self.redact_text(user_prompt) if self._redact else user_prompt
+            ),
+        }
+        if response is not None:
+            entry["response"] = response
+        log_file = self._log_dir / "llm_calls.jsonl"
+        try:
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            _log.debug("Failed to write LLM log entry", exc_info=True)
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -36,10 +88,18 @@ class LLMClient:
     _REPETITION_MIN_PATTERN = 40
     _REPETITION_THRESHOLD = 3
 
-    def __init__(self, config_path: str | Path | None = None) -> None:
-        if config_path is None:
-            config_path = Path(__file__).parent.parent / "config" / "llm.toml"
-        self.config = self._load_config(config_path)
+    def __init__(
+        self,
+        config_path: str | Path | None = None,
+        *,
+        config: dict[str, Any] | None = None,
+    ) -> None:
+        if config is not None:
+            self.config = config
+        else:
+            if config_path is None:
+                config_path = Path(__file__).parent.parent / "config" / "llm.toml"
+            self.config = self._load_config(config_path)
         # Priority: env var > config file fallback
         api_key_env = self.config.get("api_key_env", "GLM_API_KEY")
         config_fallback = self.config.get("api_key", "")
@@ -57,51 +117,56 @@ class LLMClient:
         self.temperature = self.config.get("temperature", 0.2)
         self.json_temperature = self.config.get("json_temperature", 0.2)
         self.max_tokens = self.config.get("max_tokens", 4096)
-        self.max_reasoning_tokens = self.config.get("max_reasoning_tokens", 16384)
+        self.max_reasoning_chars = self.config.get(
+            "max_reasoning_tokens",
+            self.config.get("max_reasoning_chars", 16384),
+        )
         self.timeout = self.config.get("timeout_seconds", 60)
         self.max_retries = self.config.get("max_retries", 2)
         self._thinking_enabled = True
+        self._logger = LLMCallLogger(
+            redact=os.environ.get("APTGENT_LLM_REDACT", "1") != "0",
+        )
 
-        # LLM call logging
-        self._log_dir: Path | None = None
-        self._redact = os.environ.get("APTGENT_LLM_REDACT", "1") != "0"
+    @classmethod
+    def from_config(
+        cls,
+        llm_section: dict[str, Any],
+        *,
+        log_dir: Path | None = None,
+    ) -> LLMClient:
+        """Create from a pre-loaded config section (already env-expanded)."""
+        instance = cls(config=llm_section)
+        if log_dir is not None:
+            instance.set_log_dir(log_dir)
+        return instance
+
+    # -- backward compat --------------------------------------------------
+
+    @property
+    def max_reasoning_tokens(self) -> int:
+        return self.max_reasoning_chars
+
+    @max_reasoning_tokens.setter
+    def max_reasoning_tokens(self, value: int) -> None:
+        self.max_reasoning_chars = value
+
+    @property
+    def _log_dir(self) -> Path | None:
+        return self._logger.log_dir
 
     def set_log_dir(self, log_dir: str | Path) -> None:
-        self._log_dir = Path(log_dir)
-        self._log_dir.mkdir(parents=True, exist_ok=True)
+        self._logger.set_log_dir(log_dir)
 
     @staticmethod
     def _redact_text(text: str) -> str:
-        return "sha256:" + hashlib.sha256(text.encode()).hexdigest()[:16]
+        return LLMCallLogger.redact_text(text)
 
-    def _log_call(
-        self,
-        *,
-        method: str,
-        system_prompt: str,
-        user_prompt: str,
-        response: Any = None,
-    ) -> None:
-        if self._log_dir is None:
-            return
-        entry: dict[str, Any] = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "method": method,
-            "provider": "openai",
-            "model": self.model,
-            "system_prompt": system_prompt[:200] if len(system_prompt) > 200 else system_prompt,
-            "user_message": (
-                self._redact_text(user_prompt) if self._redact else user_prompt
-            ),
-        }
-        if response is not None:
-            entry["response"] = response
-        log_file = self._log_dir / "llm_calls.jsonl"
-        try:
-            with open(log_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except Exception:
-            _log.debug("Failed to write LLM log entry", exc_info=True)
+    def _log_call(self, **kwargs: Any) -> None:
+        kwargs.setdefault("model", self.model)
+        self._logger.log_call(**kwargs)
+
+    # -- config / payload helpers -----------------------------------------
 
     def _supports_thinking(self, model: str | None = None) -> bool:
         m = model or self.model
@@ -208,21 +273,14 @@ class LLMClient:
                     break
         return False
 
+    # -- core streaming + retry primitives --------------------------------
+
     def _iter_sse_events(
         self,
         resp: httpx.Response,
         should_cancel: Callable[[], bool] | None = None,
     ):
-        """Yield reasoning/content events from an SSE stream response.
-
-        If ``should_cancel`` is supplied, the stream is polled between
-        lines and :class:`LLMCancelled` is raised when it returns True so
-        workers can abort without waiting for the full ``read`` timeout.
-
-        Reasoning events are suppressed (but the stream continues) when
-        either the cumulative reasoning text exceeds ``max_reasoning_tokens``
-        characters or a repetitive pattern is detected.
-        """
+        """Yield reasoning/content events from an SSE stream response."""
         reasoning_buf: list[str] = []
         reasoning_chars = 0
         reasoning_suppressed = False
@@ -241,11 +299,11 @@ class LLMClient:
                 if reasoning and not reasoning_suppressed:
                     reasoning_chars += len(reasoning)
                     reasoning_buf.append(reasoning)
-                    if reasoning_chars > self.max_reasoning_tokens:
+                    if reasoning_chars > self.max_reasoning_chars:
                         reasoning_suppressed = True
                         _log.info(
                             "Reasoning suppressed: exceeded %d char limit",
-                            self.max_reasoning_tokens,
+                            self.max_reasoning_chars,
                         )
                         yield {
                             "type": "reasoning",
@@ -265,13 +323,109 @@ class LLMClient:
                 content = self._extract_content(delta.get("content", ""))
                 if content:
                     yield {"type": "content", "text": content}
-            except Exception:
-                continue
+            except Exception as exc:
+                _log.debug("SSE chunk parse failed: %s", exc)
+
+    def _stream_chat(
+        self,
+        *,
+        system: str,
+        user: str,
+        temperature: float | None = None,
+        response_format: dict[str, Any] | None = None,
+        enable_thinking: bool | None = None,
+        model: str | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> Iterator[dict]:
+        """Open one streaming request and yield parsed SSE events."""
+        with httpx.stream(
+            "POST",
+            f"{self.base_url}/chat/completions",
+            headers=self._headers(),
+            json=self._payload(
+                system,
+                user,
+                temperature=temperature,
+                stream=True,
+                response_format=response_format,
+                enable_thinking=enable_thinking,
+                model=model,
+            ),
+            timeout=self._stream_timeout(),
+        ) as resp:
+            resp.raise_for_status()
+            yield from self._iter_sse_events(resp, should_cancel)
+
+    def _with_retry(
+        self,
+        label: str,
+        fn: Callable[[], T],
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> T:
+        """Run *fn* with retry logic for transient failures (non-generator)."""
+        last_exc: BaseException | None = None
+        for attempt in range(self.max_retries + 1):
+            if should_cancel is not None and should_cancel():
+                raise LLMCancelled()
+            try:
+                return fn()
+            except LLMCancelled:
+                raise
+            except Exception as exc:
+                last_exc = exc
+                if not _is_retryable(exc) or attempt == self.max_retries:
+                    self._raise_after_retries(label, exc)
+                _log.warning(
+                    "LLM %s attempt %d/%d failed (retryable): %s",
+                    label, attempt + 1, self.max_retries + 1, exc,
+                )
+        assert last_exc is not None
+        self._raise_after_retries(label, last_exc)
+
+    def _retry_gen(
+        self,
+        label: str,
+        gen_factory: Callable[[], Iterator[dict]],
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> Iterator[dict]:
+        """Wrap a generator factory with retry logic for transient failures.
+
+        Retries are only attempted when **no events have been yielded yet**.
+        Once events have been delivered to the caller, retrying would produce
+        duplicates (e.g. duplicate reasoning in the UI), so the exception is
+        raised immediately instead.
+        """
+        last_exc: BaseException | None = None
+        yielded_any = False
+        for attempt in range(self.max_retries + 1):
+            if should_cancel is not None and should_cancel():
+                raise LLMCancelled()
+            try:
+                for event in gen_factory():
+                    yielded_any = True
+                    yield event
+                return
+            except LLMCancelled:
+                raise
+            except Exception as exc:
+                last_exc = exc
+                if yielded_any or not _is_retryable(exc) or attempt == self.max_retries:
+                    self._raise_after_retries(label, exc)
+                _log.warning(
+                    "LLM %s attempt %d/%d failed (retryable): %s",
+                    label, attempt + 1, self.max_retries + 1, exc,
+                )
+        assert last_exc is not None
+        self._raise_after_retries(label, last_exc)
 
     def _raise_after_retries(self, label: str, exc: BaseException) -> None:
         raise RuntimeError(
             f"LLM {label} failed after {self.max_retries} retries: {exc}"
         ) from exc
+
+    # -- public API -------------------------------------------------------
 
     def chat_json(
         self,
@@ -280,58 +434,32 @@ class LLMClient:
         *,
         should_cancel: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
-        timeout = self._stream_timeout()
-        last_exc: BaseException | None = None
-        for attempt in range(self.max_retries + 1):
-            if should_cancel is not None and should_cancel():
-                raise LLMCancelled()
-            try:
-                collected: list[str] = []
-                with httpx.stream(
-                    "POST",
-                    f"{self.base_url}/chat/completions",
-                    headers=self._headers(),
-                    json=self._payload(
-                        system_prompt,
-                        user_prompt,
-                        temperature=self.json_temperature,
-                        stream=True,
-                        response_format={"type": "json_object"},
-                        enable_thinking=False,
-                        model=self.fast_model,
-                    ),
-                    timeout=timeout,
-                ) as resp:
-                    resp.raise_for_status()
-                    for event in self._iter_sse_events(resp, should_cancel):
-                        if event.get("type") == "content":
-                            collected.append(event.get("text", ""))
-                content = "".join(collected)
-                if not content:
-                    raise ValueError("LLM returned empty content")
-                parsed = json.loads(content)
-                self._log_call(
-                    method="chat_json",
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    response=parsed,
-                )
-                return parsed
-            except LLMCancelled:
-                raise
-            except Exception as exc:
-                last_exc = exc
-                if not _is_retryable(exc) or attempt == self.max_retries:
-                    self._raise_after_retries("request", exc)
-                _log.warning(
-                    "LLM chat_json attempt %d/%d failed (retryable): %s",
-                    attempt + 1,
-                    self.max_retries + 1,
-                    exc,
-                )
-        assert last_exc is not None
-        self._raise_after_retries("request", last_exc)
-        raise AssertionError("unreachable")
+        def _attempt() -> dict[str, Any]:
+            collected: list[str] = []
+            for event in self._stream_chat(
+                system=system_prompt,
+                user=user_prompt,
+                temperature=self.json_temperature,
+                response_format={"type": "json_object"},
+                enable_thinking=False,
+                model=self.fast_model,
+                should_cancel=should_cancel,
+            ):
+                if event.get("type") == "content":
+                    collected.append(event.get("text", ""))
+            content = "".join(collected)
+            if not content:
+                raise ValueError("LLM returned empty content")
+            return json.loads(content)
+
+        result = self._with_retry("request", _attempt, should_cancel=should_cancel)
+        self._log_call(
+            method="chat_json",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response=result,
+        )
+        return result
 
     def chat_json_events(
         self,
@@ -341,127 +469,86 @@ class LLMClient:
         should_cancel: Callable[[], bool] | None = None,
         enable_thinking: bool = True,
     ):
-        timeout = self._stream_timeout()
-        last_exc: BaseException | None = None
         use_model = self.model if enable_thinking else self.fast_model
-        for attempt in range(self.max_retries + 1):
-            if should_cancel is not None and should_cancel():
-                raise LLMCancelled()
-            try:
-                collected: list[str] = []
-                reasoning_preview: list[str] = []
-                with httpx.stream(
-                    "POST",
-                    f"{self.base_url}/chat/completions",
-                    headers=self._headers(),
-                    json=self._payload(
-                        system_prompt,
-                        user_prompt,
-                        temperature=self.json_temperature,
-                        stream=True,
-                        response_format={"type": "json_object"},
-                        enable_thinking=enable_thinking,
-                        model=use_model,
-                    ),
-                    timeout=timeout,
-                ) as resp:
-                    resp.raise_for_status()
-                    for event in self._iter_sse_events(resp, should_cancel):
-                        event_type = event.get("type")
-                        text = event.get("text", "")
-                        if event_type == "reasoning" and text:
-                            reasoning_preview.append(text)
-                            yield event
-                        elif event_type == "content" and text:
-                            collected.append(text)
-                content = "".join(collected)
-                if not content:
-                    raise ValueError("LLM returned empty content")
-                parsed = json.loads(content)
-                self._log_call(
-                    method="chat_json_events",
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    response={
-                        "reasoning_preview": "".join(reasoning_preview)[:200],
-                        "json": parsed,
-                    },
-                )
-                yield {"type": "result", "value": parsed}
-                return
-            except LLMCancelled:
-                raise
-            except Exception as exc:
-                last_exc = exc
-                if not _is_retryable(exc) or attempt == self.max_retries:
-                    self._raise_after_retries("request", exc)
-                _log.warning(
-                    "LLM chat_json_events attempt %d/%d failed (retryable): %s",
-                    attempt + 1,
-                    self.max_retries + 1,
-                    exc,
-                )
-        assert last_exc is not None
-        self._raise_after_retries("request", last_exc)
-        raise AssertionError("unreachable")
 
-    def chat_stream(
+        def _attempt():
+            collected: list[str] = []
+            reasoning_preview: list[str] = []
+            for event in self._stream_chat(
+                system=system_prompt,
+                user=user_prompt,
+                temperature=self.json_temperature,
+                response_format={"type": "json_object"},
+                enable_thinking=enable_thinking,
+                model=use_model,
+                should_cancel=should_cancel,
+            ):
+                event_type = event.get("type")
+                text = event.get("text", "")
+                if event_type == "reasoning" and text:
+                    reasoning_preview.append(text)
+                    yield event
+                elif event_type == "content" and text:
+                    collected.append(text)
+            content = "".join(collected)
+            if not content:
+                raise ValueError("LLM returned empty content")
+            parsed = json.loads(content)
+            self._log_call(
+                method="chat_json_events",
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                response={
+                    "reasoning_preview": "".join(reasoning_preview)[:200],
+                    "json": parsed,
+                },
+            )
+            yield {"type": "result", "value": parsed}
+
+        yield from self._retry_gen("request", _attempt, should_cancel=should_cancel)
+
+    def chat_json_stream(
         self,
         system_prompt: str,
         user_prompt: str,
         *,
         should_cancel: Callable[[], bool] | None = None,
     ):
-        """Stream LLM response as text chunks (generator)."""
-        timeout = self._stream_timeout()
+        """Stream LLM JSON response as text chunks (generator)."""
         chunks: list[str] = []
+
+        def _attempt():
+            nonlocal chunks
+            chunks = []
+            for event in self._stream_chat(
+                system=system_prompt,
+                user=user_prompt,
+                temperature=self.json_temperature,
+                response_format={"type": "json_object"},
+                enable_thinking=False,
+                model=self.fast_model,
+                should_cancel=should_cancel,
+            ):
+                if event.get("type") == "content":
+                    text = event.get("text", "")
+                    if text:
+                        chunks.append(text)
+                        yield text
+
         try:
-            for attempt in range(self.max_retries + 1):
-                chunks = []
-                if should_cancel is not None and should_cancel():
-                    raise LLMCancelled()
-                try:
-                    with httpx.stream(
-                        "POST",
-                        f"{self.base_url}/chat/completions",
-                        headers=self._headers(),
-                        json=self._payload(
-                            system_prompt,
-                            user_prompt,
-                            temperature=self.json_temperature,
-                            stream=True,
-                            response_format={"type": "json_object"},
-                            enable_thinking=False,
-                            model=self.fast_model,
-                        ),
-                        timeout=timeout,
-                    ) as resp:
-                        resp.raise_for_status()
-                        for event in self._iter_sse_events(resp, should_cancel):
-                            if event.get("type") == "content":
-                                text = event.get("text", "")
-                                if text:
-                                    chunks.append(text)
-                                    yield text
-                    return
-                except LLMCancelled:
-                    raise
-                except Exception as exc:
-                    if not _is_retryable(exc) or attempt == self.max_retries:
-                        self._raise_after_retries("streaming request", exc)
-                    _log.warning(
-                        "LLM chat_stream attempt %d/%d failed (retryable): %s",
-                        attempt + 1,
-                        self.max_retries + 1,
-                        exc,
-                    )
+            yield from self._retry_gen(
+                "streaming request", _attempt, should_cancel=should_cancel,
+            )
         finally:
             self._log_call(
-                method="chat_stream",
+                method="chat_json_stream",
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 response="".join(chunks)[:500] if chunks else None,
             )
+
+    # Backward compat alias
+    chat_stream = chat_json_stream
 
     def chat_text_stream(
         self,
@@ -471,42 +558,24 @@ class LLMClient:
         should_cancel: Callable[[], bool] | None = None,
     ):
         """Stream plain-language text for direct user display."""
-        timeout = self._stream_timeout()
         events: list[dict] = []
+
+        def _attempt():
+            nonlocal events
+            events = []
+            for event in self._stream_chat(
+                system=system_prompt,
+                user=user_prompt,
+                temperature=self.temperature,
+                should_cancel=should_cancel,
+            ):
+                events.append(event)
+                yield event
+
         try:
-            for attempt in range(self.max_retries + 1):
-                events = []
-                if should_cancel is not None and should_cancel():
-                    raise LLMCancelled()
-                try:
-                    with httpx.stream(
-                        "POST",
-                        f"{self.base_url}/chat/completions",
-                        headers=self._headers(),
-                        json=self._payload(
-                            system_prompt,
-                            user_prompt,
-                            temperature=self.temperature,
-                            stream=True,
-                        ),
-                        timeout=timeout,
-                    ) as resp:
-                        resp.raise_for_status()
-                        for event in self._iter_sse_events(resp, should_cancel):
-                            events.append(event)
-                            yield event
-                    return
-                except LLMCancelled:
-                    raise
-                except Exception as exc:
-                    if not _is_retryable(exc) or attempt == self.max_retries:
-                        self._raise_after_retries("text streaming request", exc)
-                    _log.warning(
-                        "LLM chat_text_stream attempt %d/%d failed (retryable): %s",
-                        attempt + 1,
-                        self.max_retries + 1,
-                        exc,
-                    )
+            yield from self._retry_gen(
+                "text streaming request", _attempt, should_cancel=should_cancel,
+            )
         finally:
             self._log_call(
                 method="chat_text_stream",
