@@ -8,6 +8,9 @@ dependencies:
   # ── external tools ──────────────────────────────────────
   - viennarna>=2.6
   - autodock-vina>=1.1.2
+  # Open Babel for receptor PDBQT preparation (headless equivalent of
+  # ADT Edit-Hydrogens-Add per Aptamers-2026.5.4.docx §2.4.4).
+  - openbabel>=3.1
   # ── scientific stack (predictor runtime) ────────────────
   - rdkit>=2024.03
   - scikit-learn>=1.4

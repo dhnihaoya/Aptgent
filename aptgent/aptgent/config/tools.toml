@@ -27,3 +27,19 @@ conda_python = "${APTGENT_CONDA_PYTHON:-}"
 # so the server can still run without this binary.
 command = "wget"
 base_url = "https://files.rcsb.org/download"
+
+[receptor_prep]
+# Open Babel CLI used as the headless equivalent of ADT's
+# Edit -> Hydrogens -> Add (Aptamers-2026.5.4.docx §2.4.4).
+obabel = "${APTGENT_OBABEL:-obabel}"
+# Padding (Angstroms) added to every axis of the aptamer-covering search box.
+padding_angstrom = 4.0
+
+[rnacomposer]
+# RNAComposer auto-mode for generating per-candidate 3D structures.
+# Leave defaults to use the public server; override with APTGENT_RNACOMPOSER_URL
+# to point at a mirror or local relay.
+base_url = "${APTGENT_RNACOMPOSER_URL:-https://rnacomposer.cs.put.poznan.pl}"
+timeout_seconds = 60
+max_poll_seconds = 1800
+poll_interval_seconds = 15
