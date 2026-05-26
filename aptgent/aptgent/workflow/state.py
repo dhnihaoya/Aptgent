@@ -101,15 +101,23 @@ class DockingRecommendationContext(BaseModel):
     time_budget_hours: Optional[int] = None
     recommended_time_budget_hours: Optional[int] = None
     recommended_top_k: int = 0
-    recommended_grid_size: list[float] = Field(default_factory=list)
     recommended_exhaustiveness: Optional[int] = None
     receptor_path_note: str = ""
     grid_center_note: str = ""
     reason: str = ""
     display_markdown: str = ""
     strategy: str = ""
+    # phase progression: initial -> topk_selected -> source_selected
+    # -> awaiting_structures -> structures_ready -> editing_form -> skipped
     phase: str = "initial"
     accepted: bool = False
+    # Paths kept for UX (e.g. show user where exports went)
+    sequences_export_dir: str = ""
+    structures_dir: str = ""
+    # Backward-compatible: still accept this field from old persisted runs.
+    recommended_grid_size: list[float] = Field(default_factory=list)
+
+    model_config = {"extra": "ignore"}
 
 
 class SpecificityRecommendationContext(BaseModel):

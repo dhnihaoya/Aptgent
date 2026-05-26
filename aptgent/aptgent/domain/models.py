@@ -79,16 +79,59 @@ class PredictionResult(BaseModel):
     raw_outputs: dict[str, Any] = Field(default_factory=dict)
 
 
+class GridBox(BaseModel):
+    """Per-receptor docking search box in Angstroms."""
+
+    center: list[float]  # [x, y, z]
+    size: list[float]    # [x, y, z]
+
+
 class DockingPlan(BaseModel):
+    """Per-candidate docking plan.
+
+    Aligns with Aptamers-2026.5.4.docx §2.4.4: each candidate aptamer gets its
+    own 3D structure (RNAComposer/manual) and Vina runs once per (receptor,
+    ligand) pair with the search box covering the entire aptamer.
+    """
+
     machine_profile: dict[str, Any] = Field(default_factory=dict)
     time_budget: Optional[int] = None
     recommended_top_k: int = 0
     reason: str = ""
-    receptor_path: Optional[str] = None
-    grid_center: Optional[list[float]] = None  # [x, y, z] in Angstroms
-    grid_size: Optional[list[float]] = None    # [x, y, z] in Angstroms
-    exhaustiveness: Optional[int] = None
+
+    receptor_source: str = "manual"  # "manual" | "rnacomposer"
+    receptor_paths: dict[str, str] = Field(default_factory=dict)
+    receptor_pdb_paths: dict[str, str] = Field(default_factory=dict)
+    grid_boxes: dict[str, GridBox] = Field(default_factory=dict)
+    grid_padding_angstrom: float = 4.0
+
+    exhaustiveness: int = 8
+    num_modes: int = 9
+    energy_range: float = 3.0
     seed: Optional[int] = None
+
+    model_config = {"extra": "ignore"}
+
+    @property
+    def receptor_path(self) -> Optional[str]:
+        """Legacy compatibility accessor: returns the first receptor path."""
+        if self.receptor_paths:
+            return next(iter(self.receptor_paths.values()))
+        return None
+
+    @property
+    def grid_center(self) -> Optional[list[float]]:
+        """Legacy compatibility accessor: returns the first box center."""
+        if self.grid_boxes:
+            return list(next(iter(self.grid_boxes.values())).center)
+        return None
+
+    @property
+    def grid_size(self) -> Optional[list[float]]:
+        """Legacy compatibility accessor: returns the first box size."""
+        if self.grid_boxes:
+            return list(next(iter(self.grid_boxes.values())).size)
+        return None
 
 
 class DockingResult(BaseModel):

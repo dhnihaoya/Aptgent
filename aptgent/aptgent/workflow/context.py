@@ -320,7 +320,6 @@ def record_docking_recommendation_context(
     time_budget_hours: int | None,
     recommended_time_budget_hours: int | None,
     recommended_top_k: int,
-    recommended_grid_size: list[float] | None,
     recommended_exhaustiveness: int | None = None,
     receptor_path_note: str = "",
     grid_center_note: str = "",
@@ -329,6 +328,8 @@ def record_docking_recommendation_context(
     strategy: str = "",
     phase: str = "initial",
     accepted: bool = False,
+    sequences_export_dir: str = "",
+    structures_dir: str = "",
 ) -> None:
     context = state.context.docking_recommendation
     context.candidate_count = candidate_count
@@ -336,7 +337,6 @@ def record_docking_recommendation_context(
     context.time_budget_hours = time_budget_hours
     context.recommended_time_budget_hours = recommended_time_budget_hours
     context.recommended_top_k = recommended_top_k
-    context.recommended_grid_size = list(recommended_grid_size or [])
     context.recommended_exhaustiveness = recommended_exhaustiveness
     context.receptor_path_note = _clean_text(receptor_path_note) or ""
     context.grid_center_note = _clean_text(grid_center_note) or ""
@@ -345,6 +345,12 @@ def record_docking_recommendation_context(
     context.strategy = strategy
     context.phase = phase
     context.accepted = accepted
+    if sequences_export_dir:
+        context.sequences_export_dir = sequences_export_dir
+    if structures_dir:
+        context.structures_dir = structures_dir
+    # Clear legacy grid_size (kept on the model for old-run compat).
+    context.recommended_grid_size = []
 
 
 def record_tertiary_structure_context(
