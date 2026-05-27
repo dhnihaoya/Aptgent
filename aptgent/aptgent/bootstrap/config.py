@@ -24,7 +24,7 @@ def expand_env(value: str) -> str:
         inner = match.group(1)
         if ":-" in inner:
             var, default = inner.split(":-", 1)
-            return os.environ.get(var, default)
+            return os.environ.get(var) or default
         return os.environ.get(inner, match.group(0))
 
     expanded = _ENV_PATTERN.sub(_replace, value)

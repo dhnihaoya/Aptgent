@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, TypeVar
@@ -83,6 +84,23 @@ def _is_retryable(exc: BaseException) -> bool:
     return False
 
 
+_BACKOFF_BASE = 1.0
+_BACKOFF_MAX = 60.0
+
+
+def _backoff_delay(attempt: int, exc: BaseException) -> float:
+    """Exponential backoff with optional Retry-After from 429 responses."""
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+        retry_after = exc.response.headers.get("retry-after")
+        if retry_after:
+            try:
+                return min(float(retry_after), _BACKOFF_MAX)
+            except ValueError:
+                pass
+    delay = min(_BACKOFF_BASE * (2 ** attempt), _BACKOFF_MAX)
+    return delay
+
+
 class LLMClient:
     _REPETITION_WINDOW = 200
     _REPETITION_MIN_PATTERN = 40
@@ -122,7 +140,7 @@ class LLMClient:
             self.config.get("max_reasoning_chars", 16384),
         )
         self.timeout = self.config.get("timeout_seconds", 60)
-        self.max_retries = self.config.get("max_retries", 2)
+        self.max_retries = max(0, self.config.get("max_retries", 2))
         self._thinking_enabled = True
         self._logger = LLMCallLogger(
             redact=os.environ.get("APTGENT_LLM_REDACT", "1") != "0",
@@ -395,10 +413,12 @@ class LLMClient:
                 last_exc = exc
                 if not _is_retryable(exc) or attempt == self.max_retries:
                     self._raise_after_retries(label, exc)
+                delay = _backoff_delay(attempt, exc)
                 _log.warning(
-                    "LLM %s attempt %d/%d failed (retryable): %s",
-                    label, attempt + 1, self.max_retries + 1, exc,
+                    "LLM %s attempt %d/%d failed (retryable, %.1fs backoff): %s",
+                    label, attempt + 1, self.max_retries + 1, delay, exc,
                 )
+                time.sleep(delay)
         assert last_exc is not None
         self._raise_after_retries(label, last_exc)
 
@@ -432,10 +452,12 @@ class LLMClient:
                 last_exc = exc
                 if yielded_any or not _is_retryable(exc) or attempt == self.max_retries:
                     self._raise_after_retries(label, exc)
+                delay = _backoff_delay(attempt, exc)
                 _log.warning(
-                    "LLM %s attempt %d/%d failed (retryable): %s",
-                    label, attempt + 1, self.max_retries + 1, exc,
+                    "LLM %s attempt %d/%d failed (retryable, %.1fs backoff): %s",
+                    label, attempt + 1, self.max_retries + 1, delay, exc,
                 )
+                time.sleep(delay)
         assert last_exc is not None
         self._raise_after_retries(label, last_exc)
 

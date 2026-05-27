@@ -653,6 +653,12 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
     plan = state.docking_plan
     target = state.target_molecule
 
+    if not docking_cfg.get("enabled", True):
+        state.docking_results = []
+        persistence.save(state)
+        writer.write_done(summary={"skipped": True, "reason": "docking disabled in config"})
+        return
+
     if not plan or plan.recommended_top_k <= 0:
         state.docking_results = []
         persistence.save(state)

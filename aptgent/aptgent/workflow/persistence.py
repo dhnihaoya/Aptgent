@@ -98,8 +98,13 @@ class Persistence:
         )
 
     def write_artifact(self, run_id: str, filename: str, content: Any) -> Path:
+        safe = Path(filename).name
+        if not safe or safe != filename:
+            raise ValueError(
+                f"Invalid artifact filename '{filename}': must not contain path separators or '..'"
+            )
         artifact_dir = self.get_artifact_dir(run_id)
-        path = artifact_dir / filename
+        path = artifact_dir / safe
         if isinstance(content, (dict, list)):
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(content, f, indent=2, ensure_ascii=False)

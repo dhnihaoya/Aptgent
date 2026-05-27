@@ -66,6 +66,7 @@ class SubprocessSession:
             text=True,
             cwd=self._cwd,
             env=self._env,
+            start_new_session=True,
         )
 
         stderr_chunks: list[str] = []

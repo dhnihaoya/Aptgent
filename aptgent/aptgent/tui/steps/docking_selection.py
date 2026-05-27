@@ -254,10 +254,11 @@ class DockingSelectionHandler(StepHandler):
         if action == "rnacomposer:cancel":
             self._rnacomposer_cancel.set()
             self.screen.add_system_message(
-                "Cancelling RNAComposer job; falling back to manual upload.",
+                "Cancelling RNAComposer job; returning to strategy panel.",
                 "warning-text",
             )
             self._show_strategy_panel()
+            self.screen.set_input_enabled(True)
             return
         if action.startswith("cover-aptamer:"):
             self._cover_aptamer(action.split(":", 1)[1])

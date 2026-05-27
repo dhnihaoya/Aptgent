@@ -52,12 +52,14 @@ def spawn_detached_job(app: Any, run_id: str, step: str) -> int:
     stderr_log = log_dir / f"job_{step}.log"
 
     cmd = [sys.executable, "-m", "aptgent", "run-job", run_id, step]
+    stderr_fd = open(stderr_log, "a")  # noqa: SIM115
     proc = subprocess.Popen(
         cmd,
         start_new_session=True,
         stdout=subprocess.DEVNULL,
-        stderr=open(stderr_log, "a"),
+        stderr=stderr_fd,
     )
+    stderr_fd.close()
     _log.info("Spawned detached job: pid=%d run=%s step=%s", proc.pid, run_id, step)
     return proc.pid
 

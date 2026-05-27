@@ -179,6 +179,9 @@ class MutationSitePanel(_BaseStructuredPanel):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-confirm-sites":
+            if not self.get_selected():
+                self.app.notify("Please select at least one mutation site.")
+                return
             self.post_message(
                 StructuredInputSubmitted(
                     Step.SITE_PROPOSAL,

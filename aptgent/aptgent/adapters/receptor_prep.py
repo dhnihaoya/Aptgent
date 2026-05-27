@@ -281,8 +281,13 @@ def export_top_k_sequences(
     with tsv.open("w", encoding="utf-8") as fh:
         fh.write("candidate_id\tsequence\n")
         for cand_id, seq in candidates:
+            safe = Path(cand_id).name
+            if not safe or safe != cand_id:
+                raise ValueError(
+                    f"Invalid candidate_id '{cand_id}': must not contain path separators or '..'"
+                )
             fh.write(f"{cand_id}\t{seq}\n")
-            fasta = out / f"{cand_id}.fasta"
+            fasta = out / f"{safe}.fasta"
             fasta.write_text(f">{cand_id}\n{seq}\n", encoding="utf-8")
     return out.resolve()
 
@@ -301,9 +306,12 @@ def scan_structure_directory(
         return {}
     matches: dict[str, dict[str, str]] = {}
     for cand_id in candidate_ids:
+        safe = Path(cand_id).name
+        if not safe or safe != cand_id:
+            continue
         per_cand: dict[str, str] = {}
-        pdbqt = base / f"{cand_id}.pdbqt"
-        pdb = base / f"{cand_id}.pdb"
+        pdbqt = base / f"{safe}.pdbqt"
+        pdb = base / f"{safe}.pdb"
         if pdbqt.exists():
             per_cand["pdbqt"] = str(pdbqt.resolve())
         if pdb.exists():

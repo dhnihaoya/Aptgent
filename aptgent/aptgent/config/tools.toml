@@ -15,6 +15,8 @@ energy_range = 3.0
 [predictor]
 # model_dir defaults to the bundled predictor models inside the package.
 # Override with APTGENT_MODEL_DIR if using external models.
+# When empty (default), the doctor/predictor falls back to the bundled path.
+model_dir = "${APTGENT_MODEL_DIR:-}"
 # conda_env / conda_python are only needed when the predictor runs in
 # a separate conda environment.  In the default single-env setup they
 # should remain empty so the current Python is used directly.

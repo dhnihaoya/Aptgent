@@ -26,7 +26,18 @@ class StepHandler:
         ...
 
     def run_worker(self, work: Callable[[], Any], *, activity: str) -> None:
-        """Run a step worker with a visible activity status."""
+        """Run a step worker with a visible activity status.
+
+        Input is disabled while the worker runs and re-enabled when it
+        finishes (even on error).
+        """
         self.screen.show_activity(activity)
         self.screen.set_input_enabled(False)
-        self.screen.run_worker(work, exclusive=True, thread=True)
+
+        def _guarded() -> None:
+            try:
+                work()
+            finally:
+                self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+
+        self.screen.run_worker(_guarded, exclusive=True, thread=True)

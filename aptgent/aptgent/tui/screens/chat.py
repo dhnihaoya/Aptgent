@@ -90,6 +90,8 @@ class ChatScreen(Screen):
             step_name = "candidate_enumeration"
         elif state.current_step == Step.DOCKING_RUN:
             step_name = "docking_run"
+        elif state.current_step == Step.SPECIFICITY_FILTER:
+            step_name = "specificity_filter"
 
         if step_name is None:
             self.add_system_message("No detachable job is running on this step.")

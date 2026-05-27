@@ -287,7 +287,12 @@ class RNAComposerAdapter:
 
         out_dir = Path(output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"{job_id}.pdb"
+        safe_id = Path(job_id).name
+        if not safe_id or safe_id != job_id:
+            raise ValueError(
+                f"Invalid job_id '{job_id}': must not contain path separators or '..'"
+            )
+        out_path = out_dir / f"{safe_id}.pdb"
         out_path.write_text(pdb_text, encoding="utf-8")
         return str(out_path)
 

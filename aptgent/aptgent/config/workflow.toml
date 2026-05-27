@@ -5,7 +5,7 @@ progress_every = 10000
 mutation_batch_timeout_seconds = 0  # 0 means no timeout; run until done or cancelled
 
 [docking]
-# TODO(Stage 4): wire this to actually skip docking_selection + docking_run.
+# When false, docking_selection step skips and _run_docking returns immediately.
 enabled = true
 per_ligand_timeout_seconds = 1800
 # seed: uncomment to set a fixed Vina random seed for reproducibility.

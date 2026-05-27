@@ -49,7 +49,7 @@ BACK_COMMAND = SlashCommand(
 
 CANCEL_COMMAND = SlashCommand(
     name="/cancel",
-    description="Cancel the running background job (enumeration or docking)",
+    description="Cancel the running background job (enumeration, docking, or specificity)",
 )
 
 THEME_COMMAND = SlashCommand(
@@ -88,7 +88,7 @@ def commands_for_step(step: Step | None) -> tuple[SlashCommand, ...]:
         commands.extend((EXPORT_COMMAND, FINISH_COMMAND))
     if step == Step.PRIMARY_SCORING:
         commands.append(BACK_COMMAND)
-    if step in (Step.CANDIDATE_ENUMERATION, Step.DOCKING_RUN):
+    if step in (Step.CANDIDATE_ENUMERATION, Step.DOCKING_RUN, Step.SPECIFICITY_FILTER):
         commands.append(CANCEL_COMMAND)
     commands.append(THEME_COMMAND)
     return tuple(commands)
