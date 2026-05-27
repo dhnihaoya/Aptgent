@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -57,8 +59,20 @@ class Persistence:
         run_dir = self._run_dir(state.run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
         state.touch()
-        with open(run_dir / "state.json", "w", encoding="utf-8") as f:
-            f.write(state.model_dump_json(indent=2))
+        target = run_dir / "state.json"
+        fd, tmp_path = tempfile.mkstemp(
+            dir=run_dir, prefix=".state-", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(state.model_dump_json(indent=2))
+            os.replace(tmp_path, target)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def load(self, run_id: str) -> RunState | None:
         try:
@@ -72,9 +86,9 @@ class Persistence:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             return RunState.model_validate(data)
-        except Exception:
-            _log.exception("Failed to load run state from %s", path)
-            return None
+        except (json.JSONDecodeError, ValueError) as exc:
+            _log.error("Run state %s is corrupted: %s", run_id, exc)
+            raise CorruptedStateError(run_id, str(path)) from exc
 
     def list_runs(self) -> list[str]:
         return sorted(
@@ -124,3 +138,12 @@ class Persistence:
         jd = self.job_dir(run_id, step)
         jd.mkdir(parents=True, exist_ok=True)
         return jd
+
+
+class CorruptedStateError(Exception):
+    """Raised when a state.json file exists but cannot be parsed."""
+
+    def __init__(self, run_id: str, path: str) -> None:
+        self.run_id = run_id
+        self.path = path
+        super().__init__(f"Run state for '{run_id}' is corrupted: {path}")

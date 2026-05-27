@@ -51,7 +51,10 @@ def _timestamp_label(state: RunState) -> str:
 def list_resume_candidates(app) -> list[RunState]:
     states: list[RunState] = []
     for run_id in app.persistence.list_runs():
-        state = app.persistence.load(run_id)
+        try:
+            state = app.persistence.load(run_id)
+        except Exception:
+            continue
         if state is not None:
             states.append(state)
     states.sort(key=lambda item: item.updated_at or item.created_at, reverse=True)

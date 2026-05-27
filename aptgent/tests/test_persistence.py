@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from aptgent.workflow.persistence import Persistence
+from aptgent.workflow.persistence import CorruptedStateError, Persistence
 from aptgent.workflow.state import RunState
 
 
@@ -48,6 +48,16 @@ def test_save_load_roundtrip(tmp_path):
 def test_load_missing_run_returns_none(tmp_path):
     persistence = Persistence(runs_dir=tmp_path)
     assert persistence.load("does_not_exist") is None
+
+
+def test_load_corrupted_run_raises(tmp_path):
+    persistence = Persistence(runs_dir=tmp_path)
+    run_dir = persistence.run_dir("corrupted")
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text("NOT VALID JSON {{{", encoding="utf-8")
+
+    with pytest.raises(CorruptedStateError):
+        persistence.load("corrupted")
 
 
 def test_list_runs_returns_sorted_ids(tmp_path):
