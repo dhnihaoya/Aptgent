@@ -28,6 +28,11 @@ def validate_intake_result(result: Any) -> dict[str, Any]:
         text = clean_text(item)
         if text:
             missing_fields.append(text)
+    proposed_sites_raw = result.get("proposed_sites") or []
+    proposed_sites = [
+        s for s in proposed_sites_raw if isinstance(s, int) and s > 0
+    ] if isinstance(proposed_sites_raw, list) else []
+
     return {
         "initial_sequence": normalize_sequence(result.get("initial_sequence")),
         "pdb_id": normalize_pdb_id(clean_text(result.get("pdb_id"))),
@@ -42,6 +47,7 @@ def validate_intake_result(result: Any) -> dict[str, Any]:
         "mixed_input_detected": bool(result.get("mixed_input_detected")),
         "missing_fields": missing_fields,
         "follow_up_question": clean_text(result.get("follow_up_question")),
+        "proposed_sites": proposed_sites,
     }
 
 

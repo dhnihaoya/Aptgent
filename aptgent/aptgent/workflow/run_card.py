@@ -65,7 +65,7 @@ def _compute_step_durations(step_timestamps: dict[str, str]) -> dict[str, float]
     """Compute wall-clock seconds between consecutive step timestamps."""
     if not step_timestamps:
         return {}
-    steps = sorted(step_timestamps.keys())
+    steps = sorted(step_timestamps.keys(), key=lambda k: step_timestamps[k])
     durations: dict[str, float] = {}
     for i in range(len(steps) - 1):
         try:
