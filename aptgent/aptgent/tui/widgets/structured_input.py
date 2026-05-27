@@ -190,6 +190,76 @@ class MutationSitePanel(_BaseStructuredPanel):
         event.stop()
 
 
+class AnalogCheckboxPanel(_BaseStructuredPanel):
+    """Checkbox panel for toggling individual recommended analogs."""
+
+    DEFAULT_CSS = """
+    AnalogCheckboxPanel > SelectionList {
+        height: auto;
+        max-height: 12;
+        border: tall $surface-lighten-1;
+    }
+    AnalogCheckboxPanel > Button {
+        margin-top: 1;
+        width: 100%;
+    }
+    """
+
+    def __init__(
+        self,
+        analog_names: list[str],
+        *,
+        target_name: str = "",
+        title: str = "Select Analogs for Specificity Filter",
+        help_text: str = "Use Up/Down to move, Space to toggle, Enter to confirm.",
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.analog_names = analog_names
+        self.target_name = target_name
+        self.title = title
+        self.help_text = help_text
+        self.selection_list: SelectionList[str] | None = None
+        self.confirm_button: Button | None = None
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.title, classes="panel-title")
+        if self.target_name:
+            yield Static(f"Target: [bold]{self.target_name}[/]")
+        yield Static(self.help_text, classes="panel-help")
+        selections = [
+            (f"[bold]{name}[/bold]", name, True)
+            for name in self.analog_names
+        ]
+        self.selection_list = SelectionList(*selections, id="analog-selection-list")
+        yield self.selection_list
+        self.confirm_button = Button(
+            "Confirm Selection",
+            id="btn-confirm-analogs",
+            variant="success",
+        )
+        yield self.confirm_button
+
+    def on_mount(self) -> None:
+        if self.selection_list is not None:
+            self.selection_list.focus()
+
+    def on_selection_list_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
+        event.stop()
+        if self.confirm_button is not None and self.selection_list is not None:
+            self.confirm_button.disabled = not self.selection_list.selected
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-confirm-analogs" and self.selection_list is not None:
+            selected = ", ".join(self.selection_list.selected)
+            self.post_message(
+                StructuredInputSubmitted(
+                    Step.SPECIFICITY_FILTER,
+                    {"action": "run", "analogs_text": selected},
+                )
+            )
+
+
 class PdbSelectionPanel(_BaseStructuredPanel):
     """Select a chain and optional ligand from a parsed PDB structure."""
 
@@ -374,11 +444,140 @@ class SpecificityPanel(_BaseStructuredPanel):
             )
 
 
+class AnalogCustomPanel(_BaseStructuredPanel):
+    """Natural-language analog entry with LLM parsing and confirmation."""
+
+    DEFAULT_CSS = """
+    AnalogCustomPanel > .panel-help {
+        margin: 1 0;
+    }
+    AnalogCustomPanel > Input {
+        margin: 1 0;
+    }
+    AnalogCustomPanel Horizontal {
+        height: auto;
+    }
+    AnalogCustomPanel Horizontal > Button {
+        margin-right: 1;
+    }
+    AnalogCustomPanel > .resolved-list {
+        margin: 1 0;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        target_name: str = "",
+        title: str = "Custom Specificity Analogs",
+        help_text: str = "Describe the analogs you want in natural language.",
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.target_name = target_name
+        self.title = title
+        self.help_text = help_text
+        self._resolved_analogs_text: str = ""
+        self._resolved_pairs: list[tuple[str, bool]] = []
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.title, classes="panel-title")
+        if self.target_name:
+            yield Static(f"Target: [bold]{self.target_name}[/]")
+        yield Static(self.help_text, classes="panel-help")
+        yield Input(
+            id="custom-analog-input",
+            placeholder="e.g. just caffeine is fine",
+        )
+        with Horizontal():
+            yield Button("Parse My Request", id="btn-parse-custom", variant="primary")
+            yield Button("Skip", id="btn-skip-custom")
+
+    def on_mount(self) -> None:
+        try:
+            self.query_one("#custom-analog-input", Input).focus()
+        except NoMatches:
+            _log.debug("Focus target missing during on_mount", exc_info=True)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        btn_id = event.button.id
+        if btn_id == "btn-parse-custom":
+            text = self.query_one("#custom-analog-input", Input).value.strip()
+            self.post_message(
+                StructuredInputSubmitted(
+                    Step.SPECIFICITY_FILTER,
+                    {"action": "parse_custom", "custom_text": text},
+                )
+            )
+        elif btn_id == "btn-skip-custom":
+            self.post_message(
+                StructuredInputSubmitted(
+                    Step.SPECIFICITY_FILTER,
+                    {"action": "skip"},
+                )
+            )
+        elif btn_id == "btn-confirm-custom":
+            self.post_message(
+                StructuredInputSubmitted(
+                    Step.SPECIFICITY_FILTER,
+                    {"action": "run", "analogs_text": self._resolved_analogs_text},
+                )
+            )
+        elif btn_id == "btn-retry-custom":
+            self._reset_to_input_mode()
+
+    def show_confirmation(self, resolved_pairs: list[tuple[str, bool]]) -> None:
+        self._resolved_pairs = resolved_pairs
+        resolved_names = [name for name, ok in resolved_pairs if ok]
+        self._resolved_analogs_text = ", ".join(resolved_names)
+
+        for child in list(self.children):
+            child.remove()
+
+        self.mount(Static("Parsed Analogs", classes="panel-title"))
+        lines: list[str] = []
+        for name, ok in resolved_pairs:
+            if ok:
+                lines.append(f"  [green]\u2713[/green] {name}")
+            else:
+                lines.append(f"  [red]\u2717[/red] {name} (could not resolve)")
+        if lines:
+            self.mount(Static("\n".join(lines), classes="resolved-list"))
+        with Horizontal():
+            self.mount(Button("Confirm and Run", id="btn-confirm-custom", variant="success"))
+            self.mount(Button("Try Again", id="btn-retry-custom"))
+        try:
+            self.query_one("#btn-confirm-custom", Button).focus()
+        except NoMatches:
+            _log.debug("Focus target missing after confirmation mount", exc_info=True)
+
+    def _reset_to_input_mode(self) -> None:
+        self._resolved_pairs = []
+        self._resolved_analogs_text = ""
+        for child in list(self.children):
+            child.remove()
+
+        self.mount(Static(self.title, classes="panel-title"))
+        if self.target_name:
+            self.mount(Static(f"Target: [bold]{self.target_name}[/]"))
+        self.mount(Static(self.help_text, classes="panel-help"))
+        self.mount(Input(
+            id="custom-analog-input",
+            placeholder="e.g. just caffeine is fine",
+        ))
+        with Horizontal():
+            self.mount(Button("Parse My Request", id="btn-parse-custom", variant="primary"))
+            self.mount(Button("Skip", id="btn-skip-custom"))
+        try:
+            self.query_one("#custom-analog-input", Input).focus()
+        except NoMatches:
+            _log.debug("Focus target missing after retry mount", exc_info=True)
+
+
 class DockingStrategyPanel(_BaseStructuredPanel):
     """Phase 1: pick top-K + optional time budget, or skip docking.
 
-    Follows the methodology in Aptamers-2026.5.4.docx §2.4.4 where the top
-    candidates are docked individually; default top-k is 5 (paper value).
+    The top candidates are docked individually; default top-k is 5.
     """
 
     DEFAULT_CSS = """
@@ -502,8 +701,8 @@ class DockingSourcePanel(_BaseStructuredPanel):
         yield Static("How will the receptor PDBQTs be prepared?", classes="panel-title")
         yield Static(
             "Each of the top candidates needs its own 3D structure. "
-            "Per Aptamers-2026.5.4.docx \u00a72.4.4, the paper predicts each "
-            "candidate via RNAComposer and adds hydrogens in AutoDockTools.",
+            "Each candidate is predicted via RNAComposer and hydrogens "
+            "are added in AutoDockTools.",
             classes="panel-help",
         )
         yield Static(f"Top candidates to prepare: [bold]{self.top_k}[/bold]")
@@ -759,9 +958,9 @@ class DockingParamPanel(_BaseStructuredPanel):
     def compose(self) -> ComposeResult:
         yield Static("Docking Configuration", classes="panel-title")
         yield Static(
-            "Per Aptamers-2026.5.4.docx \u00a72.4.4: AutoDock Vina with default "
-            "num_modes (9) and energy_range (3.0); each candidate uses its own "
-            "receptor PDBQT and a search box that covers the whole aptamer.",
+            "AutoDock Vina with default num_modes (9) and energy_range (3.0); "
+            "each candidate uses its own receptor PDBQT and a search box that "
+            "covers the whole aptamer.",
             classes="panel-help",
         )
         if self.recommendation_reason:

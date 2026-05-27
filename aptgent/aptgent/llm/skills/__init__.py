@@ -12,6 +12,11 @@ existing tests) keep working unchanged.
 
 from __future__ import annotations
 
+from aptgent.llm.skills.analog_parse import (
+    AnalogParseInput,
+    AnalogParseOutput,
+    AnalogParseSkill,
+)
 from aptgent.llm.skills.analog_suggestion import (
     AnalogEntry,
     AnalogSuggestionInput,
@@ -50,6 +55,7 @@ registry.register(IntakeSkill)
 registry.register(PdbReviewSkill)
 registry.register(SiteProposalSkill)
 registry.register(AnalogSuggestionSkill)
+registry.register(AnalogParseSkill)
 registry.register(DockingPlannerSkill)
 registry.register(ReportSkill)
 
@@ -60,6 +66,9 @@ def get_registry() -> SkillRegistry:
 
 
 __all__ = [
+    "AnalogParseInput",
+    "AnalogParseOutput",
+    "AnalogParseSkill",
     "AnalogEntry",
     "AnalogSuggestionInput",
     "AnalogSuggestionOutput",

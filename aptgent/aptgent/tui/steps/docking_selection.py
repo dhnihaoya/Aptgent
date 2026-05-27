@@ -1,7 +1,6 @@
 """Docking selection step handler.
 
-Implements the multi-phase docking setup described in
-Aptamers-2026.5.4.docx §2.4.4:
+Implements the multi-phase docking setup:
 
 1. **topk_selection** \u2013 pick how many top candidates to dock (paper used 5).
 2. **source_selection** \u2013 choose receptor source: manual upload vs.

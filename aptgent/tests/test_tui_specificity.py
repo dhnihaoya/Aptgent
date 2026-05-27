@@ -5,9 +5,14 @@ import pytest
 from aptgent.domain.enums import Step
 from aptgent.domain.models import CandidateSequence, TargetMolecule
 from aptgent.tui.widgets.chat_widgets import ProgressBubble
-from aptgent.tui.widgets.structured_input import ActionMenuPanel, SpecificityPanel
+from aptgent.tui.widgets.structured_input import (
+    ActionMenuPanel,
+    AnalogCheckboxPanel,
+    AnalogCustomPanel,
+    SpecificityPanel,
+)
 from textual.css.query import NoMatches
-from textual.widgets import Input, OptionList
+from textual.widgets import Input, OptionList, SelectionList
 
 from tui_helpers import anyio_backend, make_app
 
@@ -77,9 +82,12 @@ async def test_specificity_step_shows_recommendations_before_edit_input(tmp_path
         await pilot.press("down", "enter")
         await pilot.pause()
 
-        panel = app.screen.query_one(SpecificityPanel)
+        panel = app.screen.query_one(AnalogCheckboxPanel)
         assert panel is not None
-        assert panel.query_one("#analog-input", Input).value == "theobromine, paraxanthine"
+        assert panel.selection_list is not None
+        selected = list(panel.selection_list.selected)
+        assert "theobromine" in selected
+        assert "paraxanthine" in selected
 
 
 @pytest.mark.anyio
@@ -133,9 +141,9 @@ async def test_specificity_custom_choice_opens_blank_input(tmp_path, monkeypatch
         await pilot.press("down", "down", "enter")
         await pilot.pause()
 
-        panel = app.screen.query_one(SpecificityPanel)
+        panel = app.screen.query_one(AnalogCustomPanel)
         assert panel is not None
-        assert panel.query_one("#analog-input", Input).value == ""
+        assert panel.query_one("#custom-analog-input", Input).value == ""
 
 
 @pytest.mark.anyio
