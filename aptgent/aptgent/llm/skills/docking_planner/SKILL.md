@@ -20,6 +20,6 @@ any out-of-range suggestion back to the deterministic defaults, so the skill
 is safe even when the LLM produces unexpected values.
 
 The grid box is no longer LLM-driven: it is computed deterministically to
-cover the entire aptamer per Aptamers-2026.5.4.docx §2.4.4. The skill still
-writes a `reason` paragraph and two manual-confirmation notes
+cover the entire aptamer (bounding box + configurable padding). The skill
+still writes a `reason` paragraph and two manual-confirmation notes
 (`receptor_path_note`, `grid_center_note`) for the UI.

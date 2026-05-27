@@ -1,14 +1,14 @@
 """Receptor preparation: DNA<->RNA, hydrogen addition, PDB->PDBQT, bbox.
 
 This adapter encapsulates the headless equivalent of the manual ADT GUI
-workflow described in Aptamers-2026.5.4.docx §2.4.4:
+workflow:
 
 - T <-> U sequence alphabet conversion (RNAComposer accepts RNA only)
 - Programmatic equivalent of MOE's "U->T + ribose->deoxyribose" by removing
   O2' atoms and renaming residues
 - Hydrogen addition + Gasteiger partial charges (Open Babel CLI), equivalent
   to ADT's `Edit -> Hydrogens -> Add`
-- Bounding-box derivation that "covers the entire aptamer" with padding
+- Bounding-box derivation that covers the entire aptamer with padding
 """
 from __future__ import annotations
 

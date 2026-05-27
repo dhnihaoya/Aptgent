@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from aptgent.llm.skills import (
     AnalogSuggestionSkill,
     BaseSkill,
+    DockingParamsParseOutput,
+    DockingParamsParseSkill,
     DockingPlannerSkill,
     IntakeSkill,
     PdbReviewSkill,
@@ -28,6 +30,7 @@ ALL_SKILL_CLASSES = [
     SiteProposalSkill,
     AnalogSuggestionSkill,
     DockingPlannerSkill,
+    DockingParamsParseSkill,
     ReportSkill,
 ]
 
@@ -130,3 +133,30 @@ def test_base_skill_invoke_rejects_non_dict_response():
     skill = _EchoSkill(client=_StubClient("not a dict"))
     with pytest.raises(RuntimeError):
         skill.invoke("ignored")
+
+
+def test_docking_params_parse_output_accepts_partial_payload():
+    output = DockingParamsParseOutput.model_validate(
+        {"top_k": 8, "exhaustiveness": 32, "seed": 42}
+    )
+    assert output.top_k == 8
+    assert output.exhaustiveness == 32
+    assert output.seed == 42
+    assert output.num_modes is None
+    assert output.action is None
+
+
+def test_docking_params_parse_output_accepts_action_only():
+    output = DockingParamsParseOutput.model_validate({"action": "skip"})
+    assert output.action == "skip"
+    assert output.top_k is None
+
+
+def test_docking_params_parse_output_rejects_bad_action():
+    with pytest.raises(Exception):
+        DockingParamsParseOutput.model_validate({"action": "yolo"})
+
+
+def test_docking_params_parse_skill_metadata_is_nlu_only():
+    assert DockingParamsParseSkill.metadata.trust_level == "nlu_only"
+    assert DockingParamsParseSkill.metadata.id == "docking_params_parse"

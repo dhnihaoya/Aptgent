@@ -30,7 +30,7 @@ base_url = "https://files.rcsb.org/download"
 
 [receptor_prep]
 # Open Babel CLI used as the headless equivalent of ADT's
-# Edit -> Hydrogens -> Add (Aptamers-2026.5.4.docx §2.4.4).
+# Edit -> Hydrogens -> Add.
 obabel = "${APTGENT_OBABEL:-obabel}"
 # Padding (Angstroms) added to every axis of the aptamer-covering search box.
 padding_angstrom = 4.0

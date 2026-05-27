@@ -24,14 +24,19 @@ class DockingPlannerSkill(BaseSkill):
         computed_time_budget_hours: int | None = None,
         target_smiles: str | None = None,
         target_name: str | None = None,
+        per_ligand_timeout_default_seconds: int | None = None,
     ) -> str:
-        payload = {
+        payload: dict[str, Any] = {
             "candidate_count": candidate_count,
             "machine_profile": machine_profile,
             "time_budget_hours": time_budget_hours,
             "computed_top_k": computed_top_k,
             "computed_time_budget_hours": computed_time_budget_hours,
         }
+        if per_ligand_timeout_default_seconds is not None:
+            payload["per_ligand_timeout_default_seconds"] = (
+                per_ligand_timeout_default_seconds
+            )
         if target_smiles:
             payload["target_smiles"] = target_smiles
         if target_name:
@@ -50,6 +55,9 @@ class DockingPlannerSkill(BaseSkill):
                 computed_time_budget_hours=payload.get("computed_time_budget_hours"),
                 target_smiles=payload.get("target_smiles"),
                 target_name=payload.get("target_name"),
+                per_ligand_timeout_default_seconds=payload.get(
+                    "per_ligand_timeout_default_seconds"
+                ),
             )
         return super().build_user_message(payload)
 
@@ -63,6 +71,7 @@ class DockingPlannerSkill(BaseSkill):
         computed_time_budget_hours: int | None = None,
         target_smiles: str | None = None,
         target_name: str | None = None,
+        per_ligand_timeout_default_seconds: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "candidate_count": candidate_count,
@@ -71,6 +80,10 @@ class DockingPlannerSkill(BaseSkill):
             "computed_top_k": computed_top_k,
             "computed_time_budget_hours": computed_time_budget_hours,
         }
+        if per_ligand_timeout_default_seconds is not None:
+            payload["per_ligand_timeout_default_seconds"] = (
+                per_ligand_timeout_default_seconds
+            )
         if target_smiles is not None:
             payload["target_smiles"] = target_smiles
         if target_name is not None:
@@ -87,6 +100,7 @@ class DockingPlannerSkill(BaseSkill):
         computed_time_budget_hours: int | None = None,
         target_smiles: str | None = None,
         target_name: str | None = None,
+        per_ligand_timeout_default_seconds: int | None = None,
     ):
         user = self._build_user_message(
             candidate_count,
@@ -96,6 +110,7 @@ class DockingPlannerSkill(BaseSkill):
             computed_time_budget_hours,
             target_smiles,
             target_name,
+            per_ligand_timeout_default_seconds,
         )
         return self.client.chat_json_stream(self.system_prompt, user)
 
@@ -109,6 +124,7 @@ class DockingPlannerSkill(BaseSkill):
         computed_time_budget_hours: int | None = None,
         target_smiles: str | None = None,
         target_name: str | None = None,
+        per_ligand_timeout_default_seconds: int | None = None,
     ):
         if self.display_prompt is None:
             raise RuntimeError(
@@ -122,6 +138,7 @@ class DockingPlannerSkill(BaseSkill):
             computed_time_budget_hours,
             target_smiles,
             target_name,
+            per_ligand_timeout_default_seconds,
         )
         return self.client.chat_text_stream(self.display_prompt, user)
 

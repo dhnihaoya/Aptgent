@@ -89,9 +89,9 @@ class GridBox(BaseModel):
 class DockingPlan(BaseModel):
     """Per-candidate docking plan.
 
-    Aligns with Aptamers-2026.5.4.docx §2.4.4: each candidate aptamer gets its
-    own 3D structure (RNAComposer/manual) and Vina runs once per (receptor,
-    ligand) pair with the search box covering the entire aptamer.
+    Each candidate aptamer gets its own 3D structure (RNAComposer/manual)
+    and Vina runs once per (receptor, ligand) pair with the search box
+    covering the entire aptamer.
     """
 
     machine_profile: dict[str, Any] = Field(default_factory=dict)
@@ -109,6 +109,8 @@ class DockingPlan(BaseModel):
     num_modes: int = 9
     energy_range: float = 3.0
     seed: Optional[int] = None
+    # None = use docking.per_ligand_timeout_seconds from workflow.toml.
+    per_ligand_timeout_seconds: Optional[int] = None
 
     model_config = {"extra": "ignore"}
 

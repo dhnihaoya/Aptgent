@@ -35,16 +35,47 @@ class DockingRunHandler(JobAttachMixin, StepHandler):
             self.screen.set_input_enabled(True)
             return
 
-        if not plan.receptor_path or not Path(plan.receptor_path).exists():
+        if not plan.receptor_paths:
             self.screen.add_system_message(
-                f"Receptor file not found: {plan.receptor_path}",
+                "No per-candidate receptor PDBQTs were prepared.",
                 "error-text",
             )
             self.screen.set_input_enabled(True)
             return
 
-        if not plan.grid_center or not plan.grid_size:
-            self.screen.add_system_message("Grid box parameters not set.", "error-text")
+        missing_paths = [
+            cid for cid, path in plan.receptor_paths.items()
+            if not path or not Path(path).exists()
+        ]
+        if missing_paths:
+            preview = ", ".join(missing_paths[:5])
+            suffix = "" if len(missing_paths) <= 5 else f", \u2026 ({len(missing_paths)} total)"
+            self.screen.add_system_message(
+                f"Receptor files missing for: {preview}{suffix}",
+                "error-text",
+            )
+            self.screen.set_input_enabled(True)
+            return
+
+        if not plan.grid_boxes:
+            self.screen.add_system_message(
+                "Grid boxes have not been computed for any candidate.",
+                "error-text",
+            )
+            self.screen.set_input_enabled(True)
+            return
+
+        missing_boxes = [
+            cid for cid in plan.receptor_paths
+            if cid not in plan.grid_boxes
+        ]
+        if missing_boxes:
+            preview = ", ".join(missing_boxes[:5])
+            suffix = "" if len(missing_boxes) <= 5 else f", \u2026 ({len(missing_boxes)} total)"
+            self.screen.add_system_message(
+                f"Grid box parameters missing for: {preview}{suffix}",
+                "error-text",
+            )
             self.screen.set_input_enabled(True)
             return
 

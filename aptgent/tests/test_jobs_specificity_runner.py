@@ -25,6 +25,7 @@ class _FakeSpecificityAdapter:
         self._rows = rows
         self._cancel_after = cancel_after
         self.received_skip_pairs: list[tuple[int, str]] | None = None
+        self.received_target_names: list[str] = []
 
     def predict_specificity_batch(
         self,
@@ -39,6 +40,9 @@ class _FakeSpecificityAdapter:
         skip_pairs,
     ):
         self.received_skip_pairs = list(skip_pairs) if skip_pairs else None
+        self.received_target_names = [
+            target.resolved_name or target.input_text or "" for target in targets
+        ]
 
         total = len(candidates) * len(targets)
         skipped = len(self.received_skip_pairs or [])
@@ -142,6 +146,45 @@ def test_specificity_runner_writes_artifact_and_summary(tmp_path, monkeypatch):
     assert saved is not None
     statuses = {r.candidate_id: r.status for r in saved.specificity_results}
     assert statuses == {"c1": "kept", "c2": "removed"}
+
+
+def test_specificity_runner_cross_predicts_only_against_analogs(tmp_path, monkeypatch):
+    persistence = Persistence(runs_dir=tmp_path)
+    state = _make_state(persistence, run_id="spec_analog_only", candidate_ids=["c1", "c2"])
+
+    rows = [
+        {"target_idx": 0, "target_name": "Caffeine", "candidate_id": "c1", "label": 1, "probability": 0.9},
+        {"target_idx": 0, "target_name": "Caffeine", "candidate_id": "c2", "label": 1, "probability": 0.8},
+        {"target_idx": 1, "target_name": "Theobromine", "candidate_id": "c1", "label": 0, "probability": 0.1},
+        {"target_idx": 1, "target_name": "Theobromine", "candidate_id": "c2", "label": 1, "probability": 0.7},
+        {"target_idx": 2, "target_name": "Paraxanthine", "candidate_id": "c1", "label": 0, "probability": 0.2},
+        {"target_idx": 2, "target_name": "Paraxanthine", "candidate_id": "c2", "label": 0, "probability": 0.3},
+    ]
+    fake_adapter = _FakeSpecificityAdapter(rows)
+
+    monkeypatch.setattr("aptgent.jobs.runner.load_config", lambda: _fake_config(tmp_path))
+    monkeypatch.setattr(
+        "aptgent.bootstrap.container.create_prediction_adapter",
+        lambda _tools_config: fake_adapter,
+    )
+
+    events_path = persistence.job_events_file(state.run_id, "specificity_filter")
+    writer = EventWriter(events_path)
+    try:
+        _run_specificity(writer, state, persistence)
+    finally:
+        writer.close()
+
+    assert fake_adapter.received_target_names == ["Caffeine", "Theobromine", "Paraxanthine"]
+    events = list(EventReader(events_path).iter_events())
+    progress_totals = [e["total"] for e in events if e["type"] == "progress"]
+    assert progress_totals
+    assert set(progress_totals) == {6}
+
+    done = events[-1]
+    assert done["summary"]["total"] == 6
+    assert done["summary"]["kept"] == 1
+    assert done["summary"]["removed"] == 1
 
 
 def test_specificity_runner_resumes_from_existing_artifact(tmp_path, monkeypatch):

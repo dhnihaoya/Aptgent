@@ -13,10 +13,15 @@ from aptgent.workflow.engine import TRANSITIONS
 
 from .coercion import coerce_float, coerce_float_list, coerce_int, coerce_int_list
 from .docking_plan import (
+    DEFAULT_ENERGY_RANGE,
+    DEFAULT_GRID_PADDING_ANGSTROM,
+    DEFAULT_NUM_MODES,
+    DEFAULT_PER_LIGAND_TIMEOUT_SECONDS,
     compute_deterministic_docking_plan,
     default_time_budget_hours,
     default_top_k,
     format_docking_recommendation_markdown,
+    validate_docking_param_overrides,
     validate_docking_recommendation_result,
 )
 from .intake_format import (
@@ -52,6 +57,10 @@ def next_step(step) -> Any:
 
 
 __all__ = [
+    "DEFAULT_ENERGY_RANGE",
+    "DEFAULT_GRID_PADDING_ANGSTROM",
+    "DEFAULT_NUM_MODES",
+    "DEFAULT_PER_LIGAND_TIMEOUT_SECONDS",
     "INITIAL_INTAKE_PLACEHOLDER",
     "clean_text",
     "coerce_float",
@@ -70,6 +79,7 @@ __all__ = [
     "run_llm_interaction",
     "section_heading",
     "validate_analog_suggestion_result",
+    "validate_docking_param_overrides",
     "validate_docking_recommendation_result",
     "validate_intake_result",
     "validate_site_proposal_result",

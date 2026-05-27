@@ -690,7 +690,9 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
         cfg_seed = docking_cfg.get("seed")
         seed = cfg_seed if cfg_seed is not None else None
 
-    per_ligand_timeout = docking_cfg.get("per_ligand_timeout_seconds", 1800)
+    config_timeout = docking_cfg.get("per_ligand_timeout_seconds", 1800)
+    plan_timeout = getattr(plan, "per_ligand_timeout_seconds", None)
+    per_ligand_timeout = plan_timeout if plan_timeout is not None else config_timeout
     exhaustiveness = plan.exhaustiveness
 
     receptor_paths: dict[str, str] = dict(plan.receptor_paths or {})

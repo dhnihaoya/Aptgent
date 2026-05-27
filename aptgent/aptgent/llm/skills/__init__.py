@@ -31,6 +31,11 @@ from aptgent.llm.skills.base import (
     load_prompt,
     load_skill_metadata,
 )
+from aptgent.llm.skills.docking_params_parse import (
+    DockingParamsParseInput,
+    DockingParamsParseOutput,
+    DockingParamsParseSkill,
+)
 from aptgent.llm.skills.docking_planner import (
     DockingPlannerInput,
     DockingPlannerOutput,
@@ -57,6 +62,7 @@ registry.register(SiteProposalSkill)
 registry.register(AnalogSuggestionSkill)
 registry.register(AnalogParseSkill)
 registry.register(DockingPlannerSkill)
+registry.register(DockingParamsParseSkill)
 registry.register(ReportSkill)
 
 
@@ -74,6 +80,9 @@ __all__ = [
     "AnalogSuggestionOutput",
     "AnalogSuggestionSkill",
     "BaseSkill",
+    "DockingParamsParseInput",
+    "DockingParamsParseOutput",
+    "DockingParamsParseSkill",
     "DockingPlannerInput",
     "DockingPlannerOutput",
     "DockingPlannerSkill",

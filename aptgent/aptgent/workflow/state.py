@@ -102,6 +102,11 @@ class DockingRecommendationContext(BaseModel):
     recommended_time_budget_hours: Optional[int] = None
     recommended_top_k: int = 0
     recommended_exhaustiveness: Optional[int] = None
+    recommended_num_modes: Optional[int] = None
+    recommended_energy_range: Optional[float] = None
+    recommended_per_ligand_timeout_seconds: Optional[int] = None
+    recommended_grid_padding_angstrom: Optional[float] = None
+    recommended_seed: Optional[int] = None
     receptor_path_note: str = ""
     grid_center_note: str = ""
     reason: str = ""

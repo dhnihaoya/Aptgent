@@ -575,17 +575,31 @@ class AnalogCustomPanel(_BaseStructuredPanel):
 
 
 class DockingStrategyPanel(_BaseStructuredPanel):
-    """Phase 1: pick top-K + optional time budget, or skip docking.
+    """Phase 1: full docking parameter form (Vina knobs + skip).
 
-    The top candidates are docked individually; default top-k is 5.
+    This panel is the **single editable source** for every docking parameter
+    the user can change. The downstream :class:`DockingParamPanel` is a
+    read-only confirmation view; advanced edits should happen here.
+
+    LLM Hint and the chat free-text input both call back via
+    :meth:`apply_overrides` to populate the form. The user still has to
+    press Continue to submit.
     """
 
     DEFAULT_CSS = """
     DockingStrategyPanel > .panel-help {
         margin: 1 0;
     }
+    DockingStrategyPanel > .panel-note {
+        color: $text-muted;
+        margin: 0 0 1 0;
+    }
+    DockingStrategyPanel > .section-heading {
+        text-style: bold;
+        margin-top: 1;
+    }
     DockingStrategyPanel > Input {
-        margin: 1 0;
+        margin: 0 0 1 0;
     }
     DockingStrategyPanel Horizontal {
         height: auto;
@@ -595,43 +609,147 @@ class DockingStrategyPanel(_BaseStructuredPanel):
     }
     """
 
+    _FIELD_IDS = {
+        "top_k": "dock-plan-top-k",
+        "exhaustiveness": "dock-plan-exhaustiveness",
+        "num_modes": "dock-plan-num-modes",
+        "energy_range": "dock-plan-energy-range",
+        "grid_padding_angstrom": "dock-plan-padding",
+        "per_ligand_timeout_seconds": "dock-plan-per-ligand-timeout",
+        "time_budget_hours": "dock-plan-time-budget",
+        "seed": "dock-plan-seed",
+    }
+
     def __init__(
         self,
         *,
         machine_profile: dict | None = None,
-        time_budget: int | None = None,
         candidate_count: int = 0,
         default_top_k: int = 5,
+        default_exhaustiveness: int = 8,
+        default_num_modes: int = 9,
+        default_energy_range: float = 3.0,
+        default_grid_padding_angstrom: float = 4.0,
+        default_per_ligand_timeout_seconds: int | None = None,
+        default_time_budget_hours: int | None = None,
+        default_seed: int | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.machine_profile = machine_profile or {}
-        self.time_budget = time_budget
         self.candidate_count = candidate_count
-        self.default_top_k = max(1, min(default_top_k, candidate_count or default_top_k))
+        ceiling = candidate_count if candidate_count else default_top_k
+        self.default_top_k = max(1, min(default_top_k, ceiling))
+        self.default_exhaustiveness = default_exhaustiveness
+        self.default_num_modes = default_num_modes
+        self.default_energy_range = default_energy_range
+        self.default_grid_padding_angstrom = default_grid_padding_angstrom
+        self.default_per_ligand_timeout_seconds = default_per_ligand_timeout_seconds
+        self.default_time_budget_hours = default_time_budget_hours
+        self.default_seed = default_seed
 
     def compose(self) -> ComposeResult:
         yield Static("Docking Selection \u2014 Step 7", classes="panel-title")
         yield Static(
-            "Choose how many top candidates to dock (paper default: top 5). "
-            "Each candidate gets its own 3D structure prepared in the next step.",
+            "All Vina parameters live here. Use natural language in the chat "
+            "input below to fill these fields (e.g. \"top 8, exhaustiveness 32, "
+            "seed 42\"). Click Continue when ready.",
             classes="panel-help",
         )
         yield Static(f"[dim]{self._machine_info()}[/]")
         yield Static(f"Available candidates: [bold]{self.candidate_count}[/bold]")
-        yield Static("Top-K candidates to dock:")
-        top_k_input = Input(id="dock-plan-top-k", placeholder="5")
+
+        yield Static("Core", classes="section-heading")
+        yield Static("Top-K candidates to dock (default: 5):")
+        top_k_input = Input(id=self._FIELD_IDS["top_k"], placeholder="5")
         top_k_input.value = str(self.default_top_k)
         yield top_k_input
-        yield Static("Optional time budget (hours):")
-        budget_input = Input(id="dock-plan-budget", placeholder="e.g. 4")
-        if self.time_budget is not None:
-            budget_input.value = str(self.time_budget)
+
+        yield Static("Exhaustiveness (Vina default 8; 16/32 for generous compute):")
+        exh_input = Input(id=self._FIELD_IDS["exhaustiveness"], placeholder="8")
+        exh_input.value = str(self.default_exhaustiveness)
+        yield exh_input
+
+        yield Static("Vina options", classes="section-heading")
+        yield Static("num_modes (Vina default 9, range 1..20):")
+        nm_input = Input(id=self._FIELD_IDS["num_modes"], placeholder="9")
+        nm_input.value = str(self.default_num_modes)
+        yield nm_input
+
+        yield Static("energy_range kcal/mol (Vina default 3.0):")
+        er_input = Input(id=self._FIELD_IDS["energy_range"], placeholder="3.0")
+        er_input.value = str(self.default_energy_range)
+        yield er_input
+
+        yield Static("Grid padding \u00c5 (default 4.0; box auto-covers aptamer):")
+        pad_input = Input(
+            id=self._FIELD_IDS["grid_padding_angstrom"],
+            placeholder="4.0",
+        )
+        pad_input.value = str(self.default_grid_padding_angstrom)
+        yield pad_input
+
+        yield Static("Per-ligand timeout sec (blank = use config default):")
+        timeout_input = Input(
+            id=self._FIELD_IDS["per_ligand_timeout_seconds"],
+            placeholder="1800",
+        )
+        if self.default_per_ligand_timeout_seconds is not None:
+            timeout_input.value = str(self.default_per_ligand_timeout_seconds)
+        yield timeout_input
+
+        yield Static("Advanced", classes="section-heading")
+        yield Static(
+            "Time budget hours (blank = unset, advisory only):",
+        )
+        budget_input = Input(
+            id=self._FIELD_IDS["time_budget_hours"],
+            placeholder="e.g. 4",
+        )
+        if self.default_time_budget_hours is not None:
+            budget_input.value = str(self.default_time_budget_hours)
         yield budget_input
+
+        yield Static("Seed (blank = let Vina randomize):")
+        seed_input = Input(id=self._FIELD_IDS["seed"], placeholder="optional")
+        if self.default_seed is not None:
+            seed_input.value = str(self.default_seed)
+        yield seed_input
+
         with Horizontal():
             yield Button("Continue", id="btn-dock-plan-continue", variant="primary")
             yield Button("Get LLM Hint", id="btn-dock-plan-llm")
             yield Button("Skip Docking", id="btn-dock-plan-skip", variant="warning")
+
+    def apply_overrides(self, overrides: dict) -> list[str]:
+        """Write *overrides* (already-validated dict) back into the Inputs.
+
+        Returns the list of field IDs (form-style names) that were updated.
+        Unknown keys are silently ignored. The method is safe to call from
+        the Textual UI thread (caller handles scheduling).
+        """
+        applied: list[str] = []
+        for key, widget_id in self._FIELD_IDS.items():
+            if key not in overrides:
+                continue
+            value = overrides[key]
+            if value is None:
+                continue
+            try:
+                input_widget = self.query_one(f"#{widget_id}", Input)
+            except NoMatches:
+                _log.debug(
+                    "DockingStrategyPanel: missing input %s during apply_overrides",
+                    widget_id,
+                    exc_info=True,
+                )
+                continue
+            if isinstance(value, float) and value.is_integer():
+                input_widget.value = str(int(value))
+            else:
+                input_widget.value = str(value)
+            applied.append(key)
+        return applied
 
     def _machine_info(self) -> str:
         if self.machine_profile:
@@ -644,29 +762,80 @@ class DockingStrategyPanel(_BaseStructuredPanel):
 
     def on_mount(self) -> None:
         try:
-            self.query_one("#dock-plan-top-k", Input).focus()
+            self.query_one(f"#{self._FIELD_IDS['top_k']}", Input).focus()
         except NoMatches:
             _log.debug("Focus target missing during on_mount", exc_info=True)
 
+    def _read(self, field: str) -> str:
+        try:
+            return self.query_one(f"#{self._FIELD_IDS[field]}", Input).value.strip()
+        except NoMatches:
+            return ""
+
+    def live_params(self) -> dict:
+        """Return the current live values from each Input widget.
+
+        Must be called from the UI thread. Used by the NL-parse worker to
+        snapshot the form state before the worker lambda executes off-thread.
+        """
+        def _int(val: str) -> int | None:
+            try:
+                return int(val) if val else None
+            except ValueError:
+                return None
+
+        def _float(val: str) -> float | None:
+            try:
+                return float(val) if val else None
+            except ValueError:
+                return None
+
+        return {
+            "top_k": _int(self._read("top_k")),
+            "exhaustiveness": _int(self._read("exhaustiveness")),
+            "num_modes": _int(self._read("num_modes")),
+            "energy_range": _float(self._read("energy_range")),
+            "grid_padding_angstrom": _float(self._read("grid_padding_angstrom")),
+            "per_ligand_timeout_seconds": _int(
+                self._read("per_ligand_timeout_seconds")
+            ),
+            "time_budget_hours": _int(self._read("time_budget_hours")),
+            "seed": _int(self._read("seed")),
+        }
+
+    def _collect_payload(self) -> dict:
+        def _opt(field: str) -> str | None:
+            v = self._read(field)
+            return v if v else None
+
+        return {
+            "phase": "strategy_submitted",
+            "top_k": self._read("top_k") or str(self.default_top_k),
+            "exhaustiveness": self._read("exhaustiveness")
+            or str(self.default_exhaustiveness),
+            "num_modes": self._read("num_modes") or str(self.default_num_modes),
+            "energy_range": self._read("energy_range")
+            or str(self.default_energy_range),
+            "grid_padding_angstrom": self._read("grid_padding_angstrom")
+            or str(self.default_grid_padding_angstrom),
+            "per_ligand_timeout_seconds": _opt("per_ligand_timeout_seconds"),
+            "time_budget_hours": _opt("time_budget_hours"),
+            "seed": _opt("seed"),
+        }
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        budget = self.query_one("#dock-plan-budget", Input).value.strip()
-        top_k = self.query_one("#dock-plan-top-k", Input).value.strip() or str(self.default_top_k)
         if event.button.id == "btn-dock-plan-continue":
             self.post_message(
                 StructuredInputSubmitted(
                     Step.DOCKING_SELECTION,
-                    {
-                        "phase": "topk_selected",
-                        "top_k": top_k,
-                        "time_budget": budget,
-                    },
+                    self._collect_payload(),
                 )
             )
         elif event.button.id == "btn-dock-plan-llm":
             self.post_message(
                 StructuredActionRequested(
                     Step.DOCKING_SELECTION,
-                    f"llm-hint:{top_k}:{budget}",
+                    "llm-hint",
                 )
             )
         elif event.button.id == "btn-dock-plan-skip":
@@ -894,12 +1063,18 @@ class DockingRNAComposerProgressPanel(_BaseStructuredPanel):
 
 
 class DockingParamPanel(_BaseStructuredPanel):
-    """Final docking parameter confirmation.
+    """Final docking confirmation (read-only).
 
-    Shows the per-candidate receptor + box overview (computed deterministically
-    upstream), lets the user tweak the global exhaustiveness and box padding,
-    and offers a "Cover whole aptamer" button that re-derives every box from
-    the receptor geometry.
+    By the time this panel is shown, every Vina knob was already set in
+    Phase 1 (:class:`DockingStrategyPanel`) and the per-candidate
+    receptors + search boxes are prepared. This view just summarises the
+    plan and offers:
+
+    - **Cover whole aptamer (recompute boxes)** \u2014 re-derive every box from
+      the receptor geometry using ``grid_padding_angstrom`` from the plan.
+    - **Submit & Continue** \u2014 advance to the docking run.
+
+    No numeric edits happen here; jump back to Phase 1 to change params.
     """
 
     DEFAULT_CSS = """
@@ -910,18 +1085,14 @@ class DockingParamPanel(_BaseStructuredPanel):
         color: $text-muted;
         margin-bottom: 1;
     }
-    DockingParamPanel > Input {
-        margin-bottom: 1;
+    DockingParamPanel > .param-summary {
+        margin: 1 0;
     }
     DockingParamPanel Horizontal {
         height: auto;
     }
-    DockingParamPanel Horizontal > Input {
-        width: 1fr;
+    DockingParamPanel Horizontal > Button {
         margin-right: 1;
-    }
-    DockingParamPanel > Button {
-        margin-top: 1;
     }
     DockingParamPanel > .receptor-summary {
         margin: 1 0;
@@ -942,6 +1113,11 @@ class DockingParamPanel(_BaseStructuredPanel):
         receptor_paths: dict[str, str] | None = None,
         grid_boxes: dict[str, dict[str, list[float]]] | None = None,
         grid_padding_angstrom: float = 4.0,
+        num_modes: int = 9,
+        energy_range: float = 3.0,
+        per_ligand_timeout_seconds: int | None = None,
+        seed: int | None = None,
+        top_k: int | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -954,37 +1130,29 @@ class DockingParamPanel(_BaseStructuredPanel):
         self.receptor_paths = dict(receptor_paths or {})
         self.grid_boxes = dict(grid_boxes or {})
         self.grid_padding_angstrom = grid_padding_angstrom
+        self.num_modes = num_modes
+        self.energy_range = energy_range
+        self.per_ligand_timeout_seconds = per_ligand_timeout_seconds
+        self.seed = seed
+        self.top_k = top_k or len(self.receptor_paths)
 
     def compose(self) -> ComposeResult:
-        yield Static("Docking Configuration", classes="panel-title")
+        yield Static("Docking Configuration \u2014 Confirmation", classes="panel-title")
         yield Static(
-            "AutoDock Vina with default num_modes (9) and energy_range (3.0); "
-            "each candidate uses its own receptor PDBQT and a search box that "
-            "covers the whole aptamer.",
+            "All parameters were already set in Step 7 / Phase 1. Review the "
+            "summary below and submit, or press \"Cover whole aptamer\" to "
+            "recompute every search box from the receptor geometry. To change "
+            "any number, jump back to Phase 1.",
             classes="panel-help",
         )
         if self.recommendation_reason:
             yield Static(self.recommendation_reason, classes="panel-note")
         yield Static(f"[dim]{self._machine_info()}[/]")
 
-        yield Static("Time budget (hours):")
-        budget_input = Input(id="dock-time-budget", placeholder="e.g. 4")
-        if self.time_budget is not None:
-            budget_input.value = str(self.time_budget)
-        yield budget_input
+        yield Static(self._param_summary(), classes="param-summary")
 
         yield Static(f"Per-receptor structures ({len(self.receptor_paths)} loaded)")
         yield Static(self._receptor_summary(), classes="receptor-summary")
-
-        yield Static("Exhaustiveness (Vina default 8; 16/32 if compute is generous):")
-        exh_input = Input(id="dock-exhaustiveness", placeholder="8")
-        exh_input.value = str(self.recommended_exhaustiveness)
-        yield exh_input
-
-        yield Static("Grid padding (\u00c5):")
-        pad_input = Input(id="dock-padding", placeholder="4.0")
-        pad_input.value = str(self.grid_padding_angstrom)
-        yield pad_input
 
         with Horizontal():
             yield Button(
@@ -997,6 +1165,29 @@ class DockingParamPanel(_BaseStructuredPanel):
                 id="btn-submit-dock",
                 variant="success",
             )
+
+    def _param_summary(self) -> str:
+        timeout_text = (
+            f"{self.per_ligand_timeout_seconds} s"
+            if self.per_ligand_timeout_seconds is not None
+            else "config default"
+        )
+        seed_text = (
+            str(self.seed) if self.seed is not None else "unset (Vina random)"
+        )
+        budget_text = (
+            f"{self.time_budget} h" if self.time_budget is not None else "not set"
+        )
+        return (
+            f"\u2022 top_k: [bold]{self.top_k}[/]\n"
+            f"\u2022 exhaustiveness: [bold]{self.recommended_exhaustiveness}[/]\n"
+            f"\u2022 num_modes: [bold]{self.num_modes}[/]\n"
+            f"\u2022 energy_range: [bold]{self.energy_range}[/] kcal/mol\n"
+            f"\u2022 grid padding: [bold]{self.grid_padding_angstrom}[/] \u00c5\n"
+            f"\u2022 per-ligand timeout: [bold]{timeout_text}[/]\n"
+            f"\u2022 time budget (advisory): [bold]{budget_text}[/]\n"
+            f"\u2022 seed: [bold]{seed_text}[/]"
+        )
 
     def _receptor_summary(self) -> str:
         if not self.receptor_paths:
@@ -1039,52 +1230,33 @@ class DockingParamPanel(_BaseStructuredPanel):
 
     def on_mount(self) -> None:
         try:
-            self.query_one("#dock-time-budget", Input).focus()
+            self.query_one("#btn-submit-dock", Button).focus()
         except NoMatches:
             _log.debug("Focus target missing during on_mount", exc_info=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-submit-dock":
-            data = self._collect_data()
             self.post_message(
-                StructuredInputSubmitted(Step.DOCKING_SELECTION, data)
+                StructuredInputSubmitted(Step.DOCKING_SELECTION, self._plan_payload())
             )
         elif event.button.id == "btn-cover-aptamer":
-            try:
-                padding = float(self.query_one("#dock-padding", Input).value.strip() or "4.0")
-            except (ValueError, AttributeError):
-                padding = self.grid_padding_angstrom
             self.post_message(
                 StructuredActionRequested(
                     Step.DOCKING_SELECTION,
-                    f"cover-aptamer:{padding}",
+                    f"cover-aptamer:{self.grid_padding_angstrom}",
                 )
             )
 
-    def _collect_data(self) -> dict:
-        def iv(widget_id: str) -> int | None:
-            try:
-                return int(self.query_one(f"#{widget_id}", Input).value.strip())
-            except (ValueError, AttributeError):
-                return None
-
-        def fv(widget_id: str) -> float | None:
-            try:
-                return float(self.query_one(f"#{widget_id}", Input).value.strip())
-            except (ValueError, AttributeError):
-                return None
-
-        budget_str = self.query_one("#dock-time-budget", Input).value.strip()
-        exh_raw = iv("dock-exhaustiveness")
-        if exh_raw is None or exh_raw < 1:
-            exh_raw = self.recommended_exhaustiveness
-        padding = fv("dock-padding") or self.grid_padding_angstrom
-
+    def _plan_payload(self) -> dict:
         return {
             "phase": "param_submitted",
-            "time_budget": int(budget_str) if budget_str.isdigit() else self.time_budget,
-            "exhaustiveness": exh_raw,
-            "grid_padding_angstrom": padding,
+            "time_budget": self.time_budget,
+            "exhaustiveness": self.recommended_exhaustiveness,
+            "grid_padding_angstrom": self.grid_padding_angstrom,
+            "num_modes": self.num_modes,
+            "energy_range": self.energy_range,
+            "per_ligand_timeout_seconds": self.per_ligand_timeout_seconds,
+            "seed": self.seed,
             "recommendation_reason": self.recommendation_reason,
             "uses_recommendation": self.mode == "llm",
             "accepted_recommendation": self.accepted_recommendation,
