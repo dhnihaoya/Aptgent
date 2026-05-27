@@ -90,30 +90,6 @@ class DockingPlannerSkill(BaseSkill):
             payload["target_name"] = target_name
         return self.invoke(payload).raw
 
-    def plan_stream(
-        self,
-        candidate_count: int,
-        machine_profile: dict[str, Any],
-        time_budget_hours: int | None,
-        *,
-        computed_top_k: int | None = None,
-        computed_time_budget_hours: int | None = None,
-        target_smiles: str | None = None,
-        target_name: str | None = None,
-        per_ligand_timeout_default_seconds: int | None = None,
-    ):
-        user = self._build_user_message(
-            candidate_count,
-            machine_profile,
-            time_budget_hours,
-            computed_top_k,
-            computed_time_budget_hours,
-            target_smiles,
-            target_name,
-            per_ligand_timeout_default_seconds,
-        )
-        return self.client.chat_json_stream(self.system_prompt, user)
-
     def explain_plan_stream(
         self,
         candidate_count: int,

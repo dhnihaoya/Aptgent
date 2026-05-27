@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import subprocess
 import tempfile
@@ -12,8 +11,6 @@ from typing import Any, Callable
 from aptgent.domain.models import CandidateSequence, PredictionResult, TargetMolecule
 from aptgent.predictor_runtime.paths import RUNNER_MODULE, default_model_dir
 from aptgent.protocol.subprocess_stream import SubprocessSession
-
-_log = logging.getLogger(__name__)
 
 
 class EnsembleAdapter:

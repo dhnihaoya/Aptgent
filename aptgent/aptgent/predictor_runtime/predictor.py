@@ -13,19 +13,17 @@ import numpy as np
 from aptgent.predictor_runtime.features import MER_K_MAP, build_feature_vector
 from aptgent.predictor_runtime.paths import default_model_dir
 
-_TORCH_AVAILABLE = False
 _nn = None
 
 
 def _ensure_torch():
-    global _TORCH_AVAILABLE, _nn
+    global _nn
     if _nn is None:
         try:
             import torch
             import torch.nn as nn
 
             _nn = nn
-            _TORCH_AVAILABLE = True
         except ImportError as exc:
             raise ImportError(
                 "PyTorch is required for loading RNN/biRNN models. "
@@ -74,7 +72,8 @@ class SimpleRNN:
                 with torch.no_grad():
                     if not isinstance(X, np.ndarray):
                         X = np.asarray(X, dtype=np.float32)
-                    tensor = torch.FloatTensor(X)
+                    device = next(self.parameters()).device
+                    tensor = torch.as_tensor(X, dtype=torch.float32, device=device)
                     if tensor.dim() == 1:
                         tensor = tensor.unsqueeze(0)
                     out = self.forward(tensor).cpu().numpy()

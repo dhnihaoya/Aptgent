@@ -81,7 +81,7 @@ class Persistence:
             [d.name for d in self.runs_dir.iterdir() if d.is_dir() and (d / "state.json").exists()]
         )
 
-    def write_artifact(self, run_id: str, filename: str, content: Any, mime_type: str = "application/json") -> Path:
+    def write_artifact(self, run_id: str, filename: str, content: Any) -> Path:
         artifact_dir = self.get_artifact_dir(run_id)
         path = artifact_dir / filename
         if isinstance(content, (dict, list)):

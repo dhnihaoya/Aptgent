@@ -5,7 +5,7 @@ All events are written as one JSON object per line to an events.jsonl file.
 """
 from __future__ import annotations
 
-import os
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -94,14 +94,30 @@ class EventReader:
 
 
 def read_last_event(path: Path) -> dict[str, Any] | None:
-    """Read the last complete event from a JSONL file."""
-    if not path.exists() or path.stat().st_size == 0:
+    """Read the last complete event from a JSONL file.
+
+    Avoids reading the entire file by seeking near the end and scanning
+    backwards for the last complete JSONL line.
+    """
+    if not path.exists():
         return None
-    last = None
+    size = path.stat().st_size
+    if size == 0:
+        return None
     try:
+        chunk_size = min(size, 4096)
         with open(path, "r", encoding="utf-8") as f:
-            for obj in iter_jsonl(f):
-                last = obj
+            f.seek(size - chunk_size)
+            text = f.read()
+        lines = text.split("\n")
+        for line in reversed(lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                return json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+        return None
     except OSError:
         return None
-    return last

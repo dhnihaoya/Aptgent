@@ -125,6 +125,22 @@ def _check_predictor_deps() -> dict[str, Any]:
     return {"status": "ok", "available": found}
 
 
+def _check_url(url: str) -> dict[str, Any]:
+    """Check if a URL is reachable via a HEAD request."""
+    import urllib.request
+    import urllib.error
+    try:
+        req = urllib.request.Request(url, method="HEAD")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return {"status": "ok", "url": url, "http_status": resp.status}
+    except Exception as exc:
+        return {
+            "status": "unreachable",
+            "url": url,
+            "hint": f"Could not reach {url}: {exc}",
+        }
+
+
 def _check_env_vars() -> dict[str, str | None]:
     keys = [
         "APTGENT_HOME",
@@ -160,6 +176,20 @@ def run_doctor() -> int:
     # Vina
     vina_cmd = tools.get("docking", {}).get("command", "vina")
     checks.append(("AutoDock Vina", _check_binary(vina_cmd)))
+
+    # Open Babel (receptor prep)
+    obabel_cmd = tools.get("receptor_prep", {}).get("obabel", "obabel")
+    checks.append(("Open Babel", _check_binary(obabel_cmd)))
+
+    # wget (PDB download fallback)
+    wget_cmd = tools.get("pdb_analysis", {}).get("command", "wget")
+    checks.append(("wget (PDB download)", _check_binary(wget_cmd)))
+
+    # RNAComposer reachability
+    rnacomposer_url = tools.get("rnacomposer", {}).get(
+        "base_url", "https://rnacomposer.cs.put.poznan.pl"
+    )
+    checks.append(("RNAComposer", _check_url(rnacomposer_url)))
 
     # Predictor models
     model_dir = tools.get("predictor", {}).get("model_dir")

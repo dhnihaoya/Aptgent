@@ -130,10 +130,3 @@ class WorkflowEngine:
             import logging
             logging.getLogger(__name__).warning("Failed to write run card", exc_info=True)
         return state
-
-    def fail(self, state: RunState, error: str) -> RunState:
-        state.status = Status.ERROR
-        state.error_info = {"message": error}
-        self.persistence.save(state)
-        self.persistence.append_log(state.run_id, {"event": "error", "message": error})
-        return state

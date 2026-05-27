@@ -233,7 +233,6 @@ def export_final_report_artifacts(
         state.run_id,
         "final_report.md",
         markdown,
-        mime_type="text/markdown",
     )
     sidecar = {
         "run_id": state.run_id,

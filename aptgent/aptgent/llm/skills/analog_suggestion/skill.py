@@ -32,15 +32,8 @@ class AnalogSuggestionSkill(BaseSkill):
     def suggest_events(self, target: TargetMolecule):
         return self.invoke_json_events(target, enable_thinking=False)
 
-    # Legacy aliases.
     def suggest(self, target: TargetMolecule) -> dict[str, Any]:
         return self.invoke(target).raw
-
-    def suggest_stream(self, target: TargetMolecule):
-        return self.invoke_stream(target)
-
-    def explain_suggest_stream(self, target: TargetMolecule):
-        return self.explain_stream(target)
 
 
 AnalogSuggestionSkill._bind_directory(_SKILL_DIR)

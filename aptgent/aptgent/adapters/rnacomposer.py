@@ -24,7 +24,6 @@ the user; they can then fall back to manual upload mode.
 from __future__ import annotations
 
 import html
-import logging
 import re
 import time
 import urllib.parse
@@ -34,8 +33,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from aptgent.adapters.structure_services import TertiaryStructureJob
-
-_log = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = "https://rnacomposer.cs.put.poznan.pl"
 _INTERACTIVE_PATH = "/"

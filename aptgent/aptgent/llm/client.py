@@ -547,9 +547,6 @@ class LLMClient:
                 response="".join(chunks)[:500] if chunks else None,
             )
 
-    # Backward compat alias
-    chat_stream = chat_json_stream
-
     def chat_text_stream(
         self,
         system_prompt: str,

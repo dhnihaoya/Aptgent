@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from aptgent.domain.enums import Step
 
@@ -18,6 +18,20 @@ class Mutation(BaseModel):
     position: int  # 0-based index
     original: str
     mutated: str
+
+    @field_validator("position")
+    @classmethod
+    def _position_non_negative(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("position must be non-negative")
+        return v
+
+    @field_validator("original", "mutated")
+    @classmethod
+    def _valid_base(cls, v: str) -> str:
+        if len(v) != 1 or v.upper() not in {"A", "T", "G", "C", "U"}:
+            raise ValueError(f"invalid nucleotide base: {v!r}")
+        return v
 
 
 class CandidateSequence(BaseModel):
@@ -84,6 +98,20 @@ class GridBox(BaseModel):
 
     center: list[float]  # [x, y, z]
     size: list[float]    # [x, y, z]
+
+    @field_validator("center", "size")
+    @classmethod
+    def _xyz_length(cls, v: list[float]) -> list[float]:
+        if len(v) != 3:
+            raise ValueError("must contain exactly 3 values [x, y, z]")
+        return v
+
+    @field_validator("size")
+    @classmethod
+    def _positive_size(cls, v: list[float]) -> list[float]:
+        if any(s <= 0 for s in v):
+            raise ValueError("size values must be positive")
+        return v
 
 
 class DockingPlan(BaseModel):

@@ -6,7 +6,6 @@ import hashlib
 import importlib.metadata
 import json
 import logging
-import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path

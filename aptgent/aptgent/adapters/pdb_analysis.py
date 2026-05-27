@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import math
 import re
 import shutil
@@ -16,8 +15,6 @@ from aptgent.domain.models import (
     PdbLigandCandidate,
     SecondaryStructure,
 )
-
-_log = logging.getLogger(__name__)
 
 _PDB_ID = re.compile(r"\b([0-9][A-Za-z0-9]{3})\b")
 _NUCLEOTIDE_CODES = {

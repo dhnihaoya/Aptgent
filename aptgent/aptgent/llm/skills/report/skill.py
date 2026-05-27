@@ -35,12 +35,6 @@ class ReportSkill(BaseSkill):
     ) -> dict[str, Any]:
         return self.invoke(recommendations).raw
 
-    def summarize_stream(self, recommendations: list[dict[str, Any]]):
-        return self.invoke_stream(recommendations)
-
-    def explain_summarize_stream(self, recommendations: list[dict[str, Any]]):
-        return self.explain_stream(recommendations)
-
     def write_markdown_stream(self, report_context: dict[str, Any]):
         return self.explain_stream(report_context)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from itertools import product
+from functools import lru_cache
 
 import numpy as np
 from rdkit import Chem
@@ -14,10 +15,11 @@ def rna_to_dna(sequence: str) -> str:
     return sequence.replace("U", "T").replace("u", "t")
 
 
-def _get_all_kmers(k: int) -> list[str]:
+@lru_cache(maxsize=4)
+def _get_all_kmers(k: int) -> tuple[str, ...]:
     """Return all possible k-mers in lexicographic order."""
     bases = ["A", "T", "G", "C"]
-    return ["".join(part) for part in product(bases, repeat=k)]
+    return tuple("".join(part) for part in product(bases, repeat=k))
 
 
 def kmer_frequency(sequence: str, k: int) -> list[float]:

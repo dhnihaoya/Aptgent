@@ -7,7 +7,6 @@ args = [
 ]
 
 [docking]
-engine = "vina"
 command = "${APTGENT_VINA:-vina}"
 exhaustiveness = 8
 num_modes = 9
