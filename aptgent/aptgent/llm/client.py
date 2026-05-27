@@ -254,17 +254,36 @@ class LLMClient:
         min_pat: int = _REPETITION_MIN_PATTERN,
         threshold: int = _REPETITION_THRESHOLD,
     ) -> bool:
-        """Return True if the tail of *buf* contains a repeating pattern."""
+        """Return True if the tail of *buf* contains a repeating pattern.
+
+        Uses prefix-hash pre-computation so each substring comparison is O(1)
+        instead of O(pat_len), bringing overall complexity from O(n^2) to
+        O(n log n).
+        """
         tail = buf[-window:] if len(buf) > window else buf
         if len(tail) < min_pat * threshold:
             return False
-        for pat_len in range(min_pat, len(tail) // threshold + 1):
-            pattern = tail[-pat_len:]
+
+        _BASE = 257
+        _MOD = (1 << 61) - 1
+
+        n = len(tail)
+        ph = [0] * (n + 1)
+        bp = [1] * (n + 1)
+        for i, ch in enumerate(tail):
+            ph[i + 1] = (ph[i] * _BASE + ord(ch)) % _MOD
+            bp[i + 1] = (bp[i] * _BASE) % _MOD
+
+        def _hash(lo: int, hi: int) -> int:
+            return (ph[hi] - ph[lo] * bp[hi - lo]) % _MOD
+
+        max_pat = n // threshold
+        for pat_len in range(min_pat, max_pat + 1):
+            pat_hash = _hash(n - pat_len, n)
             count = 0
-            pos = len(tail) - pat_len
+            pos = n - pat_len
             while pos >= 0:
-                candidate = tail[pos:pos + pat_len]
-                if candidate == pattern:
+                if _hash(pos, pos + pat_len) == pat_hash:
                     count += 1
                     if count >= threshold:
                         return True
