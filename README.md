@@ -73,6 +73,7 @@ It installs:
 - Python 3.10
 - ViennaRNA / `RNAfold`
 - AutoDock Vina / `vina`
+- Open Babel / `obabel`
 - RDKit
 - NumPy, SciPy, pandas, scikit-learn, XGBoost, PyTorch
 - Textual, Pydantic, httpx, Biopython, Meeko, psutil
@@ -142,6 +143,7 @@ aptgent run-job <run_id> <step>
 Supported detached job steps are:
 
 - `candidate_enumeration`
+- `specificity_filter`
 - `docking_run`
 
 ## User Flow
@@ -187,7 +189,7 @@ progress_every = 10000
 mutation_batch_timeout_seconds = 0
 
 [docking]
-enabled = false  # not yet wired; will be honored once Stage 4 lands
+enabled = true
 per_ligand_timeout_seconds = 1800
 
 [paths]
@@ -220,13 +222,13 @@ The default provider is OpenAI-compatible and points at Zhipu GLM:
 [provider.openai]
 base_url = "https://open.bigmodel.cn/api/paas/v4"
 model = "glm-5.1"
-fast_model = "glm-4.7-flashx"
+fast_model = "glm-5.1"
 api_key_env = "GLM_API_KEY"
 temperature = 1
 max_tokens = 65536
 ```
 
-`LLMClient` uses `glm-5.1` (flagship) for text output and `glm-4.7-flashx` (fast) for structured JSON calls. It resolves the API key as environment variable first, then config-file fallback. Prefer environment variables:
+`LLMClient` uses `glm-5.1` for both text output and structured JSON calls. It resolves the API key as environment variable first, then config-file fallback. Prefer environment variables:
 
 ```bash
 export GLM_API_KEY=...
