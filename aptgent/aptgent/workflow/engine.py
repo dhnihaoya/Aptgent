@@ -20,6 +20,12 @@ TRANSITIONS: dict[Step, list[Step]] = {
     Step.FINAL_REPORT: [],
 }
 
+_STEP_ORDER: list[Step] = [
+    Step.INTAKE, Step.SECONDARY_STRUCTURE, Step.SITE_PROPOSAL,
+    Step.CANDIDATE_ENUMERATION, Step.PRIMARY_SCORING, Step.SPECIFICITY_FILTER,
+    Step.DOCKING_SELECTION, Step.DOCKING_RUN, Step.SPATIAL_RANK, Step.FINAL_REPORT,
+]
+
 
 class WorkflowEngine:
     def __init__(
@@ -48,6 +54,10 @@ class WorkflowEngine:
         next_step: Step,
         metadata: Optional[dict[str, Any]] = None,
     ) -> RunState:
+        if state.status in (Status.COMPLETED, Status.ERROR):
+            raise ValueError(
+                f"Cannot transition from terminal status {state.status.value}"
+            )
         allowed = TRANSITIONS.get(state.current_step, [])
         if next_step not in allowed:
             raise ValueError(
@@ -75,6 +85,12 @@ class WorkflowEngine:
         step: Step,
         metadata: Optional[dict[str, Any]] = None,
     ) -> RunState:
+        current_idx = _STEP_ORDER.index(state.current_step)
+        target_idx = _STEP_ORDER.index(step)
+        if target_idx > current_idx:
+            raise ValueError(
+                f"Cannot rewind forward from {state.current_step.value} to {step.value}"
+            )
         state.current_step = step
         state.status = Status.RUNNING
         state.error_info = None

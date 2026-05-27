@@ -115,6 +115,14 @@ class DockingRunHandler(JobAttachMixin, StepHandler):
         self.screen.app.reload_current_state(state.run_id)
         state = self.screen.app.current_state
 
+        if summary.get("cancelled"):
+            self.screen.add_system_message("Docking was cancelled.", "warning-text")
+            self.screen.rewind_to_step(
+                Step.DOCKING_SELECTION,
+                metadata={"reason": "docking_cancelled"},
+            )
+            return
+
         results = state.docking_results
         lines = [f"Docking complete. {len(results)} results:"]
         sorted_results = sorted(results, key=lambda r: r.docking_score or 0.0)
@@ -125,9 +133,6 @@ class DockingRunHandler(JobAttachMixin, StepHandler):
             lines.append(f"  ... and {len(sorted_results) - 10} more")
 
         self.screen.add_system_message("\n".join(lines))
-
-        if summary.get("cancelled"):
-            self.screen.add_system_message("Docking was cancelled.", "warning-text")
 
         ns = next_step(Step.DOCKING_RUN)
         if ns:

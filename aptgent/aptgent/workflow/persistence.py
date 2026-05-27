@@ -48,6 +48,8 @@ class Persistence:
 
     def init_run(self, run_id: str) -> RunState:
         run_dir = self._run_dir(run_id)
+        if (run_dir / "state.json").exists():
+            raise ValueError(f"Run '{run_id}' already exists")
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "artifacts").mkdir(exist_ok=True)
         (run_dir / "logs").mkdir(exist_ok=True)

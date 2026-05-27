@@ -6,6 +6,7 @@ All events are written as one JSON object per line to an events.jsonl file.
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -24,9 +25,11 @@ class EventWriter:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._file = open(path, "a", encoding="utf-8")
         self._emitter = JsonlEmitter(self._file)
+        self._lock = threading.Lock()
 
     def _write(self, obj: dict[str, Any]) -> None:
-        self._emitter.emit(obj)
+        with self._lock:
+            self._emitter.emit(obj)
 
     def write_started(self, *, pid: int, extra: dict[str, Any] | None = None) -> None:
         evt: dict[str, Any] = {"type": "started", "ts": _now_ts(), "pid": pid}

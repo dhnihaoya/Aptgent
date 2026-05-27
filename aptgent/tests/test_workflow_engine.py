@@ -79,3 +79,36 @@ def test_workflow_engine_rewind_to_previous_step(tmp_path):
     log_path = persistence.run_dir("rewind_me") / "logs" / "workflow.jsonl"
     log_events = [json.loads(line)["event"] for line in log_path.read_text().splitlines()]
     assert "rewind" in log_events
+
+
+def test_rewind_forward_raises(tmp_path):
+    persistence = Persistence(runs_dir=tmp_path)
+    engine = WorkflowEngine(persistence)
+    state = engine.create_run("rewind_fwd")
+    state.current_step = Step.INTAKE
+    persistence.save(state)
+
+    with pytest.raises(ValueError, match="Cannot rewind forward"):
+        engine.rewind_to(state, Step.FINAL_REPORT)
+
+
+def test_transition_from_completed_raises(tmp_path):
+    persistence = Persistence(runs_dir=tmp_path)
+    engine = WorkflowEngine(persistence)
+    state = engine.create_run("done_run")
+    state.status = Status.COMPLETED
+    persistence.save(state)
+
+    with pytest.raises(ValueError, match="terminal status"):
+        engine.transition_to(state, Step.SECONDARY_STRUCTURE)
+
+
+def test_transition_from_error_raises(tmp_path):
+    persistence = Persistence(runs_dir=tmp_path)
+    engine = WorkflowEngine(persistence)
+    state = engine.create_run("err_run")
+    state.status = Status.ERROR
+    persistence.save(state)
+
+    with pytest.raises(ValueError, match="terminal status"):
+        engine.transition_to(state, Step.SECONDARY_STRUCTURE)

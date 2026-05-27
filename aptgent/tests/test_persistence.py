@@ -60,6 +60,14 @@ def test_load_corrupted_run_raises(tmp_path):
         persistence.load("corrupted")
 
 
+def test_init_run_rejects_existing_run(tmp_path):
+    persistence = Persistence(runs_dir=tmp_path)
+    persistence.init_run("existing")
+
+    with pytest.raises(ValueError, match="already exists"):
+        persistence.init_run("existing")
+
+
 def test_list_runs_returns_sorted_ids(tmp_path):
     persistence = Persistence(runs_dir=tmp_path)
     persistence.init_run("run_b")

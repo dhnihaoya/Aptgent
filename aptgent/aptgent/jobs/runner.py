@@ -117,13 +117,11 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
     seq: str = get_sequence(state) or ""
     sites = state.confirmed_mutation_sites
     if not sites:
-        writer.write_error(message="No mutation sites configured")
-        return
+        raise RuntimeError("No mutation sites configured")
 
     target = state.target_molecule
     if not target or not target.smiles:
-        writer.write_error(message="Target molecule/SMILES missing")
-        return
+        raise RuntimeError("Target molecule/SMILES missing")
 
     top_k_keep = enum_cfg.get("top_k_keep", 500)
     sub_batch_size = enum_cfg.get("sub_batch_size", 65536)
@@ -218,8 +216,7 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
     try:
         adapter = create_prediction_adapter(tools_config)
         if not hasattr(adapter, "predict_mutation_batch"):
-            writer.write_error(message="Prediction adapter does not support predict_mutation_batch")
-            return
+            raise RuntimeError("Prediction adapter does not support predict_mutation_batch")
 
         def _on_progress(done: int, total: int, info: dict) -> None:
             writer.write_progress(done=done, total=total, extra={"binding": total_binding})
@@ -268,8 +265,7 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
             adapter_summary = result_summary
         file_handle.flush()
     except Exception as exc:
-        writer.write_error(message=f"Enumeration failed: {exc}")
-        return
+        raise RuntimeError(f"Enumeration failed: {exc}") from exc
     finally:
         stop_cancel_poller.set()
         cancel_poller.join(timeout=2)
@@ -372,11 +368,9 @@ def _run_specificity(writer: EventWriter, state: Any, persistence: Persistence) 
     analogs = list(state.analogs)
 
     if not candidates:
-        writer.write_error(message="No candidates available for specificity filter")
-        return
+        raise RuntimeError("No candidates available for specificity filter")
     if not target or not target.smiles:
-        writer.write_error(message="Target molecule/SMILES missing")
-        return
+        raise RuntimeError("Target molecule/SMILES missing")
 
     valid_analogs = [a for a in analogs if a.smiles]
     if not valid_analogs:
@@ -547,15 +541,11 @@ def _run_specificity(writer: EventWriter, state: Any, persistence: Persistence) 
                 file_handle.write(json.dumps({"meta": meta}, ensure_ascii=False) + "\n")
                 file_handle.flush()
         except OSError as exc:
-            writer.write_error(message=f"Cannot open specificity artifact: {exc}")
-            return
+            raise RuntimeError(f"Cannot open specificity artifact: {exc}") from exc
 
         adapter = create_prediction_adapter(tools_config)
         if not hasattr(adapter, "predict_specificity_batch"):
-            writer.write_error(
-                message="Prediction adapter does not support predict_specificity_batch"
-            )
-            return
+            raise RuntimeError("Prediction adapter does not support predict_specificity_batch")
 
         adapter.predict_specificity_batch(
             candidates=candidates,
@@ -568,8 +558,7 @@ def _run_specificity(writer: EventWriter, state: Any, persistence: Persistence) 
             skip_pairs=skip_pairs or None,
         )
     except Exception as exc:
-        writer.write_error(message=f"Specificity filter failed: {exc}")
-        return
+        raise RuntimeError(f"Specificity filter failed: {exc}") from exc
     finally:
         stop_cancel_poller.set()
         cancel_poller.join(timeout=2)
@@ -671,8 +660,7 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
         return
 
     if not target or not target.smiles:
-        writer.write_error(message="Target molecule/SMILES missing")
-        return
+        raise RuntimeError("Target molecule/SMILES missing")
 
     ens_preds = [p for p in state.predictions if p.model_name == "ensemble"]
     sorted_preds = sorted(ens_preds, key=lambda item: item.probability or 0.0, reverse=True)
@@ -768,8 +756,7 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
                     },
                 )
     except Exception as exc:
-        writer.write_error(message=f"Docking failed: {exc}")
-        return
+        raise RuntimeError(f"Docking failed: {exc}") from exc
     finally:
         stop_cancel_poller.set()
         cancel_poller.join(timeout=2)
