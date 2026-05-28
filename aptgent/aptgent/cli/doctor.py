@@ -16,7 +16,7 @@ _CONDA_ROOTS = [
     Path("/opt/anaconda3/envs"),
 ]
 
-_TOOL_ENVS = ["aptgent", "aptgent-tools"]
+_TOOL_ENVS = ["aptgent"]
 
 
 def _search_conda_binary(name: str) -> str | None:
