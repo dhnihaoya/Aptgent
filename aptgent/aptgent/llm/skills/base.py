@@ -214,11 +214,18 @@ class BaseSkill:
         self, payload: Any, *, should_cancel=None, enable_thinking: bool = True,
     ):
         user = self.build_user_message(payload)
-        yield from self.client.chat_json_events(
+        gen = self.client.chat_json_events(
             self.system_prompt, user,
             should_cancel=should_cancel,
             enable_thinking=enable_thinking,
         )
+        for event in gen:
+            if event.get("type") == "result" and self.output_schema is not None:
+                model = self.output_schema.model_validate(event["value"])
+                yield event
+                yield {"type": "validated", "value": model}
+            else:
+                yield event
 
     def invoke_stream(self, payload: Any) -> Generator[str, None, None]:
         user = self.build_user_message(payload)

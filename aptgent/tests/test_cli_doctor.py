@@ -139,11 +139,11 @@ def test_check_url_unreachable(monkeypatch):
 
 
 def test_check_env_vars(monkeypatch):
-    monkeypatch.setenv("APTGENT_HOME", "/tmp/aptgent")
+    monkeypatch.setenv("APTGENT_RUNS_DIR", "/tmp/aptgent-runs")
     result = _check_env_vars()
     assert isinstance(result, dict)
-    assert result["APTGENT_HOME"] == "/tmp/aptgent"
-    assert "APTGENT_RUNS_DIR" in result
+    assert result["APTGENT_RUNS_DIR"] == "/tmp/aptgent-runs"
+    assert "APTGENT_MODEL_DIR" in result
 
 
 # ── run_doctor ──────────────────────────────────────────────

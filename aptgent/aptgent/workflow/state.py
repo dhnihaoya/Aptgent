@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from aptgent.domain.enums import Status, Step
 from aptgent.domain.models import (
@@ -152,6 +152,9 @@ class WorkflowContext(BaseModel):
 
 
 class RunState(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    schema_version: str = "1.0"
     run_id: str
     current_step: Step = Step.INTAKE
     status: Status = Status.PENDING
@@ -184,6 +187,18 @@ class RunState(BaseModel):
 
     # Per-step wall-clock timestamps (step.value -> ISO timestamp)
     step_timestamps: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _migrate_legacy_sites(self) -> RunState:
+        """Sync legacy confirmed_mutation_sites into context on old-state load."""
+        if self.confirmed_mutation_sites and not self.context.site_proposal.confirmed_sites:
+            self.context.site_proposal.confirmed_sites = list(self.confirmed_mutation_sites)
+        return self
+
+    def set_mutation_sites(self, sites: list[int]) -> None:
+        """Write mutation sites to both legacy field and context (single source migration helper)."""
+        self.confirmed_mutation_sites = sites
+        self.context.site_proposal.confirmed_sites = list(sites)
 
     def touch(self) -> None:
         self.updated_at = datetime.now(timezone.utc).isoformat()

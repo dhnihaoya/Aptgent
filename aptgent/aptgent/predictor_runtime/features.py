@@ -109,7 +109,7 @@ def build_feature_vector(sequence: str, smiles: str, k_list: list[int]) -> np.nd
 # Vectorized batch feature matrix (for mutation enumeration)
 # ---------------------------------------------------------------------------
 
-_ENCODE_TABLE = np.zeros(256, dtype=np.int32)
+_ENCODE_TABLE = np.full(256, -1, dtype=np.int32)
 _ENCODE_TABLE[ord("A")] = 0
 _ENCODE_TABLE[ord("a")] = 0
 _ENCODE_TABLE[ord("T")] = 1
@@ -173,13 +173,20 @@ def build_feature_matrix(
             all_kmer.append(np.zeros((N, dim), dtype=np.float64))
             continue
 
+        # Build validity mask: a k-mer window is valid only when all
+        # characters in the window are ATGC (encoded >= 0).
+        valid = np.ones((N, n_kmers), dtype=bool)
+        for i in range(k):
+            valid &= encoded[:, i : i + n_kmers] >= 0
+
         indices = np.zeros((N, n_kmers), dtype=np.int32)
         for i in range(k):
-            indices = indices * 4 + encoded[:, i : i + n_kmers]
+            indices = indices * 4 + np.where(valid, encoded[:, i : i + n_kmers], 0)
 
         offsets = np.arange(N, dtype=np.int32)[:, None] * dim
         flat = (indices + offsets).ravel()
-        counts = np.bincount(flat, minlength=N * dim).reshape(N, dim).astype(np.float64)
+        weights = valid.ravel().astype(np.float64)
+        counts = np.bincount(flat, weights=weights, minlength=N * dim).reshape(N, dim).astype(np.float64)
         counts /= n_kmers
         all_kmer.append(counts)
 

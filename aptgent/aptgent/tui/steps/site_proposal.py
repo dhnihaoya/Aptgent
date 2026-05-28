@@ -266,7 +266,7 @@ class SiteProposalHandler(StepHandler):
                     f"Dropped {before - len(sites)} site(s) outside sequence range (length {len(seq)}).",
                     "warning-text",
                 )
-        state.confirmed_mutation_sites = sites
+        state.set_mutation_sites(sites)
         context = state.context.site_proposal
         context.selection_source = source
         context.selected_proposal_index = proposal_index

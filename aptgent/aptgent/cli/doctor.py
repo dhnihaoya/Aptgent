@@ -143,7 +143,6 @@ def _check_url(url: str) -> dict[str, Any]:
 
 def _check_env_vars() -> dict[str, str | None]:
     keys = [
-        "APTGENT_HOME",
         "APTGENT_RUNS_DIR",
         "APTGENT_MODEL_DIR",
         "APTGENT_RNAFOLD",

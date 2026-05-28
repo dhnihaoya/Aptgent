@@ -146,7 +146,7 @@ class ChatScreen(Screen):
 
         proposal = state.context.site_proposal
         clear_site_selection_retry_feedback(state)
-        state.confirmed_mutation_sites = []
+        state.set_mutation_sites([])
         state.candidates = []
         state.predictions = []
         self.app.save_state()
@@ -338,8 +338,8 @@ class ChatScreen(Screen):
     def resume_run(self, run_id: str) -> None:
         """Load a saved run into the current chat screen.
 
-        If the run has a running detached job (enumeration or docking),
-        skip directly to that step and attach.
+        If the run has a running detached job (enumeration, specificity, or
+        docking), skip directly to that step and attach.
         """
         self.app.save_state()
         self.clear_structured_widget()
@@ -351,13 +351,13 @@ class ChatScreen(Screen):
 
         state = self.app.current_state
         target_step = self._detect_resume_target(state)
+        resume_step = target_step if target_step is not None else state.current_step
         if target_step is not None:
             self.add_system_message(
                 f"Resuming run — jumping to active step: {target_step.value}"
             )
-            self._start_step(target_step)
-        else:
-            self._start_step(state.current_step)
+        self.app.progress_bar.set_step(resume_step)
+        self._start_step(resume_step)
 
         self._focus_input()
 
@@ -376,6 +376,13 @@ class ChatScreen(Screen):
             if is_job_alive(persistence, run_id, "candidate_enumeration"):
                 self.add_system_message("Enumeration job is still running, attaching...")
                 return Step.CANDIDATE_ENUMERATION
+
+        # Check specificity job status
+        if current in (Step.SPECIFICITY_FILTER, Step.DOCKING_SELECTION,
+                       Step.DOCKING_RUN, Step.SPATIAL_RANK, Step.FINAL_REPORT):
+            if is_job_alive(persistence, run_id, "specificity_filter"):
+                self.add_system_message("Specificity job is still running, attaching...")
+                return Step.SPECIFICITY_FILTER
 
         # Check docking job status
         if current in (Step.DOCKING_RUN, Step.SPATIAL_RANK, Step.FINAL_REPORT):
