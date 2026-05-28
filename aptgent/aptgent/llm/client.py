@@ -299,6 +299,8 @@ class LLMClient:
         reasoning_buf: list[str] = []
         reasoning_chars = 0
         reasoning_suppressed = False
+        content_buf: list[str] = []
+        content_suppressed = False
         for line in resp.iter_lines():
             if should_cancel is not None and should_cancel():
                 raise LLMCancelled()
@@ -336,8 +338,20 @@ class LLMClient:
                     else:
                         yield {"type": "reasoning", "text": reasoning}
                 content = self._extract_content(delta.get("content", ""))
-                if content:
-                    yield {"type": "content", "text": content}
+                if content and not content_suppressed:
+                    content_buf.append(content)
+                    if (
+                        len(content_buf) % 8 == 0
+                        and self._detect_repetition("".join(content_buf))
+                    ):
+                        content_suppressed = True
+                        _log.info("Content suppressed: repetitive loop detected")
+                        yield {
+                            "type": "content",
+                            "text": "\n\n[output truncated — repetitive loop detected]",
+                        }
+                    else:
+                        yield {"type": "content", "text": content}
             except Exception as exc:
                 _log.debug("SSE chunk parse failed: %s", exc)
 
