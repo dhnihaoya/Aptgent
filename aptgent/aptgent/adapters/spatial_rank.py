@@ -50,6 +50,14 @@ _DEFAULT_MATRIX_PATH = os.path.join(
     os.path.dirname(__file__), "..", "config", "spatial_interaction_matrix.csv"
 )
 
+# Phosphate atom names in nucleotide residues (PDB + legacy variants). The
+# paper's interaction matrix is defined between aptamer *bases* and
+# small-molecule functional groups, so contacts to the sugar ring or phosphate
+# backbone must not be counted as base–group matches.
+_PHOSPHATE_ATOM_NAMES = frozenset(
+    {"P", "OP1", "OP2", "OP3", "O1P", "O2P", "O3P"}
+)
+
 # SMARTS patterns for the 24 functional groups in the matrix.
 # Keys must match the column names in the CSV (after the first "base" column).
 _GROUP_SMARTS: dict[str, str] = {
@@ -182,6 +190,22 @@ class SpatialRankAdapter:
         return matches
 
     @staticmethod
+    def _is_nucleobase_atom(atom_name: str) -> bool:
+        """True if the atom belongs to the nucleobase, not the sugar/phosphate.
+
+        Sugar-ring atoms carry a prime in PDB nomenclature (C1'..C5',
+        O2'..O5'); some legacy PDBQT files write the prime as ``*``. Phosphate
+        atoms use the fixed names in ``_PHOSPHATE_ATOM_NAMES``. Everything else
+        on a nucleotide residue is treated as a base atom.
+        """
+        name = atom_name.strip().upper()
+        if not name:
+            return False
+        if "'" in name or "*" in name:
+            return False
+        return name not in _PHOSPHATE_ATOM_NAMES
+
+    @staticmethod
     def _parse_pdbqt_atoms(line: str) -> tuple[str, float, float, float] | None:
         """Parse an ATOM/HETATM line into (atom_name, x, y, z)."""
         if not (line.startswith("ATOM") or line.startswith("HETATM")):
@@ -216,6 +240,10 @@ class SpatialRankAdapter:
                     res_name = line[17:20].strip().upper()
                     base_type = _RESIDUE_BASE_MAP.get(res_name)
                     if base_type is None:
+                        continue
+                    # Keep only nucleobase atoms; sugar/phosphate backbone
+                    # contacts are not base–group interactions (paper Sec. 3.4).
+                    if not self._is_nucleobase_atom(atom[0]):
                         continue
                     chain = line[21:22].strip() or "_"
                     res_seq = line[22:26].strip()
@@ -306,7 +334,14 @@ class SpatialRankAdapter:
         preferred_bases: dict[str, str],
         cutoff: float = _DEFAULT_CONTACT_CUTOFF,
     ) -> tuple[int, list[dict[str, Any]]]:
-        """Count functional-group occurrences contacting their preferred base."""
+        """Count matched base–group interactions.
+
+        Each *distinct* ``(group occurrence, preferred-base residue)`` contact
+        within ``cutoff`` is counted once. A single functional-group occurrence
+        sitting against several preferred-base residues therefore contributes
+        one match per residue, matching the paper's list of matched base sites
+        (Table 2) rather than collapsing to only the nearest residue.
+        """
         count = 0
         details: list[dict[str, Any]] = []
         for group, occurrences in ligand_group_atoms.items():
@@ -314,27 +349,27 @@ class SpatialRankAdapter:
             if preferred is None:
                 continue
             for occ_atoms in occurrences:
-                best: tuple[float, str] | None = None
                 for base_type, label, base_atoms in receptor_bases:
                     if base_type != preferred:
                         continue
+                    min_dist: float | None = None
                     for _ln, lx, ly, lz in occ_atoms:
                         for _rn, rx, ry, rz in base_atoms:
                             dist = math.sqrt(
                                 (lx - rx) ** 2 + (ly - ry) ** 2 + (lz - rz) ** 2
                             )
-                            if best is None or dist < best[0]:
-                                best = (dist, label)
-                if best is not None and best[0] <= cutoff:
-                    count += 1
-                    details.append(
-                        {
-                            "group": group,
-                            "preferred_base": preferred,
-                            "base_residue": best[1],
-                            "distance": round(best[0], 3),
-                        }
-                    )
+                            if min_dist is None or dist < min_dist:
+                                min_dist = dist
+                    if min_dist is not None and min_dist <= cutoff:
+                        count += 1
+                        details.append(
+                            {
+                                "group": group,
+                                "preferred_base": preferred,
+                                "base_residue": label,
+                                "distance": round(min_dist, 3),
+                            }
+                        )
         return count, details
 
     @staticmethod

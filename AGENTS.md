@@ -67,7 +67,7 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme`、`/
 - `aptgent/aptgent/tui/steps/`：每个 workflow step 一个模块（`intake.py`、`pdb_intake.py`、`structure.py`、`site_proposal.py`、`enumeration.py`、`scoring.py`、`specificity.py`、`docking_selection.py`（re-export shim，实现在 `docking/` 子包）、`docking_run.py`、`spatial_rank.py`、`report.py`），由 `factory.py` 分发。辅助模块：`intake_heuristics.py`（intake 输入启发式规则）、`intake_resolver.py`（intake 输入解析）、`state_reset.py`（状态重置辅助）。
 - `aptgent/aptgent/tui/steps/common/`：跨 step 共用工具（`__init__.py` 重新导出所有公共符号，保持 `from aptgent.tui.steps.common import X` 兼容）。子模块：`coercion.py`（类型转换）、`docking_plan.py`（对接参数校验）、`intake_format.py`（intake 输出格式化）、`llm_ui.py`（LLM UI 辅助）、`site_proposal_validate.py`（位点方案校验）、`specificity_format.py`（特异性结果格式化）。
 - `aptgent/aptgent/tui/steps/empty_candidates.py`：空候选统一处理（`is_empty_enumeration_result`、`prepare_empty_candidate_recovery`、`clear_site_selection_retry_feedback`），被 enumeration、scoring、chat back-handler 共用。
-- `aptgent/aptgent/tui/steps/base.py`：`StepHandler` 基类。
+- `aptgent/aptgent/tui/steps/base.py`：`StepHandler` 基类（含 `_report_error()` 统一错误报告，合并 `add_system_message` + `_enable_input`，防止错误处理遗漏导致输入栏卡死）。
 - `aptgent/aptgent/tui/steps/job_mixin.py`：可分离后台任务 mixin（attach/spawn detached subprocess）。
 - `aptgent/aptgent/tui/widgets/`：通用 widget（`StatusPanel`、`StepProgressBar`、`StructuredInput`、chat bubble 系列）。子包 `panels/`（`_core.py`、`_intake.py`、`_specificity.py`、`_docking.py`）和 `common.py` 提供步骤专用面板组件。
 - `aptgent/aptgent/tui/commands.py`：斜杠命令注册、主题预设。
@@ -102,7 +102,7 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme`、`/
 
 - `aptgent/aptgent/protocol/line_json.py`：`JsonlEmitter`（行式 JSON 写入）和 `iter_jsonl`（行式 JSON 迭代读取）。
 - `aptgent/aptgent/protocol/cancel.py`：`CmdFileCancelPoller`（命令文件轮询取消）和 `StdinCancelWatcher`（stdin cancel 信号监听）。
-- `aptgent/aptgent/protocol/subprocess_stream.py`：`SubprocessSession`（流式子进程生命周期管理：stdout JSONL 读取、stderr 收集、cancel/terminate/kill 三阶段终止）。
+- `aptgent/aptgent/protocol/subprocess_stream.py`：`SubprocessSession`（流式子进程生命周期管理：stdout JSONL 读取、stderr 收集、cancel/terminate/kill 三阶段终止，各阶段等待时间可通过 `shutdown_waits` 参数配置，默认 `(30, 10, 5)` 秒）。
 
 不要在 adapter 或 jobs 层内联新的子进程协议实现，优先复用或扩展 protocol 层的原语。
 
@@ -153,7 +153,7 @@ LLM 输出是辅助信息，不应覆盖确定性计算结果。涉及评分、�
 
 LLM 调用日志记录到 `<run_dir>/logs/llm_calls.jsonl`，默认对用户输入做 SHA-256 脱敏（`APTGENT_LLM_REDACT=0` 关闭）。
 
-`LLMClient` 支持四种调用模式：`chat_json`（同步 JSON 请求）、`chat_json_events`（流式 SSE，逐步 yield reasoning/content 事件，最终 yield `{"type": "result", "value": parsed_json}`）、`chat_json_stream`（流式 JSON 文本）、`chat_text_stream`（纯文本流式）。site proposal skill 已通过 `propose_events_from_context` 接入 `chat_json_events`，在生成方案时实时展示 LLM reasoning。analog_suggestion skill 已迁移到统一的 `suggest_events` 流式接口（`specificity.py:140`）。
+`LLMClient` 支持四种调用模式：`chat_json`（同步 JSON 请求）、`chat_json_events`（流式 SSE，逐步 yield reasoning/content 事件，最终 yield `{"type": "result", "value": parsed_json}`）、`chat_json_stream`（流式 JSON 文本）、`chat_text_stream`（纯文本流式）。流式模式内建重复循环检测（`_detect_repetition`）：当 reasoning 或 content 尾部出现重复模式时自动截断并标记，避免 LLM 退化输出无限延续。site proposal skill 已通过 `propose_events_from_context` 接入 `chat_json_events`，在生成方案时实时展示 LLM reasoning。analog_suggestion skill 已迁移到统一的 `suggest_events` 流式接口（`specificity.py:140`）。
 
 ### Jobs 层（可分离后台任务）
 
@@ -260,7 +260,7 @@ UI 上 `ProgressBubble` 与 candidate enumeration 完全一致，信息行格式
 配置文件位于 `aptgent/aptgent/config/`：
 
 - `workflow.toml`：workflow 参数（enumeration、docking）与 `runs_dir`
-- `tools.toml`：外部工具路径（RNAfold、Vina）、预测器模型目录、PDB 下载配置
+- `tools.toml`：外部工具路径（RNAfold、Vina）、预测器模型目录、PDB 下载配置、RNAComposer 轮询超时（`max_poll_seconds`、`poll_interval_seconds`）
 - `llm.toml`：LLM provider 配置
 - `spatial_interaction_matrix.csv`：空间互作矩阵
 

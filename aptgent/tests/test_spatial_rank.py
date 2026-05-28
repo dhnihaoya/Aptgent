@@ -155,6 +155,41 @@ def test_parse_receptor_bases(adapter, tmp_path):
     assert bases[0][2][0][1] == pytest.approx(1.0)
 
 
+def test_parse_receptor_bases_excludes_backbone_and_sugar(adapter, tmp_path):
+    # A single G residue with base, sugar and phosphate atoms. Only the base
+    # atom (N9) must survive; sugar (C1'/O5') and phosphate (P/OP1) drop out.
+    receptor = tmp_path / "receptor.pdbqt"
+    receptor.write_text(
+        "\n".join(
+            [
+                _atom_line(1, "P", "DG", "A", 1, 1.0, 0.0, 0.0),
+                _atom_line(2, "OP1", "DG", "A", 1, 1.5, 0.0, 0.0),
+                _atom_line(3, "O5'", "DG", "A", 1, 2.0, 0.0, 0.0),
+                _atom_line(4, "C1'", "DG", "A", 1, 2.5, 0.0, 0.0),
+                _atom_line(5, "N9", "DG", "A", 1, 9.0, 0.0, 0.0),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    bases = adapter._parse_receptor_bases(str(receptor))
+    assert len(bases) == 1
+    base_type, _label, atoms = bases[0]
+    assert base_type == "G"
+    assert [a[0] for a in atoms] == ["N9"]
+    assert atoms[0][1] == pytest.approx(9.0)
+
+
+def test_is_nucleobase_atom(adapter):
+    assert adapter._is_nucleobase_atom("N9") is True
+    assert adapter._is_nucleobase_atom("O6") is True
+    assert adapter._is_nucleobase_atom("P") is False
+    assert adapter._is_nucleobase_atom("OP1") is False
+    assert adapter._is_nucleobase_atom("O5'") is False
+    assert adapter._is_nucleobase_atom("C1'") is False
+    # Legacy PDB nomenclature uses '*' for the sugar prime.
+    assert adapter._is_nucleobase_atom("C1*") is False
+
+
 def test_parse_first_pose_atoms_only_first_model(adapter, tmp_path):
     pose = tmp_path / "out.pdbqt"
     pose.write_text(
@@ -233,6 +268,38 @@ def test_count_rule_matches(adapter):
     assert count == 1
     assert details[0]["preferred_base"] == "G"
     assert details[0]["distance"] == pytest.approx(2.0)
+
+
+def test_count_rule_matches_counts_each_contacted_residue(adapter):
+    # One occurrence sitting between two preferred (G) residues, both within
+    # cutoff, must count twice (once per distinct base site).
+    receptor_bases = [
+        ("G", "A:DG:1", [("N9", 0.0, 0.0, 0.0)]),
+        ("G", "A:DG:2", [("N9", 1.0, 0.0, 0.0)]),
+        ("A", "A:DA:3", [("N1", 0.5, 0.0, 0.0)]),  # wrong base type, ignored
+    ]
+    preferred = {"Benzene ring": "G"}
+    ligand_group_atoms = {"Benzene ring": [[("C", 0.5, 0.0, 0.0)]]}
+    count, details = adapter._count_rule_matches(
+        receptor_bases, ligand_group_atoms, preferred, cutoff=4.0
+    )
+    assert count == 2
+    assert {d["base_residue"] for d in details} == {"A:DG:1", "A:DG:2"}
+
+
+def test_count_rule_matches_excludes_far_residues(adapter):
+    # Two preferred residues but only one within cutoff -> single match.
+    receptor_bases = [
+        ("G", "A:DG:1", [("N9", 0.0, 0.0, 0.0)]),
+        ("G", "A:DG:2", [("N9", 20.0, 0.0, 0.0)]),
+    ]
+    preferred = {"Benzene ring": "G"}
+    ligand_group_atoms = {"Benzene ring": [[("C", 1.0, 0.0, 0.0)]]}
+    count, details = adapter._count_rule_matches(
+        receptor_bases, ligand_group_atoms, preferred, cutoff=4.0
+    )
+    assert count == 1
+    assert details[0]["base_residue"] == "A:DG:1"
 
 
 def test_count_rule_matches_wrong_base_type(adapter):
