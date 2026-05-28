@@ -117,7 +117,7 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme`、`/
 - `StructureAdapter`（协议）：RNA 折叠。实现：`RNAfoldAdapter`（`rna_fold.py`）。
 - `PredictionAdapter`（协议）：批量预测。实现：`EnsembleAdapter`（`predictor.py`）。
 - `MoleculeAdapter`（协议）：分子解析。实现：`SimpleMoleculeResolver`（`molecule.py`）。
-- `SpatialRankAdapter`（协议 + 实现）：空间互作排序（`spatial_rank.py`）。
+- `SpatialRankAdapter`（协议 + 实现）：空间互作排序（`spatial_rank.py`）。有两种模式：当对接 pose（PDBQT）可用时走 **pose-based 二值规则匹配**（解析受体碱基 + 第一个 pose 原子，按官能团→期望碱基的近距离接触计数，与对接亲和力联合排名）；否则回退到序列组成加权评分。`rank_batch(candidates, target, docking_results=None)` 据此分发。
 - `VinaAdapter`：AutoDock Vina 对接（`docking.py`）。
 - `ReceptorPreparationAdapter`：受体 PDBQT 准备（`receptor_prep.py`）。
 - `RNAComposerAdapter`：RNAComposer 三级结构预测（`rnacomposer.py`）。
@@ -189,6 +189,18 @@ intake step 内部包含 PDB 输入子流程（`tui/steps/pdb_intake.py`），�
 
 当 docking 不可用（Vina 未安装或配置禁用）时，`docking_selection` step 可直接跳转到 `spatial_rank`，跳过 `docking_run`。`DOCKING_SELECTION → SPATIAL_RANK` 转换已在 `TRANSITIONS` 中注册。TUI 层通过 `_is_docking_enabled()` 检测可用性，`_skip()` 执行跳转。
 
+### Pose-based spatial ranking（论文 Section 3.4.3）
+
+`docking_run` 在每个成功的 `DockingResult.raw_outputs` 中写入 `output_pdbqt` / `receptor_pdbqt` / `ligand_pdbqt` 路径（断点续跑结果同样补 `output_pdbqt` / `receptor_pdbqt`）。`spatial_rank` step 把这些 `docking_results` 传给 `SpatialRankAdapter.rank_batch`：
+
+- **pose 模式**（`raw_outputs.mode = "pose_rule_match"`）：对每个候选解析受体碱基与第一个 pose 原子，将靶标分子的官能团（SMARTS 命中的 RDKit 重原子索引，滤掉氢后映射到 pose 重原子）与该官能团"期望碱基"（矩阵中概率最高的碱基类型）做 4.0 Å 接触计数，得到 `interaction_count`。排名 = `interaction_rank`（competition/1224，count 降序）+ `docking_rank`（dense/1223，亲和力升序、None 最差），按 `rank_sum` 升序、再 docking_score、再稳定输入序定最终 `rank`。原子顺序映射依赖 meeko 是否保留 RDKit 重原子序，`raw_outputs.atom_map_reliable` 通过重原子数一致性给出可靠性提示（不阻断计算）。
+- **no_pose**：候选无可用 pose 文件时标 `raw_outputs.mode = "no_pose"`，以 count=0/score=None 参与联合排名。
+- **sequence_fallback**：无 `docking_results` 时回退到序列组成加权评分（`raw_outputs.mode = "sequence_fallback"`）。
+
+### 特异性硬门控
+
+`spatial_rank` step 在筛选候选时排除 specificity 结果为 `removed` 的候选，UI 显示被排除计数。`final_report` 的 `build_report_context` 同步过滤这些候选并在 `screening_overview.specificity_excluded_from_docked_count` 给出数量，确定性 Markdown 报告中显示一行排除说明。
+
 ## 6. Predictor 集成事实
 
 预测能力内聚在 `aptgent` 包内，predictor runtime 通过子进程运行。在默认的单环境安装中，所有依赖（包括 RDKit、torch、xgboost）都在同一个 conda 环境中，predictor 直接使用当前 Python 执行。如需隔离环境，可通过 `tools.toml` 中的 `conda_env` / `conda_python` 配置。
@@ -204,6 +216,8 @@ intake step 内部包含 PDB 输入子流程（`tui/steps/pdb_intake.py`），�
 - `aptgent/aptgent/resources/predictor_models/`
 
 当前 predictor runtime 中的 ensemble 规则是严格规则：只有所有模型都预测为 `1`，ensemble label 才为 `1`。不要把旧文档或历史措辞当作真实实现来源，真实行为以代码为准。
+
+`aptgent doctor` 含描述子环境守护（`cli/doctor.py:_check_feature_dimensions`）：加载一个 bundled 模型读取其 `n_features_in_`，与当前 `features.py` 的 k-mer 维度 + `_DESCRIPTOR_FUNCS` 长度比对。不匹配报 `feature_mismatch`（通常是 RDKit 版本漂移改变了描述子集合——应对齐训练时的 RDKit 版本，不要改描述子过滤）；缺依赖/无可比模型时优雅 `skipped`，不阻塞其他检查。
 
 ### mutation-batch 加速路径
 
@@ -320,7 +334,7 @@ aptgent run-job <run_id> <step>
 - `test_tui_markdown_theme.py`：chat markdown 主题测试
 - `test_enumeration_ui.py`：枚举步骤 UI 测试
 - `test_pdb_analysis.py`：PDB 分析 adapter 测试
-- `test_spatial_rank.py`：空间排序测试
+- `test_spatial_rank.py`：空间排序测试（PDBQT 解析、官能团→pose 重原子映射、接触计数、competition/dense 排名、论文 Table 2 复现、no_pose / atom_map_reliable 标记、sequence fallback 与 pose 分发）
 - `test_tui_report.py`：最终 Markdown 报告上下文、fallback 展示与导出测试
 - `test_receptor_prep.py`：受体 PDBQT 准备 adapter 测试
 - `test_rnacomposer_adapter.py`：RNAComposer adapter 测试
