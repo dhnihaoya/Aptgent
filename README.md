@@ -79,7 +79,7 @@ It installs:
 - Textual, Pydantic, httpx, Biopython, Meeko, psutil
 - `aptgent` in editable mode
 
-`pyproject.toml` declares `requires-python >=3.9`, but the checked-in environment file pins Python 3.10 and is the safest installation path for the full workflow.
+`pyproject.toml` declares `requires-python >=3.10`, and the checked-in environment file pins Python 3.10 as the safest installation path for the full workflow.
 
 ## Setup
 
@@ -154,11 +154,12 @@ Supported detached job steps are:
 4. RNAfold predicts the secondary structure.
 5. The LLM proposes 3 alternative mutation-site plans (conservative → aggressive → LLM-selected direction) based on structural context. The user picks one, or enters custom sites.
 6. Candidate enumeration scores the mutation space. The accelerated path uses `predict_mutation_batch()` when available and writes positives-only hits to `scored_candidates.jsonl`.
-7. Specificity filtering checks candidates against target analogs.
-8. Docking selection proposes docking parameters. Values are clamped before use.
-9. Docking runs through AutoDock Vina when configured and accepted.
-10. Spatial ranking reorders candidates using `spatial_interaction_matrix.csv`.
-11. Final report can be exported to JSON and the run can be completed.
+7. Primary scoring ranks enumerated candidates by prediction probability and applies the top-k cutoff.
+8. Specificity filtering checks candidates against target analogs.
+9. Docking selection proposes docking parameters. Values are clamped before use.
+10. Docking runs through AutoDock Vina when configured and accepted.
+11. Spatial ranking reorders candidates using `spatial_interaction_matrix.csv`.
+12. Final report can be exported to Markdown and the run can be completed.
 
 ## Slash Commands
 
@@ -167,8 +168,8 @@ Available commands depend on the active step:
 - `/resume [run_id]`: resume a saved workflow.
 - `/quit`: open the quit confirmation dialog.
 - `/theme`: choose a TUI theme.
-- `/cancel`: cancel an active detached enumeration or docking job.
-- `/export`: export the final report JSON from the final-report step.
+- `/cancel`: cancel an active detached enumeration, specificity, or docking job.
+- `/export`: export the final report Markdown from the final-report step.
 - `/finish`: mark the workflow completed from the final-report step.
 
 ## Configuration
@@ -269,12 +270,19 @@ runs/
     state.json
     run_card.json
     artifacts/
+      final_report.md
       final_report.json
       scored_candidates.jsonl
+      specificity_results.jsonl
     docking/
       *.pdbqt
     jobs/
       candidate_enumeration/
+        pid
+        events.jsonl
+        cmd.jsonl
+        status
+      specificity_filter/
         pid
         events.jsonl
         cmd.jsonl
@@ -329,7 +337,7 @@ Targeted tests by area:
 - Workflow and persistence: `tests/test_workflow_engine.py`, `tests/test_workflow.py`, `tests/test_persistence.py`
 - LLM client and skills: `tests/test_llm_client_retry.py`, `tests/test_llm_client_payloads.py`, `tests/test_llm_result_validation.py`, `tests/test_skills.py`
 - Workflow context helpers: `tests/test_workflow_context_helpers.py`
-- Predictor and mutation acceleration: `tests/test_predictor_adapter.py`, `tests/test_predictor_adapter_mutation_protocol.py`, `tests/test_predictor_feature_matrix_batch.py`, `tests/test_predictor_mutation_batch_runtime.py`, `tests/test_tui_enumeration_acceleration.py`, `tests/test_feature_matrix.py`
+- Predictor and mutation acceleration: `tests/test_predictor_adapter.py`, `tests/test_predictor_adapter_mutation_protocol_success.py`, `tests/test_predictor_adapter_mutation_protocol_cancel.py`, `tests/test_predictor_adapter_mutation_protocol_errors.py`, `tests/test_predictor_feature_matrix_batch.py`, `tests/test_predictor_mutation_batch_runtime.py`, `tests/test_tui_enumeration_acceleration.py`, `tests/test_feature_matrix.py`
 - TUI behavior: `tests/test_tui_*.py`, `tests/test_tui_markdown_theme.py`, `tests/test_enumeration_ui.py`
 - PDB analysis: `tests/test_pdb_analysis.py`
 - Spatial ranking: `tests/test_spatial_rank.py`

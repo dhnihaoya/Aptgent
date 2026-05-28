@@ -9,7 +9,7 @@ Claude Code (and any other agent tool) should read [`AGENTS.md`](./AGENTS.md) fo
 - workflow step order (defined in `aptgent/aptgent/workflow/engine.py`)
 - step handler dispatch (`tui/steps/factory.py` → per-step modules)
 - adapter, workflow, LLM, jobs, and predictor-runtime boundaries
-- LLM skill registry (6 skills in `llm/skills/`; site_proposal returns exactly 3 ordered plans)
+- LLM skill registry (8 skills in `llm/skills/`; site_proposal returns exactly 3 ordered plans)
 - detachable job system (`jobs/` + `tui/steps/job_mixin.py`)
 - known configuration/environment risks and the minimal pre-change checklist
 

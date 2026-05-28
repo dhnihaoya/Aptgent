@@ -41,6 +41,3 @@ class TestPidUtils:
 
     def test_is_pid_alive_for_unlikely_pid(self):
         assert is_pid_alive(999999999) is False
-
-
-from aptgent.jobs.runner import build_parser, _JOB_RUNNERS

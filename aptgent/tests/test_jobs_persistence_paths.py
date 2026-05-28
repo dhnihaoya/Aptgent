@@ -43,6 +43,3 @@ class TestPersistenceJobHelpers:
         p.init_run("run1")
         p.ensure_job_dir("run1", "docking_run")
         assert (tmp_path / "run1" / "jobs" / "docking_run").is_dir()
-
-
-from aptgent.jobs.pid import is_pid_alive, read_pid, write_pid, clear_pid

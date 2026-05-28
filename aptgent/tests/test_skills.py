@@ -6,6 +6,7 @@ import pytest
 from pydantic import BaseModel
 
 from aptgent.llm.skills import (
+    AnalogParseSkill,
     AnalogSuggestionSkill,
     BaseSkill,
     DockingParamsParseOutput,
@@ -29,6 +30,7 @@ ALL_SKILL_CLASSES = [
     PdbReviewSkill,
     SiteProposalSkill,
     AnalogSuggestionSkill,
+    AnalogParseSkill,
     DockingPlannerSkill,
     DockingParamsParseSkill,
     ReportSkill,

@@ -26,6 +26,7 @@
 - `aptgent/aptgent/cli/doctor.py`：环境诊断工具（`aptgent doctor`）。
 - `aptgent/aptgent/bootstrap/config.py`：配置加载与 `${VAR:-default}` 环境变量展开。
 - `aptgent/aptgent/bootstrap/container.py`：依赖装配（`AppRuntime` + `build_runtime()`）。
+- `aptgent/aptgent/tui/rich_theme.py`：chat markdown 主题定义。
 - `aptgent/tests/`：现有 pytest 测试。
 
 ## 3. 当前真实入口与主路径
@@ -54,7 +55,7 @@
 
 排查或修改主流程时，应直接沿 `ChatScreen` → `factory.py` → 对应 step 模块这条路径工作。
 
-chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme` 等），定义在 `tui/commands.py`。
+chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme`、`/finish`、`/back`、`/cancel` 等），定义在 `tui/commands.py`。
 
 ## 4. 架构边界
 
@@ -63,12 +64,12 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme` 等�
 负责用户交互、展示、输入收集和 step 触发：
 
 - `aptgent/aptgent/tui/screens/`：chat、welcome、quit_confirm、resume、theme_picker。
-- `aptgent/aptgent/tui/steps/`：每个 workflow step 一个模块（`intake.py`、`pdb_intake.py`、`structure.py`、`site_proposal.py`、`enumeration.py`、`scoring.py`、`specificity.py`、`docking_selection.py`、`docking_run.py`、`spatial_rank.py`、`report.py`），由 `factory.py` 分发。
+- `aptgent/aptgent/tui/steps/`：每个 workflow step 一个模块（`intake.py`、`pdb_intake.py`、`structure.py`、`site_proposal.py`、`enumeration.py`、`scoring.py`、`specificity.py`、`docking_selection.py`（re-export shim，实现在 `docking/` 子包）、`docking_run.py`、`spatial_rank.py`、`report.py`），由 `factory.py` 分发。辅助模块：`intake_heuristics.py`（intake 输入启发式规则）、`intake_resolver.py`（intake 输入解析）、`state_reset.py`（状态重置辅助）。
 - `aptgent/aptgent/tui/steps/common/`：跨 step 共用工具（`__init__.py` 重新导出所有公共符号，保持 `from aptgent.tui.steps.common import X` 兼容）。子模块：`coercion.py`（类型转换）、`docking_plan.py`（对接参数校验）、`intake_format.py`（intake 输出格式化）、`llm_ui.py`（LLM UI 辅助）、`site_proposal_validate.py`（位点方案校验）、`specificity_format.py`（特异性结果格式化）。
 - `aptgent/aptgent/tui/steps/empty_candidates.py`：空候选统一处理（`is_empty_enumeration_result`、`prepare_empty_candidate_recovery`、`clear_site_selection_retry_feedback`），被 enumeration、scoring、chat back-handler 共用。
 - `aptgent/aptgent/tui/steps/base.py`：`StepHandler` 基类。
 - `aptgent/aptgent/tui/steps/job_mixin.py`：可分离后台任务 mixin（attach/spawn detached subprocess）。
-- `aptgent/aptgent/tui/widgets/`：通用 widget（`StatusPanel`、`StepProgressBar`、`StructuredInput`、chat bubble 系列）。
+- `aptgent/aptgent/tui/widgets/`：通用 widget（`StatusPanel`、`StepProgressBar`、`StructuredInput`、chat bubble 系列）。子包 `panels/`（`_core.py`、`_intake.py`、`_specificity.py`、`_docking.py`）和 `common.py` 提供步骤专用面板组件。
 - `aptgent/aptgent/tui/commands.py`：斜杠命令注册、主题预设。
 
 ### Workflow 层
@@ -118,7 +119,7 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme` 等�
 - `MoleculeAdapter`（协议）：分子解析。实现：`SimpleMoleculeResolver`（`molecule.py`）。
 - `SpatialRankAdapter`（协议 + 实现）：空间互作排序（`spatial_rank.py`）。
 - `VinaAdapter`：AutoDock Vina 对接（`docking.py`）。
-- `ReceptorPrepAdapter`：受体 PDBQT 准备（`receptor_prep.py`）。
+- `ReceptorPreparationAdapter`：受体 PDBQT 准备（`receptor_prep.py`）。
 - `RNAComposerAdapter`：RNAComposer 三级结构预测（`rnacomposer.py`）。
 - `PdbAnalysisAdapter`：PDB 文件下载、解析、链/配体提取（`pdb_analysis.py`）。
 - `StructureLookupAdapter`（协议）：3D 结构数据库查询（`structure_services.py`）。
@@ -143,14 +144,16 @@ LLM 输出是辅助信息，不应覆盖确定性计算结果。涉及评分、�
 
 - `intake`：自然语言输入解析，提取序列、靶标分子、修饰区域、类似物列表和时间预算等字段。
 - `pdb_review`：PDB 结构语义审查，7 类分类 + 靶标匹配 + 置信度。输出用于 review gate 机制（不合适的 PDB 会暂停流程等待用户确认）。
-- `site_proposal`：突变位点提议（含 rephrase 能力）。先产出区域级风险评估（`region_assessment`），将序列区域分为 `safer_scaffold`、`suspected_binding_core` 或 `uncertain`，解释每个区域的分类依据；再给出恰好 3 个备选 mutation 方案，按保守 → 激进（含保守位点）→ LLM 自选方向排序；每个方案包含独立的位点、推理和置信度，若使用了 suspected binding/core 风险位点需显式说明理由；首选方案会镜像到 legacy 字段保持兼容。UI 层以 `expanded` 模式展示全部选项。支持 retry feedback：当枚举或打分步骤未找到阳性候选时，通过 `extra_context.site_selection_feedback` 回传失败原因、上下文引导（`guidance`）、需保留的方案索引（`preserve_proposal_indexes`）和前一轮方案（`previous_proposals`），LLM 据此只替换失败的方案槽位。
+- `site_proposal`：突变位点提议。先产出区域级风险评估（`region_assessment`），将序列区域分为 `safer_scaffold`、`suspected_binding_core` 或 `uncertain`，解释每个区域的分类依据；再给出恰好 3 个备选 mutation 方案，按保守 → 激进（含保守位点）→ LLM 自选方向排序；每个方案包含独立的位点、推理和置信度，若使用了 suspected binding/core 风险位点需显式说明理由；首选方案会镜像到 legacy 字段保持兼容。UI 层以 `expanded` 模式展示全部选项。支持 retry feedback：当枚举或打分步骤未找到阳性候选时，通过 `extra_context.site_selection_feedback` 回传失败原因、上下文引导（`guidance`）、需保留的方案索引（`preserve_proposal_indexes`）和前一轮方案（`previous_proposals`），LLM 据此只替换失败的方案槽位。
 - `analog_suggestion`：结构类似物建议，用于特异性过滤步骤，LLM 推荐靶标的类似物供交叉预测。
-- `docking_planner`：对接参数建议（advisory 级别），LLM 可建议 `top_k`、`grid_size`、`exhaustiveness`，但所有数值经 `validate_docking_recommendation_result()` 钳位后才生效。
+- `analog_parse`：类似物自然语言解析，将用户输入的类似物描述（如"用咖啡因做特异性筛选"）解析为结构化的靶标名称列表。特异性步骤使用。
+- `docking_planner`：对接参数建议（advisory 级别），LLM 可建议 `top_k`、`exhaustiveness`，但所有数值经 `validate_docking_recommendation_result()` 钳位后才生效。
+- `docking_params_parse`：对接参数自然语言解析，将用户输入的对接参数描述（如"对接前 10 个候选"）解析为结构化的参数对象。docking selection 步骤使用。
 - `report`：最终报告生成，LLM 基于确定性 workflow 结果撰写 Markdown 报告。TUI 先直接展示 Markdown；导出时用户侧主产物为 `final_report.md`，同时保留 `final_report.json` 作为机器可读 sidecar。报告只详细展开进入 docking 的序列，未 docking 的候选只汇总预测、筛选、得分范围等概况，不逐条展示。
 
 LLM 调用日志记录到 `<run_dir>/logs/llm_calls.jsonl`，默认对用户输入做 SHA-256 脱敏（`APTGENT_LLM_REDACT=0` 关闭）。
 
-`LLMClient` 支持四种调用模式：`chat_json`（同步 JSON 请求）、`chat_json_events`（流式 SSE，逐步 yield reasoning/content 事件，最终 yield `{"type": "result", "value": parsed_json}`）、`chat_json_stream`（流式 JSON 文本，`chat_stream` 为其旧别名）、`chat_text_stream`（纯文本流式）。site proposal skill 已通过 `propose_events_from_context` 接入 `chat_json_events`，在生成方案时实时展示 LLM reasoning。analog_suggestion skill 正在迁移到统一的 `suggest_events` 流式接口（测试已更新，生产代码待迁移）。
+`LLMClient` 支持四种调用模式：`chat_json`（同步 JSON 请求）、`chat_json_events`（流式 SSE，逐步 yield reasoning/content 事件，最终 yield `{"type": "result", "value": parsed_json}`）、`chat_json_stream`（流式 JSON 文本）、`chat_text_stream`（纯文本流式）。site proposal skill 已通过 `propose_events_from_context` 接入 `chat_json_events`，在生成方案时实时展示 LLM reasoning。analog_suggestion skill 已迁移到统一的 `suggest_events` 流式接口（`specificity.py:140`）。
 
 ### Jobs 层（可分离后台任务）
 
@@ -159,6 +162,8 @@ LLM 调用日志记录到 `<run_dir>/logs/llm_calls.jsonl`，默认对用户输�
 - `aptgent/aptgent/jobs/runner.py`：`aptgent run-job <run_id> <step>` 入口，在隔离进程中加载 RunState 并执行 step 逻辑。当前注册的 step：`candidate_enumeration`、`specificity_filter`、`docking_run`。
 - `aptgent/aptgent/jobs/events.py`：事件写入/读取（`runs/<id>/jobs/<step>/events.jsonl`）。
 - `aptgent/aptgent/jobs/pid.py`：PID 文件管理，用于检测子进程存活状态。
+- `aptgent/aptgent/jobs/cancel.py`：`CancelContext` 取消上下文，用于管理 job 取消信号。
+- `aptgent/aptgent/jobs/resume.py`：断点续跑辅助，处理 job 中断后恢复逻辑。
 - `aptgent/aptgent/tui/steps/job_mixin.py`：TUI 端 mixin，提供 `attach_or_spawn_job()`——自动判断附加到正在运行的 job、加载已完成结果、或启动新子进程。
 
 ## 5. 工作流事实
@@ -240,7 +245,7 @@ UI 上 `ProgressBubble` 与 candidate enumeration 完全一致，信息行格式
 
 配置文件位于 `aptgent/aptgent/config/`：
 
-- `workflow.toml`：workflow 参数（enumeration、docking、LLM 超参）与 `runs_dir`
+- `workflow.toml`：workflow 参数（enumeration、docking）与 `runs_dir`
 - `tools.toml`：外部工具路径（RNAfold、Vina）、预测器模型目录、PDB 下载配置
 - `llm.toml`：LLM provider 配置
 - `spatial_interaction_matrix.csv`：空间互作矩阵
@@ -288,6 +293,12 @@ aptgent run-job <run_id> <step>
 
 当前测试位于 `aptgent/tests/`：
 
+- `test_bootstrap_config.py`：配置加载与环境变量展开测试
+- `test_bootstrap_container.py`：依赖装配（`AppRuntime` + `build_runtime()`）测试
+- `test_cli_doctor.py`：环境诊断命令测试
+- `test_domain_models.py`：domain 层数据模型测试
+- `test_skill_base.py`：skill 基类与注册表测试
+- `test_workflow_state.py`：workflow 状态模型测试
 - `test_workflow_engine.py`：workflow 状态机流转测试
 - `test_workflow.py`：workflow 辅助逻辑测试
 - `test_persistence.py`：持久化层测试
@@ -319,6 +330,12 @@ aptgent run-job <run_id> <step>
 
 修改以下内容后，至少应重新检查对应测试：
 
+- 配置加载 / 环境变量展开 → `test_bootstrap_config.py`
+- 依赖装配 / AppRuntime → `test_bootstrap_container.py`
+- 环境诊断命令 → `test_cli_doctor.py`
+- domain 数据模型 → `test_domain_models.py`
+- skill 基类 / 注册表 → `test_skill_base.py`
+- workflow 状态模型 → `test_workflow_state.py`
 - workflow step / 状态流转 → `test_workflow_engine.py`、`test_persistence.py`
 - LLM skill 行为 / 输出校验 → `test_skills.py`、`test_llm_client_retry.py`、`test_llm_client_payloads.py`、`test_llm_result_validation.py`、`test_workflow_context_helpers.py`
 - predictor / 特征提取 → `test_predictor_adapter_mutation_protocol_*.py`、`test_predictor_feature_matrix_batch.py`、`test_predictor_mutation_batch_runtime.py`、`test_predictor_specificity_batch_protocol.py`、`test_tui_enumeration_acceleration.py`、`test_feature_matrix.py`、`test_predictor_adapter.py`

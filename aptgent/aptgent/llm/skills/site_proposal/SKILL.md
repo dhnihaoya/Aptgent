@@ -22,9 +22,3 @@ confirmed sites -- that decision still belongs to the user through the Site
 Proposal UI. The first proposal is the preferred plan and is mirrored in the
 legacy `proposed_sites`, `reasoning`, and `confidence` fields for
 compatibility.
-
-In addition to the structured JSON API (`invoke` / `invoke_stream`), the
-skill also supports a `rephrase` mode that converts a free-form user
-instruction (e.g. "mutate the loop region") into an explicit list of
-indices. That mode uses a smaller, dedicated system prompt located at
-`system_rephrase.md`.
