@@ -91,7 +91,7 @@ class RNAComposerAdapter:
         base_url: str = _DEFAULT_BASE_URL,
         interactive_path: str = _INTERACTIVE_PATH,
         timeout_seconds: int = 60,
-        max_poll_seconds: int = 1800,
+        max_poll_seconds: int = 300,
         poll_interval_seconds: int = 15,
         transport: HttpTransport | None = None,
     ) -> None:
@@ -265,24 +265,46 @@ class RNAComposerAdapter:
             job_id=job_id,
         )
 
-    def fetch(self, job_id: str, output_dir: str | Path) -> str:
+    def fetch(
+        self,
+        job_id: str,
+        output_dir: str | Path,
+        *,
+        on_poll: Callable[[int, float], None] | None = None,
+        _start: float | None = None,
+    ) -> str:
         entry = self._cache.get(job_id)
         if entry is None:
             raise RuntimeError(f"Cannot fetch unknown RNAComposer job id: {job_id}")
 
         if not entry.get("pdb_text"):
-            deadline = time.monotonic() + self.max_poll_seconds
-            while time.monotonic() < deadline and entry.get("status") != "completed":
+            start = _start if _start is not None else time.monotonic()
+            deadline = start + self.max_poll_seconds
+            poll_count = 0
+            while time.monotonic() < deadline and entry.get("status") not in ("completed", "failed"):
                 self.poll(job_id)
-                if entry.get("status") == "completed":
+                poll_count += 1
+                elapsed = time.monotonic() - start
+                if on_poll:
+                    on_poll(poll_count, elapsed)
+                status = entry.get("status")
+                if status in ("completed", "failed"):
                     break
                 time.sleep(self.poll_interval_seconds)
 
+        if entry.get("status") == "failed":
+            raise RuntimeError(
+                f"RNAComposer job {job_id} failed: {entry.get('note', 'server error')}"
+            )
+
         pdb_text = entry.get("pdb_text")
         if not pdb_text:
+            elapsed = time.monotonic() - start if entry.get("status") != "completed" else 0
             raise RuntimeError(
                 f"RNAComposer job {job_id} did not produce a PDB within "
-                f"{self.max_poll_seconds}s."
+                f"{self.max_poll_seconds}s ({poll_count} polls). "
+                "The server may be overloaded — try again later or switch to "
+                "manual structure upload."
             )
 
         out_dir = Path(output_dir)
@@ -300,6 +322,13 @@ class RNAComposerAdapter:
     # Convenience: end-to-end run helper
     # ------------------------------------------------------------------
 
+    def _clear_session(self) -> None:
+        """Clear the opener's cookie jar so each candidate gets a fresh JSF session."""
+        for handler in _OPENER.handlers:
+            if isinstance(handler, urllib.request.HTTPCookieProcessor):
+                handler.cookiejar.clear()
+                return
+
     def predict_to_path(
         self,
         sequence: str,
@@ -307,16 +336,21 @@ class RNAComposerAdapter:
         output_dir: str | Path,
         *,
         candidate_id: str | None = None,
+        on_poll: Callable[[int, float], None] | None = None,
     ) -> str:
         """Convenience: submit + wait + fetch in one call."""
+        self._clear_session()
+        start = time.monotonic()
         job = self.submit(sequence, secondary_structure)
+        if on_poll:
+            on_poll(0, time.monotonic() - start)
         if job.status == "failed":
             raise RuntimeError(f"RNAComposer rejected submission: {job.note}")
         if candidate_id:
             entry = self._cache.get(job.job_id or "")
             if entry is not None:
                 entry["candidate_id"] = candidate_id
-        return self.fetch(job.job_id or "", output_dir)
+        return self.fetch(job.job_id or "", output_dir, on_poll=on_poll, _start=start)
 
 
 # ---------------------------------------------------------------------------

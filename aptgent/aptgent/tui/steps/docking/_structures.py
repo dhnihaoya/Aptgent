@@ -158,12 +158,9 @@ class _StructuresMixin:
         prep = self._receptor_prep_adapter()
         adapter = getattr(self.screen.app, "tertiary_structure_adapter", None)
         if adapter is None:
-            self._threadsafe(
-                self.screen.add_system_message,
-                "RNAComposer adapter is not configured; switch to manual upload.",
-                "error-text",
+            self._report_error(
+                "RNAComposer adapter is not configured; switch to manual upload."
             )
-            self._enable_input()
             return
 
         total = len(candidates)
@@ -175,11 +172,18 @@ class _StructuresMixin:
                 self._update_rnacomposer_progress(completed, total, cand_id)
                 try:
                     rna_seq = prep.dna_to_rna(sequence)
+
+                    def _on_poll(poll_count: int, elapsed: float) -> None:
+                        self._update_rnacomposer_progress(
+                            completed, total, cand_id, elapsed_seconds=elapsed,
+                        )
+
                     pdb_path = adapter.predict_to_path(
                         rna_seq,
                         secondary_structure="",
                         output_dir=structures_dir,
                         candidate_id=cand_id,
+                        on_poll=_on_poll,
                     )
                 except Exception as exc:
                     self._threadsafe(
@@ -256,6 +260,8 @@ class _StructuresMixin:
         completed: int,
         total: int,
         current: str,
+        *,
+        elapsed_seconds: float | None = None,
     ) -> None:
         def _update() -> None:
             widget = getattr(self.screen, "_active_structured_widget", None)
@@ -264,6 +270,7 @@ class _StructuresMixin:
                     completed=completed,
                     total=total,
                     current_candidate=current,
+                    elapsed_seconds=elapsed_seconds,
                 )
 
         self._threadsafe(_update)

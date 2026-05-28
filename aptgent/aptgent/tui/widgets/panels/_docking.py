@@ -465,9 +465,11 @@ class DockingRNAComposerProgressPanel(_BaseStructuredPanel):
             classes="panel-title",
         )
         yield Static(
-            "Submitting each candidate sequence to RNAComposer, converting "
-            "RNA \u2192 DNA, adding hydrogens, and computing the search box. "
-            "This may take a few minutes per candidate.",
+            "Submitting each candidate sequence to RNAComposer (external server), "
+            "converting RNA \u2192 DNA, adding hydrogens, and computing the search "
+            "box. This may take a few minutes per candidate. Delays or failures are "
+            "possible if the server is slow or unreachable \u2014 you can cancel and "
+            "switch to manual upload at any time.",
             classes="panel-help",
         )
         progress = f"{self.completed} / {self.total} done"
@@ -483,6 +485,7 @@ class DockingRNAComposerProgressPanel(_BaseStructuredPanel):
         completed: int,
         total: int,
         current_candidate: str = "",
+        elapsed_seconds: float | None = None,
     ) -> None:
         self.completed = completed
         self.total = total
@@ -491,6 +494,8 @@ class DockingRNAComposerProgressPanel(_BaseStructuredPanel):
             progress = f"{completed} / {total} done"
             if current_candidate:
                 progress += f" \u2014 current: {current_candidate}"
+            if elapsed_seconds is not None:
+                progress += f" (waiting {elapsed_seconds:.0f}s)"
             self.query_one("#dock-rnacomposer-progress", Static).update(progress)
         except NoMatches:
             _log.debug("Progress label missing during update", exc_info=True)

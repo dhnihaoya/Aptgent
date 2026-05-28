@@ -42,5 +42,5 @@ padding_angstrom = 4.0
 # to point at a mirror or local relay.
 base_url = "${APTGENT_RNACOMPOSER_URL:-https://rnacomposer.cs.put.poznan.pl}"
 timeout_seconds = 60
-max_poll_seconds = 1800
+max_poll_seconds = 300
 poll_interval_seconds = 15
