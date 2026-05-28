@@ -219,6 +219,9 @@ class VinaAdapter:
                         timeout=per_ligand_timeout or 1800,
                     )
                     result.candidate_id = cand_id
+                    result.raw_outputs["output_pdbqt"] = str(out_path)
+                    result.raw_outputs["receptor_pdbqt"] = str(receptor)
+                    result.raw_outputs["ligand_pdbqt"] = str(ligand_path)
                     results.append(result)
                 except Exception as e:
                     results.append(

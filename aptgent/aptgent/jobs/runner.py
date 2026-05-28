@@ -658,7 +658,7 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
         cand_id = cand.candidate_id or ""
         out_path = VinaAdapter.output_path(work_dir, cand_id)
         if out_path.exists() and out_path.stat().st_size > 0:
-            dr = _parse_existing_output(out_path, cand_id)
+            dr = _parse_existing_output(out_path, cand_id, receptor_paths.get(cand_id))
             if dr.status == "completed":
                 existing_results.append(dr)
             else:
@@ -729,7 +729,11 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
     )
 
 
-def _parse_existing_output(pdbqt_path: Path, candidate_id: str) -> DockingResult:
+def _parse_existing_output(
+    pdbqt_path: Path,
+    candidate_id: str,
+    receptor_pdbqt: str | None = None,
+) -> DockingResult:
     import re
 
     from aptgent.domain.models import DockingResult
@@ -746,11 +750,17 @@ def _parse_existing_output(pdbqt_path: Path, candidate_id: str) -> DockingResult
                         best_affinity = affinity
     except Exception:
         pass
+    raw_outputs: dict[str, Any] = {
+        "resumed_from": str(pdbqt_path),
+        "output_pdbqt": str(pdbqt_path),
+    }
+    if receptor_pdbqt:
+        raw_outputs["receptor_pdbqt"] = str(receptor_pdbqt)
     return DockingResult(
         candidate_id=candidate_id,
         docking_score=best_affinity,
         status="completed" if best_affinity is not None else "parse_error",
-        raw_outputs={"resumed_from": str(pdbqt_path)},
+        raw_outputs=raw_outputs,
     )
 
 

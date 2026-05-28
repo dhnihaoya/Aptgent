@@ -112,6 +112,66 @@ def test_fallback_markdown_summarizes_non_docked_without_listing_each_sequence()
     assert "UUUUAAAACCCC" not in markdown
 
 
+def _specificity_gate_state() -> RunState:
+    """Three docked candidates, one removed by the specificity filter."""
+    state = RunState(run_id="gate_case")
+    state.current_step = Step.FINAL_REPORT
+    state.target_molecule = TargetMolecule(
+        input_text="theophylline",
+        resolved_name="Theophylline",
+        smiles="Cn1cnc2[nH]cnc2c1=O",
+        resolution_status="resolved",
+    )
+    state.candidates = [
+        _candidate("cand_a", "ACGUACGUACGU"),
+        _candidate("cand_b", "GGGGCCCCAAAA"),
+        _candidate("cand_c", "UUUUAAAACCCC"),
+    ]
+    state.predictions = [
+        PredictionResult(
+            candidate_id=cid,
+            model_name="ensemble",
+            target="theophylline",
+            score=0.9,
+            label=1,
+            probability=0.9,
+        )
+        for cid in ("cand_a", "cand_b", "cand_c")
+    ]
+    state.specificity_results = [
+        SpecificityResult(candidate_id="cand_a", status="kept"),
+        SpecificityResult(candidate_id="cand_b", status="kept"),
+        SpecificityResult(candidate_id="cand_c", status="removed"),
+    ]
+    state.docking_results = [
+        DockingResult(candidate_id="cand_a", docking_score=-7.2, status="completed"),
+        DockingResult(candidate_id="cand_b", docking_score=-6.8, status="completed"),
+        DockingResult(candidate_id="cand_c", docking_score=-6.5, status="completed"),
+    ]
+    state.spatial_ranks = [
+        SpatialRankResult(candidate_id="cand_a", spatial_score=2, rank=1),
+        SpatialRankResult(candidate_id="cand_b", spatial_score=1, rank=2),
+    ]
+    return state
+
+
+def test_specificity_excluded_candidates_dropped_from_ranking():
+    context = build_report_context(_specificity_gate_state())
+
+    ids = [item["candidate_id"] for item in context["docking_candidates"]]
+    assert ids == ["cand_a", "cand_b"]
+    assert "cand_c" not in ids
+    assert context["screening_overview"]["specificity_excluded_from_docked_count"] == 1
+
+
+def test_specificity_excluded_count_shown_in_markdown():
+    markdown = format_deterministic_report_markdown(
+        build_report_context(_specificity_gate_state())
+    )
+    assert "1 candidate(s) excluded by specificity filter" in markdown
+    assert "UUUUAAAACCCC" not in markdown
+
+
 def test_export_final_report_writes_markdown_and_structured_sidecar(tmp_path):
     state = _report_state()
     persistence = Persistence(tmp_path / "runs")

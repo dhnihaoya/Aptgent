@@ -2,6 +2,7 @@ from typing import Protocol
 
 from aptgent.domain.models import (
     CandidateSequence,
+    DockingResult,
     PredictionResult,
     SecondaryStructure,
     SpatialRankResult,
@@ -30,4 +31,5 @@ class SpatialRankAdapter(Protocol):
         self,
         candidates: list[CandidateSequence],
         target: TargetMolecule,
+        docking_results: "list[DockingResult] | None" = None,
     ) -> list[SpatialRankResult]: ...

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import math
 import os
 from typing import Any
 
@@ -11,7 +12,39 @@ try:
 except Exception:  # pragma: no cover
     _RDKIT_AVAILABLE = False
 
-from aptgent.domain.models import CandidateSequence, SpatialRankResult, TargetMolecule
+from aptgent.domain.models import (
+    CandidateSequence,
+    DockingResult,
+    SpatialRankResult,
+    TargetMolecule,
+)
+
+# Default contact cutoff in Angstroms. Paper Table 3 reports interaction
+# distances in the 2.0-3.96 A range; 4.0 A is the conservative gate.
+_DEFAULT_CONTACT_CUTOFF = 4.0
+
+# PDB/PDBQT residue name -> matrix base type mapping.
+_RESIDUE_BASE_MAP = {
+    "DA": "A",
+    "A": "A",
+    "RA": "A",
+    "ADE": "A",
+    "DT": "T/U",
+    "T": "T/U",
+    "THY": "T/U",
+    "DU": "T/U",
+    "U": "T/U",
+    "RU": "T/U",
+    "URA": "T/U",
+    "DC": "C",
+    "C": "C",
+    "RC": "C",
+    "CYT": "C",
+    "DG": "G",
+    "G": "G",
+    "RG": "G",
+    "GUA": "G",
+}
 
 _DEFAULT_MATRIX_PATH = os.path.join(
     os.path.dirname(__file__), "..", "config", "spatial_interaction_matrix.csv"
@@ -116,12 +149,246 @@ class SpatialRankAdapter:
                 total += row.get(group, 0.0) * count
         return total / len(sequence)
 
-    def rank_batch(
+    # ------------------------------------------------------------------
+    # Pose-based rule matching (paper Section 3.4.3)
+    # ------------------------------------------------------------------
+
+    def _preferred_bases(self) -> dict[str, str]:
+        """For each group, return the base with the highest interaction probability."""
+        result: dict[str, str] = {}
+        if not self._matrix:
+            return result
+        for group in self._groups:
+            best_base = max(
+                self._matrix, key=lambda b: self._matrix[b].get(group, 0.0)
+            )
+            result[group] = best_base
+        return result
+
+    def _detect_group_matches(self, smiles: str) -> dict[str, list[tuple[int, ...]]]:
+        """Return per-group substructure matches (RDKit atom-index tuples)."""
+        matches: dict[str, list[tuple[int, ...]]] = {}
+        if not _RDKIT_AVAILABLE or not smiles:
+            return matches
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return matches
+        for name, pattern in self._smarts_patterns.items():
+            if pattern is None:
+                continue
+            hits = mol.GetSubstructMatches(pattern)
+            if hits:
+                matches[name] = [tuple(h) for h in hits]
+        return matches
+
+    @staticmethod
+    def _parse_pdbqt_atoms(line: str) -> tuple[str, float, float, float] | None:
+        """Parse an ATOM/HETATM line into (atom_name, x, y, z)."""
+        if not (line.startswith("ATOM") or line.startswith("HETATM")):
+            return None
+        try:
+            atom_name = line[12:16].strip()
+            x = float(line[30:38])
+            y = float(line[38:46])
+            z = float(line[46:54])
+        except (ValueError, IndexError):
+            return None
+        return (atom_name, x, y, z)
+
+    def _parse_receptor_bases(
+        self, pdbqt_path: str
+    ) -> list[tuple[str, str, list[tuple[str, float, float, float]]]]:
+        """Parse a receptor PDBQT into ``(base_type, residue_label, atoms)``.
+
+        Residues whose name does not map to a nucleotide base are skipped.
+        """
+        residues: dict[str, list[tuple[str, float, float, float]]] = {}
+        order: list[str] = []
+        base_types: dict[str, str] = {}
+        try:
+            with open(pdbqt_path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    if not (line.startswith("ATOM") or line.startswith("HETATM")):
+                        continue
+                    atom = self._parse_pdbqt_atoms(line)
+                    if atom is None:
+                        continue
+                    res_name = line[17:20].strip().upper()
+                    base_type = _RESIDUE_BASE_MAP.get(res_name)
+                    if base_type is None:
+                        continue
+                    chain = line[21:22].strip() or "_"
+                    res_seq = line[22:26].strip()
+                    label = f"{chain}:{res_name}:{res_seq}"
+                    if label not in residues:
+                        residues[label] = []
+                        order.append(label)
+                        base_types[label] = base_type
+                    residues[label].append(atom)
+        except OSError:
+            return []
+        return [(base_types[label], label, residues[label]) for label in order]
+
+    def _parse_first_pose_atoms(
+        self, output_pdbqt_path: str
+    ) -> list[tuple[str, float, float, float]]:
+        """Return the atoms of the first MODEL in a Vina output PDBQT."""
+        atoms: list[tuple[str, float, float, float]] = []
+        try:
+            with open(output_pdbqt_path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    if line.startswith("ENDMDL"):
+                        break
+                    atom = self._parse_pdbqt_atoms(line)
+                    if atom is not None:
+                        atoms.append(atom)
+        except OSError:
+            return []
+        return atoms
+
+    @staticmethod
+    def _is_hydrogen(atom_name: str) -> bool:
+        """Heuristic: PDBQT hydrogen atom names start with 'H' (e.g. H, HD)."""
+        name = atom_name.strip()
+        return bool(name) and name[0] in ("H", "h")
+
+    @staticmethod
+    def _heavy_pose_atoms(
+        pose_atoms: list[tuple[str, float, float, float]],
+    ) -> list[tuple[str, float, float, float]]:
+        return [a for a in pose_atoms if not SpatialRankAdapter._is_hydrogen(a[0])]
+
+    @staticmethod
+    def _rdkit_heavy_atom_count(smiles: str | None) -> int | None:
+        """Heavy-atom count of the target as RDKit indexes it (no explicit H)."""
+        if not _RDKIT_AVAILABLE or not smiles:
+            return None
+        mol = Chem.MolFromSmiles(smiles)
+        return mol.GetNumAtoms() if mol is not None else None
+
+    def _map_ligand_atoms_to_groups(
+        self,
+        group_matches: dict[str, list[tuple[int, ...]]],
+        pose_atoms: list[tuple[str, float, float, float]],
+    ) -> dict[str, list[list[tuple[str, float, float, float]]]]:
+        """Map functional-group atom indices to docked pose coordinates.
+
+        The "ligand" of the docked pose is the *target small molecule* (the
+        same molecule for every candidate). ``group_matches`` holds RDKit
+        heavy-atom indices from SMARTS hits on the target SMILES; we map them
+        onto the pose's heavy atoms.
+
+        NOTE: this assumes meeko preserved the RDKit heavy-atom ordering when
+        writing the ligand PDBQT. That assumption can break if the meeko
+        torsion-tree traversal reorders atoms; callers should consult the
+        ``atom_map_reliable`` flag (see ``_rank_pose``) which compares the
+        heavy-atom counts as a sanity check. Hydrogens are dropped first so
+        polar-H rows do not shift the index alignment. Out-of-range indices
+        are dropped.
+        """
+        heavy = self._heavy_pose_atoms(pose_atoms)
+        result: dict[str, list[list[tuple[str, float, float, float]]]] = {}
+        n = len(heavy)
+        for group, occurrences in group_matches.items():
+            group_occurrences: list[list[tuple[str, float, float, float]]] = []
+            for occ in occurrences:
+                coords = [heavy[i] for i in occ if 0 <= i < n]
+                if coords:
+                    group_occurrences.append(coords)
+            if group_occurrences:
+                result[group] = group_occurrences
+        return result
+
+    def _count_rule_matches(
+        self,
+        receptor_bases: list[tuple[str, str, list[tuple[str, float, float, float]]]],
+        ligand_group_atoms: dict[str, list[list[tuple[str, float, float, float]]]],
+        preferred_bases: dict[str, str],
+        cutoff: float = _DEFAULT_CONTACT_CUTOFF,
+    ) -> tuple[int, list[dict[str, Any]]]:
+        """Count functional-group occurrences contacting their preferred base."""
+        count = 0
+        details: list[dict[str, Any]] = []
+        for group, occurrences in ligand_group_atoms.items():
+            preferred = preferred_bases.get(group)
+            if preferred is None:
+                continue
+            for occ_atoms in occurrences:
+                best: tuple[float, str] | None = None
+                for base_type, label, base_atoms in receptor_bases:
+                    if base_type != preferred:
+                        continue
+                    for _ln, lx, ly, lz in occ_atoms:
+                        for _rn, rx, ry, rz in base_atoms:
+                            dist = math.sqrt(
+                                (lx - rx) ** 2 + (ly - ry) ** 2 + (lz - rz) ** 2
+                            )
+                            if best is None or dist < best[0]:
+                                best = (dist, label)
+                if best is not None and best[0] <= cutoff:
+                    count += 1
+                    details.append(
+                        {
+                            "group": group,
+                            "preferred_base": preferred,
+                            "base_residue": best[1],
+                            "distance": round(best[0], 3),
+                        }
+                    )
+        return count, details
+
+    @staticmethod
+    def _competition_ranks(values: list[float], reverse: bool) -> list[int]:
+        """Standard competition ranking ("1224"). Ties share the smallest rank."""
+        order = sorted(range(len(values)), key=lambda i: values[i], reverse=reverse)
+        ranks = [0] * len(values)
+        last_val: float | None = None
+        last_rank = 0
+        for pos, idx in enumerate(order):
+            v = values[idx]
+            if last_val is None or v != last_val:
+                last_rank = pos + 1
+                last_val = v
+            ranks[idx] = last_rank
+        return ranks
+
+    @staticmethod
+    def _dense_ranks(values: list[float], reverse: bool) -> list[int]:
+        """Dense ranking ("1223"). Ties share a rank, no gaps follow."""
+        order = sorted(range(len(values)), key=lambda i: values[i], reverse=reverse)
+        ranks = [0] * len(values)
+        last_val: float | None = None
+        cur = 0
+        for idx in order:
+            v = values[idx]
+            if last_val is None or v != last_val:
+                cur += 1
+                last_val = v
+            ranks[idx] = cur
+        return ranks
+
+    def _can_use_pose_mode(self, docking_results: list[DockingResult]) -> bool:
+        if not _RDKIT_AVAILABLE or not docking_results:
+            return False
+        for dr in docking_results:
+            raw = dr.raw_outputs or {}
+            out_pdbqt = raw.get("output_pdbqt")
+            rec_pdbqt = raw.get("receptor_pdbqt")
+            if (
+                out_pdbqt
+                and rec_pdbqt
+                and os.path.isfile(out_pdbqt)
+                and os.path.isfile(rec_pdbqt)
+            ):
+                return True
+        return False
+
+    def _rank_sequence(
         self,
         candidates: list[CandidateSequence],
         target: TargetMolecule,
     ) -> list[SpatialRankResult]:
-        """Score candidates using the spatial interaction matrix."""
+        """Sequence-composition fallback ranking (no 3D pose available)."""
         group_counts = self._detect_groups(target.smiles or "")
         present_groups = {g: c for g, c in group_counts.items() if c > 0}
 
@@ -135,18 +402,147 @@ class SpatialRankAdapter:
                     detected_groups=list(present_groups.keys()),
                     rank=0,
                     raw_outputs={
+                        "mode": "sequence_fallback",
                         "group_counts": group_counts,
                         "sequence_length": len(cand.sequence),
                     },
                 )
             )
 
-        # Assign ranks: higher score = better rank (1-based)
-        sorted_results = sorted(
-            results, key=lambda r: r.spatial_score, reverse=True
-        )
+        sorted_results = sorted(results, key=lambda r: r.spatial_score, reverse=True)
         for i, res in enumerate(sorted_results):
             res.rank = i + 1
-
-        # Return in original candidate order but with rank populated
         return results
+
+    def _rank_pose(
+        self,
+        candidates: list[CandidateSequence],
+        target: TargetMolecule,
+        docking_results: list[DockingResult],
+        cutoff: float = _DEFAULT_CONTACT_CUTOFF,
+    ) -> list[SpatialRankResult]:
+        """Pose-based binary rule-match ranking joined with docking affinity."""
+        # The docked "ligand" is the target small molecule, so functional-group
+        # detection runs once on the target SMILES and is shared by all
+        # candidates (only the receptor/pose differ per candidate).
+        group_matches = self._detect_group_matches(target.smiles or "")
+        present_groups = list(group_matches.keys())
+        preferred_bases = self._preferred_bases()
+        expected_heavy = self._rdkit_heavy_atom_count(target.smiles)
+        docking_by_id = {dr.candidate_id: dr for dr in docking_results}
+
+        interaction_counts: list[int] = []
+        docking_scores: list[float | None] = []
+        contact_details: list[list[dict[str, Any]]] = []
+        had_pose_flags: list[bool] = []
+        atom_map_reliable_flags: list[bool | None] = []
+
+        for cand in candidates:
+            cand_id = cand.candidate_id or ""
+            dr = docking_by_id.get(cand_id)
+            raw = (dr.raw_outputs or {}) if dr else {}
+            out_pdbqt = raw.get("output_pdbqt")
+            rec_pdbqt = raw.get("receptor_pdbqt")
+
+            count = 0
+            details: list[dict[str, Any]] = []
+            had_pose = bool(
+                group_matches
+                and out_pdbqt
+                and rec_pdbqt
+                and os.path.isfile(out_pdbqt)
+                and os.path.isfile(rec_pdbqt)
+            )
+            atom_map_reliable: bool | None = None
+            if had_pose:
+                receptor_bases = self._parse_receptor_bases(rec_pdbqt)
+                pose_atoms = self._parse_first_pose_atoms(out_pdbqt)
+                heavy_pose = self._heavy_pose_atoms(pose_atoms)
+                # Sanity check: index-based mapping is only trustworthy when the
+                # pose heavy-atom count matches what RDKit produced for the
+                # target. A mismatch flags likely meeko atom reordering.
+                atom_map_reliable = (
+                    None
+                    if expected_heavy is None
+                    else (expected_heavy == len(heavy_pose))
+                )
+                ligand_group_atoms = self._map_ligand_atoms_to_groups(
+                    group_matches, pose_atoms
+                )
+                count, details = self._count_rule_matches(
+                    receptor_bases, ligand_group_atoms, preferred_bases, cutoff
+                )
+
+            interaction_counts.append(count)
+            docking_scores.append(dr.docking_score if dr else None)
+            contact_details.append(details)
+            had_pose_flags.append(had_pose)
+            atom_map_reliable_flags.append(atom_map_reliable)
+
+        # interaction_rank: competition ranking, higher count = better.
+        interaction_ranks = self._competition_ranks(
+            [float(c) for c in interaction_counts], reverse=True
+        )
+        # docking_rank: dense ranking, more negative score = better.
+        # Missing scores sort last (worst) via +inf sentinel.
+        score_keys = [
+            s if s is not None else math.inf for s in docking_scores
+        ]
+        docking_ranks = self._dense_ranks(score_keys, reverse=False)
+
+        results: list[SpatialRankResult] = []
+        for idx, cand in enumerate(candidates):
+            rank_sum = interaction_ranks[idx] + docking_ranks[idx]
+            raw_outputs: dict[str, Any] = {
+                # Candidates without usable pose files participate in the joint
+                # ranking with count=0/score=None but are marked "no_pose" so the
+                # absence of 3D evidence is not mistaken for a real zero-contact
+                # pose result.
+                "mode": "pose_rule_match" if had_pose_flags[idx] else "no_pose",
+                "interaction_count": interaction_counts[idx],
+                "interaction_rank": interaction_ranks[idx],
+                "docking_score": docking_scores[idx],
+                "docking_rank": docking_ranks[idx],
+                "rank_sum": rank_sum,
+                "contact_details": contact_details[idx],
+            }
+            if atom_map_reliable_flags[idx] is not None:
+                raw_outputs["atom_map_reliable"] = atom_map_reliable_flags[idx]
+            results.append(
+                SpatialRankResult(
+                    candidate_id=cand.candidate_id or "",
+                    spatial_score=float(interaction_counts[idx]),
+                    detected_groups=list(present_groups),
+                    rank=0,
+                    raw_outputs=raw_outputs,
+                )
+            )
+
+        # Final ordinal rank: ascending rank_sum, then more-negative docking
+        # score; remaining ties preserve input order (stable sort).
+        order = sorted(
+            range(len(results)),
+            key=lambda i: (
+                results[i].raw_outputs["rank_sum"],
+                score_keys[i],
+            ),
+        )
+        for ordinal, idx in enumerate(order, start=1):
+            results[idx].rank = ordinal
+        return results
+
+    def rank_batch(
+        self,
+        candidates: list[CandidateSequence],
+        target: TargetMolecule,
+        docking_results: list[DockingResult] | None = None,
+    ) -> list[SpatialRankResult]:
+        """Rank candidates by spatial interaction.
+
+        When docking poses are available, uses the pose-based binary
+        rule-match scheme joined with docking affinity. Otherwise falls back
+        to sequence-composition scoring.
+        """
+        if docking_results and self._can_use_pose_mode(docking_results):
+            return self._rank_pose(candidates, target, docking_results)
+        return self._rank_sequence(candidates, target)

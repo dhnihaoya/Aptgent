@@ -51,7 +51,7 @@ class FakeResolver:
         )
 
 class FakeSpatialRankAdapter:
-    def rank_batch(self, candidates, target):
+    def rank_batch(self, candidates, target, docking_results=None):
         return []
 
 class FakePdbAnalysisAdapter:

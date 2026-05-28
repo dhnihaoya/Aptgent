@@ -11,6 +11,7 @@ import pytest
 from aptgent.cli.doctor import (
     _check_binary,
     _check_env_vars,
+    _check_feature_dimensions,
     _check_llm,
     _check_predictor,
     _check_predictor_deps,
@@ -76,6 +77,51 @@ def test_check_predictor_missing_dir():
 def test_check_predictor_not_configured():
     result = _check_predictor(None)
     assert result["status"] == "not_configured"
+
+
+# ── _check_feature_dimensions ───────────────────────────────
+
+
+def _write_fake_model(model_dir: Path, mer_label: str, n_features: int) -> None:
+    import pickle
+    from types import SimpleNamespace
+
+    model_dir.mkdir(parents=True, exist_ok=True)
+    obj = SimpleNamespace(n_features_in_=n_features)
+    path = model_dir / f"({mer_label})(Dataset N1)XGB.pkl"
+    with open(path, "wb") as handle:
+        pickle.dump(obj, handle)
+
+
+def test_check_feature_dimensions_not_configured():
+    result = _check_feature_dimensions(None)
+    assert result["status"] == "skipped"
+
+
+def test_check_feature_dimensions_missing_dir():
+    result = _check_feature_dimensions("/nonexistent/models/path")
+    assert result["status"] == "skipped"
+
+
+def test_check_feature_dimensions_mismatch(tmp_path):
+    pytest.importorskip("rdkit")
+    _write_fake_model(tmp_path, "1mer", 99999)
+    result = _check_feature_dimensions(str(tmp_path))
+    assert result["status"] == "feature_mismatch"
+    assert result["model_expects"] == 99999
+    assert "RDKit" in result["hint"]
+
+
+def test_check_feature_dimensions_ok(tmp_path):
+    pytest.importorskip("rdkit")
+    from aptgent.cli.doctor import _expected_feature_length
+
+    expected = _expected_feature_length("1mer")
+    assert expected is not None
+    _write_fake_model(tmp_path, "1mer", expected)
+    result = _check_feature_dimensions(str(tmp_path))
+    assert result["status"] == "ok"
+    assert result["feature_length"] == expected
 
 
 # ── _check_llm ──────────────────────────────────────────────

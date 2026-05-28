@@ -84,6 +84,84 @@ def _check_predictor(model_dir: str | None) -> dict[str, Any]:
     }
 
 
+def _expected_feature_length(mer_label: str) -> int | None:
+    """Compute the feature vector length the current runtime would produce."""
+    try:
+        from aptgent.predictor_runtime.features import (
+            MER_K_MAP,
+            _DESCRIPTOR_FUNCS,
+        )
+    except Exception:
+        return None
+    k_list = MER_K_MAP.get(mer_label)
+    if k_list is None:
+        return None
+    kmer_dim = sum(4 ** k for k in k_list)
+    return kmer_dim + len(_DESCRIPTOR_FUNCS)
+
+
+def _check_feature_dimensions(model_dir: str | None) -> dict[str, Any]:
+    """Compare a bundled model's expected feature count with the current runtime.
+
+    A mismatch usually means RDKit version drift changed the descriptor set.
+    Any error (missing deps, unreadable models) yields a graceful ``skipped``.
+
+    Trust boundary: this unpickles model files from ``model_dir``. ``pickle``
+    executes arbitrary code on load, so ``model_dir`` must only contain trusted
+    bundled models. Do not point this at an untrusted/user-writable directory.
+    """
+    import pickle
+    import re
+
+    if not model_dir:
+        return {"status": "skipped", "reason": "no model_dir configured"}
+    p = Path(model_dir)
+    if not p.is_dir():
+        return {"status": "skipped", "reason": "model_dir missing"}
+
+    pkl_files = sorted(p.glob("*.pkl"))
+    for pkl in pkl_files:
+        # Skip torch models (no n_features_in_) to avoid importing torch.
+        if pkl.name.endswith("RNN.pkl") or pkl.name.endswith("biRNN.pkl"):
+            continue
+        match = re.search(r"\((\d+mer)\)", pkl.name)
+        if not match:
+            continue
+        mer_label = match.group(1)
+        expected = _expected_feature_length(mer_label)
+        if expected is None:
+            return {"status": "skipped", "reason": "feature runtime unavailable"}
+        try:
+            with open(pkl, "rb") as handle:
+                model = pickle.load(handle)
+        except Exception as exc:
+            return {"status": "skipped", "reason": f"could not load model: {exc}"}
+        n_features = getattr(model, "n_features_in_", None)
+        if n_features is None:
+            continue
+        actual = int(n_features)
+        if actual != expected:
+            return {
+                "status": "feature_mismatch",
+                "model": pkl.name,
+                "model_expects": actual,
+                "runtime_produces": expected,
+                "hint": (
+                    f"Feature vector length mismatch: model expects {actual}, "
+                    f"current RDKit produces {expected}. This usually means RDKit "
+                    "version drift added new descriptors. Do NOT change the "
+                    "descriptor filter; update your conda environment to match the "
+                    "training-time RDKit version."
+                ),
+            }
+        return {
+            "status": "ok",
+            "model": pkl.name,
+            "feature_length": actual,
+        }
+    return {"status": "skipped", "reason": "no comparable model found"}
+
+
 def _check_llm(llm_config: dict[str, Any]) -> dict[str, Any]:
     provider_cfg = llm_config.get("provider", {}).get("openai", {})
     api_key_env = provider_cfg.get("api_key_env", "GLM_API_KEY")
@@ -194,6 +272,9 @@ def run_doctor() -> int:
     model_dir = tools.get("predictor", {}).get("model_dir")
     checks.append(("Predictor models", _check_predictor(model_dir)))
 
+    # Feature dimension consistency (descriptor environment guard)
+    checks.append(("Feature dimensions", _check_feature_dimensions(model_dir)))
+
     # Predictor runtime dependencies
     checks.append(("Predictor runtime", _check_predictor_deps()))
 
@@ -224,8 +305,9 @@ def run_doctor() -> int:
         icon = {
             "ok": "+", "missing": "!", "missing_dir": "!",
             "not_configured": "-", "missing_key": "!", "will_create": "~",
+            "skipped": "-", "feature_mismatch": "!",
         }.get(status, "?")
-        if status not in ("ok", "will_create", "not_configured"):
+        if status not in ("ok", "will_create", "not_configured", "skipped"):
             all_ok = False
         print(f"  [{icon}] {label}")
         for k, v in result.items():

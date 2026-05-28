@@ -41,11 +41,19 @@ def build_report_context(state: Any) -> dict[str, Any]:
     spatial_by_id = {result.candidate_id: result for result in state.spatial_ranks}
     docked_ids = set(docking_by_id)
 
+    # Candidates removed by the specificity filter are hard-gated out of the
+    # ranking; mirror the spatial_rank step so the report stays consistent.
+    specificity_excluded_ids = {
+        cid for cid, result in specificity_by_id.items() if result.status == "removed"
+    }
+    excluded_from_docked = specificity_excluded_ids & docked_ids
+
     if state.spatial_ranks:
         ordered_docked_ids = [
             result.candidate_id
             for result in sorted(state.spatial_ranks, key=lambda item: item.rank or 999999)
             if result.candidate_id in docked_ids
+            and result.candidate_id not in specificity_excluded_ids
         ]
     else:
         ordered_docked_ids = [
@@ -57,6 +65,7 @@ def build_report_context(state: Any) -> dict[str, Any]:
                     item.docking_score if item.docking_score is not None else 0.0,
                 ),
             )
+            if result.candidate_id not in specificity_excluded_ids
         ]
 
     docking_candidates: list[dict[str, Any]] = []
@@ -140,6 +149,7 @@ def build_report_context(state: Any) -> dict[str, Any]:
             "total_candidate_count": len(state.candidates),
             "ensemble_prediction_count": len(sorted_predictions),
             "docked_candidate_count": len(docking_candidates),
+            "specificity_excluded_from_docked_count": len(excluded_from_docked),
             "non_docked_candidate_count": len(non_docked_predictions),
             "non_docked_score_min": min(probabilities) if probabilities else None,
             "non_docked_score_max": max(probabilities) if probabilities else None,
@@ -172,6 +182,17 @@ def format_deterministic_report_markdown(context: dict[str, Any]) -> str:
         "",
         "## Docking Candidates for Documentation",
     ]
+    excluded_count = overview.get("specificity_excluded_from_docked_count", 0)
+    if excluded_count:
+        lines.extend(
+            [
+                "",
+                (
+                    f"{excluded_count} candidate(s) excluded by specificity filter "
+                    "are omitted from the ranking below."
+                ),
+            ]
+        )
     if candidates:
         for candidate in candidates:
             lines.extend(
