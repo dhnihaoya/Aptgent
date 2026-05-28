@@ -82,6 +82,7 @@ class FakeRNAComposerAdapter:
         output_dir: str | Path = ".",
         *,
         candidate_id: str | None = None,
+        on_poll: Any = None,
     ) -> str:
         self.calls.append(sequence)
         out = Path(output_dir) / f"{candidate_id or 'cand'}.pdb"
@@ -254,6 +255,8 @@ async def test_rnacomposer_auto_path_prepares_receptors(tmp_path):
         await pilot.press("enter")
         # Worker spawns; allow it to finish.
         for _ in range(40):
+            if app.current_state.docking_plan is not None:
+                break
             await pilot.pause()
 
         plan = app.current_state.docking_plan
@@ -556,6 +559,8 @@ async def test_nl_parse_fills_strategy_panel_without_submitting(
         )
         # let worker finish
         for _ in range(40):
+            if app.screen.query_one("#dock-plan-top-k", Input).value == "8":
+                break
             await pilot.pause()
 
         strategy_panel = app.screen.query_one(DockingStrategyPanel)
@@ -615,6 +620,8 @@ async def test_nl_parse_skip_action_short_circuits_to_skip(
         assert handler is not None
         handler.handle_user_input("\u8df3\u8fc7 docking")  # "skip docking" in zh
         for _ in range(40):
+            if app.current_state.context.docking_recommendation.strategy == "skipped":
+                break
             await pilot.pause()
 
         assert app.current_state.docking_plan is None

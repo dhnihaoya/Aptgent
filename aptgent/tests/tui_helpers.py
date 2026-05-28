@@ -14,6 +14,16 @@ from aptgent.domain.models import (
 from aptgent.tui.app import AptgentApp
 
 
+class _FakeLLMClient:
+    """No-op LLM client that never makes network requests."""
+
+    def invoke(self, *args, **kwargs):
+        return ""
+
+    def invoke_stream(self, *args, **kwargs):
+        return iter([])
+
+
 class FakeRNAFoldAdapter:
     def fold(self, sequence: str) -> SecondaryStructure:
         return SecondaryStructure(
@@ -111,10 +121,11 @@ def make_app(
         asyncio.get_event_loop()
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
-    return AptgentApp(
+    app = AptgentApp(
         config={
             "paths": {"runs_dir": str(tmp_path / "runs")},
             "enumeration": {"top_k_keep": 500},
+            "job_startup_timeout_seconds": 0.5,
         },
         tools_config={},
         rna_fold_adapter=rna_fold_adapter or FakeRNAFoldAdapter(),
@@ -126,6 +137,17 @@ def make_app(
         intake_skill_factory=intake_skill_factory,
         pdb_review_skill_factory=pdb_review_skill_factory,
     )
+    _fake_client = _FakeLLMClient()
+    _original_create_skill = app.runtime.create_skill
+
+    def _safe_create_skill(cls):
+        try:
+            return cls(client=_fake_client)
+        except TypeError:
+            return cls()
+
+    object.__setattr__(app.runtime, "create_skill", _safe_create_skill)
+    return app
 
 @pytest.fixture
 def anyio_backend():

@@ -50,6 +50,7 @@ class SubprocessSession:
         on_line: Callable[[dict], None],
         cancel_event: threading.Event | None = None,
         timeout_seconds: int | None = None,
+        shutdown_waits: tuple[float, float, float] = (30, 10, 5),
     ) -> tuple[int, str, bool]:
         """Spawn the subprocess and block until it exits.
 
@@ -123,18 +124,19 @@ class SubprocessSession:
                     _send_cancel()
                     break
         finally:
+            wait_first, wait_terminate, wait_kill = shutdown_waits
             try:
-                proc.wait(timeout=30)
+                proc.wait(timeout=wait_first)
             except subprocess.TimeoutExpired:
                 _log.warning("streaming subprocess did not exit; terminating.")
                 proc.terminate()
                 try:
-                    proc.wait(timeout=10)
+                    proc.wait(timeout=wait_terminate)
                 except subprocess.TimeoutExpired:
                     _log.warning("streaming subprocess still alive; killing.")
                     proc.kill()
                     try:
-                        proc.wait(timeout=5)
+                        proc.wait(timeout=wait_kill)
                     except subprocess.TimeoutExpired:
                         pass
             reader_thread.join(timeout=5)

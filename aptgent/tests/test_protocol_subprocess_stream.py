@@ -6,6 +6,12 @@ import threading
 
 from aptgent.protocol.subprocess_stream import SubprocessSession
 
+_BLOCK_ON_STDIN_SCRIPT = (
+    'import json,sys;'
+    'sys.stdout.write(json.dumps({"type":"ready"})+chr(10));sys.stdout.flush();'
+    'sys.stdin.readline()'
+)
+
 
 def test_session_captures_stdout_json_lines():
     cmd = [
@@ -55,12 +61,8 @@ def test_session_collects_stderr():
 
 
 def test_session_cancel_event():
-    cmd = [
-        sys.executable, "-c",
-        'import time,json,sys;'
-        'sys.stdout.write(json.dumps({"type":"ready"})+chr(10));sys.stdout.flush();'
-        'time.sleep(30)',
-    ]
+    """Cancel event should stop the subprocess via stdin cancel."""
+    cmd = [sys.executable, "-c", _BLOCK_ON_STDIN_SCRIPT]
     cancel = threading.Event()
     received: list[dict] = []
 
@@ -74,15 +76,12 @@ def test_session_cancel_event():
     )
     assert len(received) >= 1
     assert received[0]["type"] == "ready"
+    assert not timed_out
 
 
 def test_session_timeout():
-    cmd = [
-        sys.executable, "-c",
-        'import time,json,sys;'
-        'sys.stdout.write(json.dumps({"type":"ready"})+chr(10));sys.stdout.flush();'
-        'time.sleep(60)',
-    ]
+    """Timeout should trigger timed_out=True when subprocess runs too long."""
+    cmd = [sys.executable, "-c", _BLOCK_ON_STDIN_SCRIPT]
     received: list[dict] = []
     session = SubprocessSession(cmd)
     rc, stderr, timed_out = session.run(
@@ -90,3 +89,22 @@ def test_session_timeout():
         timeout_seconds=1,
     )
     assert timed_out
+
+
+def test_session_unresponsive_subprocess_terminates():
+    """When subprocess ignores stdin cancel, terminate/kill fallback must work."""
+    cmd = [
+        sys.executable, "-c",
+        'import json,sys,time;'
+        'sys.stdout.write(json.dumps({"type":"ready"})+chr(10));sys.stdout.flush();'
+        'time.sleep(300)',
+    ]
+    received: list[dict] = []
+    session = SubprocessSession(cmd)
+    rc, stderr, timed_out = session.run(
+        on_line=lambda obj: received.append(obj),
+        timeout_seconds=0.2,
+        shutdown_waits=(0.2, 0.2, 0.2),
+    )
+    assert timed_out
+    assert rc is not None

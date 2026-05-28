@@ -148,7 +148,8 @@ class JobAttachMixin:
             reader = EventReader(events_file)
 
             # Wait for the file to appear
-            deadline = time.monotonic() + 30
+            startup_timeout = screen.app.config.get("job_startup_timeout_seconds", 30)
+            deadline = time.monotonic() + startup_timeout
             while not events_file.exists() and time.monotonic() < deadline:
                 time.sleep(0.5)
 
