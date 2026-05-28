@@ -273,10 +273,7 @@ class IntakeHandler(StepHandler):
                 structured_call=lambda: validate_intake_result(skill.extract(text)),
             )
         except Exception as exc:
-            self._threadsafe(
-                self.screen.add_system_message, f"LLM error: {exc}", "error-text"
-            )
-            self._enable_input()
+            self._report_error(f"LLM error: {exc}")
             return
 
         state.input_payload["llm_extracted"] = result

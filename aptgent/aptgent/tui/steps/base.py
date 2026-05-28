@@ -49,3 +49,13 @@ class StepHandler:
     def _enable_input(self) -> None:
         """Re-enable the input bar from a worker thread."""
         self._threadsafe(self.screen.set_input_enabled, True)
+
+    def _report_error(self, message: str, *, style: str = "error-text") -> None:
+        """Show a failure message and re-enable input.
+
+        Combines the ``add_system_message`` + ``_enable_input`` pair that
+        otherwise recurs in worker error handlers, so a forgotten
+        ``_enable_input`` can no longer leave the input bar disabled.
+        """
+        self._threadsafe(self.screen.add_system_message, message, style)
+        self._enable_input()

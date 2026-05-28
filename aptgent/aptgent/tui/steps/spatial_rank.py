@@ -89,7 +89,4 @@ class SpatialRankHandler(StepHandler):
             if ns:
                 self._threadsafe(self.screen.advance_to_step, ns)
         except Exception as exc:
-            self._threadsafe(
-                self.screen.add_system_message, f"Ranking failed: {exc}", "error-text"
-            )
-            self._enable_input()
+            self._report_error(f"Ranking failed: {exc}")

@@ -112,10 +112,7 @@ class SiteProposalHandler(StepHandler):
                 structured_call=structured_result,
             )
         except Exception as exc:
-            self._threadsafe(
-                self.screen.add_system_message, f"LLM error: {exc}", "error-text"
-            )
-            self._enable_input()
+            self._report_error(f"LLM error: {exc}")
             return
 
         proposals = result.get("proposals", [])

@@ -370,12 +370,9 @@ class _StrategyMixin:
                 candidate_count=candidate_count,
             )
         except Exception as exc:
-            self._threadsafe(
-                self.screen.add_system_message,
-                f"Could not parse natural language overrides: {exc}",
-                "error-text",
+            self._report_error(
+                f"Could not parse natural language overrides: {exc}"
             )
-            self._enable_input()
             return
 
         applied, warnings, action = validate_docking_param_overrides(

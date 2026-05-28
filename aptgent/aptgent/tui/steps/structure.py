@@ -96,10 +96,7 @@ class StructureHandler(StepHandler):
                 source="rnafold",
                 note=str(exc),
             )
-            self._threadsafe(
-                self.screen.add_system_message, f"RNAfold error: {exc}", "error-text"
-            )
-            self._enable_input()
+            self._report_error(f"RNAfold error: {exc}")
 
     def _store_secondary_structure(self, struct, *, source: str, note: str) -> None:
         state = self.screen.app.current_state

@@ -100,10 +100,7 @@ class ScoringHandler(StepHandler):
             if ns:
                 self._threadsafe(self.screen.advance_to_step, ns)
         except Exception as exc:
-            self._threadsafe(
-                self.screen.add_system_message, f"Scoring failed: {exc}", "error-text"
-            )
-            self._enable_input()
+            self._report_error(f"Scoring failed: {exc}")
 
     def _handle_empty_candidates(self, state: Any) -> bool:
         if not is_empty_enumeration_result(state):
