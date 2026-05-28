@@ -194,16 +194,10 @@ class ChatScreen(Screen):
         markdown: bool = False,
     ) -> SystemBubble:
         """Append a system bubble to the chat log."""
-        chat_log = self.query_one("#chat-log", VerticalScroll)
-        follow_output = self._should_follow_output(chat_log)
         bubble = SystemBubble(text, markdown=markdown)
         if extra_class:
             bubble.add_class(extra_class)
-        if self._activity_bubble is not None and self._activity_bubble.is_mounted:
-            chat_log.mount(bubble, before=self._activity_bubble)
-        else:
-            chat_log.mount(bubble)
-        self._follow_output_if_needed(chat_log, follow_output)
+        self._mount_bubble(bubble)
         return bubble
 
     def add_tool_message(
@@ -218,26 +212,14 @@ class ChatScreen(Screen):
 
     def add_streaming_message(self, *, markdown: bool = False) -> StreamingBubble:
         """Append a streaming bubble to the chat log and return it."""
-        chat_log = self.query_one("#chat-log", VerticalScroll)
-        follow_output = self._should_follow_output(chat_log)
         bubble = StreamingBubble(markdown=markdown)
-        if self._activity_bubble is not None and self._activity_bubble.is_mounted:
-            chat_log.mount(bubble, before=self._activity_bubble)
-        else:
-            chat_log.mount(bubble)
-        self._follow_output_if_needed(chat_log, follow_output)
+        self._mount_bubble(bubble)
         return bubble
 
     def add_thinking_message(self) -> ThinkingBubble:
         """Append a collapsible thinking bubble to the chat log and return it."""
-        chat_log = self.query_one("#chat-log", VerticalScroll)
-        follow_output = self._should_follow_output(chat_log)
         bubble = ThinkingBubble()
-        if self._activity_bubble is not None and self._activity_bubble.is_mounted:
-            chat_log.mount(bubble, before=self._activity_bubble)
-        else:
-            chat_log.mount(bubble)
-        self._follow_output_if_needed(chat_log, follow_output)
+        self._mount_bubble(bubble)
         return bubble
 
     def add_user_message(self, text: str) -> None:
@@ -249,15 +231,9 @@ class ChatScreen(Screen):
 
     def add_structured_widget(self, widget) -> None:
         """Mount a structured input widget into the chat log."""
-        chat_log = self.query_one("#chat-log", VerticalScroll)
-        follow_output = self._should_follow_output(chat_log)
         self.clear_structured_widget()
         self._active_structured_widget = widget
-        if self._activity_bubble is not None and self._activity_bubble.is_mounted:
-            chat_log.mount(widget, before=self._activity_bubble)
-        else:
-            chat_log.mount(widget)
-        self._follow_output_if_needed(chat_log, follow_output)
+        self._mount_bubble(widget)
         self.call_after_refresh(lambda: self._focus_widget(widget))
 
     def clear_structured_widget(self) -> None:
@@ -447,6 +423,16 @@ class ChatScreen(Screen):
                     return
         except Exception:
             _log.debug("Failed to focus descendant widget", exc_info=True)
+
+    def _mount_bubble(self, bubble: Widget) -> None:
+        """Mount *bubble* into the chat log, inserting before the activity bubble if present."""
+        chat_log = self.query_one("#chat-log", VerticalScroll)
+        follow_output = self._should_follow_output(chat_log)
+        if self._activity_bubble is not None and self._activity_bubble.is_mounted:
+            chat_log.mount(bubble, before=self._activity_bubble)
+        else:
+            chat_log.mount(bubble)
+        self._follow_output_if_needed(chat_log, follow_output)
 
     def _should_follow_output(self, chat_log: VerticalScroll) -> bool:
         try:

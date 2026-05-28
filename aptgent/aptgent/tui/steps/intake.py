@@ -10,7 +10,7 @@ from aptgent.tui.steps.common import (
     format_initial_intake_prompt,
     section_heading,
     INITIAL_INTAKE_PLACEHOLDER,
-    next_step,
+    next_primary_step,
     run_llm_interaction,
     validate_intake_result,
 )
@@ -273,10 +273,10 @@ class IntakeHandler(StepHandler):
                 structured_call=lambda: validate_intake_result(skill.extract(text)),
             )
         except Exception as exc:
-            self.screen.app.call_from_thread(
+            self._threadsafe(
                 self.screen.add_system_message, f"LLM error: {exc}", "error-text"
             )
-            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+            self._enable_input()
             return
 
         state.input_payload["llm_extracted"] = result
@@ -314,7 +314,7 @@ class IntakeHandler(StepHandler):
                 proposed_sites_0 = [s for s in proposed_sites_0 if 0 <= s < len(seq)]
                 if len(proposed_sites_0) < before:
                     state.context.intake.proposed_sites = proposed_sites_0
-                    self.screen.app.call_from_thread(
+                    self._threadsafe(
                         self.screen.add_system_message,
                         f"Some proposed sites were out of range (sequence length {len(seq)}) and have been dropped.",
                         "warning-text",
@@ -369,12 +369,12 @@ class IntakeHandler(StepHandler):
                 missing_parts.append("sequence")
             if not target_text:
                 missing_parts.append("target molecule")
-            self.screen.app.call_from_thread(
+            self._threadsafe(
                 self.screen.add_system_message,
                 f"Missing {', '.join(missing_parts)}. {follow_up}",
                 "warning-text",
             )
-            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+            self._enable_input()
             self.screen.app.save_state()
             return
 
@@ -488,7 +488,7 @@ class IntakeHandler(StepHandler):
             resolved_once=False,
         )
         self.screen.app.save_state()
-        self.screen.app.call_from_thread(self.screen.advance_to_step, Step.INTAKE)
+        self._threadsafe(self.screen.advance_to_step, Step.INTAKE)
 
     def _activate_general_retry(self, error_message: str) -> None:
         state = self.screen.app.current_state
@@ -499,7 +499,7 @@ class IntakeHandler(StepHandler):
             resolved_once=False,
         )
         self.screen.app.save_state()
-        self.screen.app.call_from_thread(self.screen.advance_to_step, Step.INTAKE)
+        self._threadsafe(self.screen.advance_to_step, Step.INTAKE)
 
     def _complete_intake(
         self,
@@ -538,7 +538,7 @@ class IntakeHandler(StepHandler):
         )
 
         if source_label:
-            self.screen.app.call_from_thread(
+            self._threadsafe(
                 self.screen.add_tool_message,
                 f"**Intake source**\n\n- Using `{source_label}` as the authoritative sequence source.",
                 label="agent:intake",
@@ -553,13 +553,13 @@ class IntakeHandler(StepHandler):
             time_budget_hours=time_budget_hours,
         )
         self.screen.app.save_state()
-        self.screen.app.call_from_thread(
+        self._threadsafe(
             lambda: self.screen.add_system_message(
                 confirmation,
                 extra_class="",
                 markdown=True,
             )
         )
-        ns = next_step(Step.INTAKE)
+        ns = next_primary_step(Step.INTAKE)
         if ns:
-            self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
+            self._threadsafe(self.screen.advance_to_step, ns)

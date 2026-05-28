@@ -18,9 +18,15 @@ from pathlib import Path
 from typing import Any, Callable
 
 from aptgent.bootstrap.config import load_config
+from aptgent.jobs.cancel import CancelContext
 from aptgent.jobs.events import EventWriter
 from aptgent.jobs.pid import clear_pid, read_pid, write_pid
-from aptgent.protocol.cancel import CmdFileCancelPoller
+from aptgent.jobs.resume import (
+    iter_result_lines,
+    open_artifact,
+    read_jsonl_header,
+    validate_meta,
+)
 from aptgent.workflow.persistence import Persistence
 
 _log = logging.getLogger(__name__)
@@ -144,48 +150,25 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
     total_binding = 0
     run_meta = {"base_sequence": seq, "sites": sites, "total_space": total_space}
 
-    if results_path.exists() and results_path.stat().st_size > 0:
-        try:
-            with open(results_path, "r", encoding="utf-8") as rf:
-                first_line = rf.readline().strip()
-                if first_line:
-                    header = json.loads(first_line)
-                    stored_meta = header.get("meta")
-                    if stored_meta and (
-                        stored_meta.get("base_sequence") != seq
-                        or stored_meta.get("sites") != sites
-                    ):
-                        skip_first = 0
-                        top_heap.clear()
-                    elif stored_meta:
-                        for line in rf:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            try:
-                                entry = json.loads(line)
-                            except json.JSONDecodeError:
-                                continue
-                            skip_first += 1
-                            pred = entry.get("prediction", {})
-                            if pred.get("label") == 1:
-                                total_binding += 1
-                                heap_counter += 1
-                                prob = pred.get("probability", 0.0)
-                                result_dict = {
-                                    "sequence": entry["candidate"]["sequence"],
-                                    "probability": prob,
-                                    "model_probabilities": pred.get("model_probabilities", []),
-                                }
-                                if len(top_heap) < top_k_keep:
-                                    heapq.heappush(top_heap, (prob, heap_counter, result_dict))
-                                elif prob > top_heap[0][0]:
-                                    heapq.heapreplace(top_heap, (prob, heap_counter, result_dict))
-        except OSError:
-            skip_first = 0
-            top_heap.clear()
-            heap_counter = 0
-            total_binding = 0
+    header = read_jsonl_header(results_path)
+    stored_meta = header.get("meta") if header else None
+    if stored_meta and stored_meta.get("base_sequence") == seq and stored_meta.get("sites") == sites:
+        for entry in iter_result_lines(results_path):
+            skip_first += 1
+            pred = entry.get("prediction", {})
+            if pred.get("label") == 1:
+                total_binding += 1
+                heap_counter += 1
+                prob = pred.get("probability", 0.0)
+                result_dict = {
+                    "sequence": entry["candidate"]["sequence"],
+                    "probability": prob,
+                    "model_probabilities": pred.get("model_probabilities", []),
+                }
+                if len(top_heap) < top_k_keep:
+                    heapq.heappush(top_heap, (prob, heap_counter, result_dict))
+                elif prob > top_heap[0][0]:
+                    heapq.heapreplace(top_heap, (prob, heap_counter, result_dict))
 
     if skip_first >= total_space:
         writer.write_progress(done=total_space, total=total_space, extra={"binding": total_binding})
@@ -206,72 +189,68 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
         file_handle = open(results_path, "w", encoding="utf-8")
         file_handle.write(json.dumps({"meta": run_meta}, ensure_ascii=False) + "\n")
 
-    cancel_event = threading.Event()
-    stop_cancel_poller = threading.Event()
+    adapter_summary: dict[str, Any] = {}
     cmd_file = persistence.job_cmd_file(state.run_id, "candidate_enumeration")
 
-    cancel_poller = CmdFileCancelPoller(cmd_file, cancel_event, stop_cancel_poller)
-    adapter_summary: dict[str, Any] = {}
+    with CancelContext(cmd_file) as cancel_ctx:
+        cancel_event = cancel_ctx.cancel_event
+        try:
+            adapter = create_prediction_adapter(tools_config)
+            if not hasattr(adapter, "predict_mutation_batch"):
+                raise RuntimeError("Prediction adapter does not support predict_mutation_batch")
 
-    try:
-        adapter = create_prediction_adapter(tools_config)
-        if not hasattr(adapter, "predict_mutation_batch"):
-            raise RuntimeError("Prediction adapter does not support predict_mutation_batch")
+            def _on_progress(done: int, total: int, info: dict) -> None:
+                writer.write_progress(done=done, total=total, extra={"binding": total_binding})
 
-        def _on_progress(done: int, total: int, info: dict) -> None:
-            writer.write_progress(done=done, total=total, extra={"binding": total_binding})
+            def _on_result(result: dict) -> None:
+                nonlocal total_binding, heap_counter
+                total_binding += 1
+                heap_counter += 1
 
-        def _on_result(result: dict) -> None:
-            nonlocal total_binding, heap_counter
-            total_binding += 1
-            heap_counter += 1
+                prob = result.get("probability", 0.0)
+                entry = {
+                    "candidate": {"sequence": result["sequence"]},
+                    "prediction": {
+                        "label": 1,
+                        "probability": prob,
+                        "model_probabilities": result.get("model_probabilities", []),
+                    },
+                }
+                file_handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-            prob = result.get("probability", 0.0)
-            entry = {
-                "candidate": {"sequence": result["sequence"]},
-                "prediction": {
-                    "label": 1,
-                    "probability": prob,
-                    "model_probabilities": result.get("model_probabilities", []),
-                },
-            }
-            file_handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                if len(top_heap) < top_k_keep:
+                    heapq.heappush(top_heap, (prob, heap_counter, result))
+                elif prob > top_heap[0][0]:
+                    heapq.heapreplace(top_heap, (prob, heap_counter, result))
 
-            if len(top_heap) < top_k_keep:
-                heapq.heappush(top_heap, (prob, heap_counter, result))
-            elif prob > top_heap[0][0]:
-                heapq.heapreplace(top_heap, (prob, heap_counter, result))
+                if total_binding <= 20 or total_binding % 200 == 0:
+                    writer.write_hit(
+                        candidate_id=f"hit_{total_binding}",
+                        probability=prob,
+                        extra={"sequence": result["sequence"]},
+                    )
 
-            if total_binding <= 20 or total_binding % 200 == 0:
-                writer.write_hit(
-                    candidate_id=f"hit_{total_binding}",
-                    probability=prob,
-                    extra={"sequence": result["sequence"]},
-                )
+            result_summary = adapter.predict_mutation_batch(
+                base_sequence=seq,
+                target=target,
+                sites=sites,
+                progress_callback=_on_progress,
+                result_callback=_on_result,
+                progress_every=progress_every,
+                cancel_event=cancel_event,
+                timeout_seconds=timeout_seconds,
+                skip_first=skip_first,
+                sub_batch_size=sub_batch_size,
+            )
+            if isinstance(result_summary, dict):
+                adapter_summary = result_summary
+            file_handle.flush()
+        except Exception as exc:
+            raise RuntimeError(f"Enumeration failed: {exc}") from exc
+        finally:
+            file_handle.close()
 
-        result_summary = adapter.predict_mutation_batch(
-            base_sequence=seq,
-            target=target,
-            sites=sites,
-            progress_callback=_on_progress,
-            result_callback=_on_result,
-            progress_every=progress_every,
-            cancel_event=cancel_event,
-            timeout_seconds=timeout_seconds,
-            skip_first=skip_first,
-            sub_batch_size=sub_batch_size,
-        )
-        if isinstance(result_summary, dict):
-            adapter_summary = result_summary
-        file_handle.flush()
-    except Exception as exc:
-        raise RuntimeError(f"Enumeration failed: {exc}") from exc
-    finally:
-        stop_cancel_poller.set()
-        cancel_poller.join(timeout=2)
-        file_handle.close()
-
-    if cancel_event.is_set() or adapter_summary.get("cancelled"):
+    if cancel_ctx.cancelled or adapter_summary.get("cancelled"):
         writer.write_done(summary={"cancelled": True, "hits": total_binding})
         return
 
@@ -407,29 +386,13 @@ def _run_specificity(writer: EventWriter, state: Any, persistence: Persistence) 
     # --- Resume detection ---
     done_status: dict[str, dict[str, Any]] = {}
     skip_pairs: list[tuple[int, str]] = []
-    if results_path.exists() and results_path.stat().st_size > 0:
-        try:
-            with open(results_path, "r", encoding="utf-8") as rf:
-                first_line = rf.readline().strip()
-                if first_line:
-                    header = json.loads(first_line)
-                    stored_meta = header.get("meta")
-                    if stored_meta == meta:
-                        for line in rf:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            try:
-                                entry = json.loads(line)
-                            except json.JSONDecodeError:
-                                continue
-                            cid = entry.get("candidate_id", "")
-                            if cid:
-                                done_status[cid] = entry
-                    else:
-                        results_path.unlink(missing_ok=True)
-        except OSError:
-            done_status.clear()
+    if validate_meta(results_path, meta):
+        for entry in iter_result_lines(results_path):
+            cid = entry.get("candidate_id", "")
+            if cid:
+                done_status[cid] = entry
+    elif results_path.exists() and results_path.stat().st_size > 0:
+        results_path.unlink(missing_ok=True)
 
     for cid, entry in done_status.items():
         for target_idx in range(len(all_targets)):
@@ -457,115 +420,107 @@ def _run_specificity(writer: EventWriter, state: Any, persistence: Persistence) 
         return
 
     # Open artifact for appending (or fresh write with meta header).
-    file_handle = None
     artifact_lock = threading.Lock()
+    file_handle: Any = None
 
-    cancel_event = threading.Event()
-    stop_cancel_poller = threading.Event()
     cmd_file = persistence.job_cmd_file(state.run_id, "specificity_filter")
 
-    cancel_poller = CmdFileCancelPoller(cmd_file, cancel_event, stop_cancel_poller)
+    with CancelContext(cmd_file) as cancel_ctx:
+        cancel_event = cancel_ctx.cancel_event
 
-    current_target_name: str = target_names[0] if target_names else ""
-    initial_done = len(done_status) * len(all_targets)
-    last_progress_done = initial_done
+        current_target_name: str = target_names[0] if target_names else ""
+        initial_done = len(done_status) * len(all_targets)
+        last_progress_done = initial_done
 
-    def _on_progress(done: int, total: int, info: dict) -> None:
-        nonlocal current_target_name, last_progress_done
-        # The subprocess reports rows it actually ran; add the skipped baseline
-        # so the user sees the true completed-pair count.
-        adjusted_done = min(total_pairs, done + initial_done)
-        last_progress_done = adjusted_done
-        if "target_name" in info:
-            current_target_name = str(info["target_name"] or "")
-        writer.write_progress(
-            done=adjusted_done,
-            total=total_pairs,
-            extra={
-                "kept": kept_count,
-                "removed": removed_count,
-                "current_target": current_target_name,
-            },
-        )
-
-    def _on_row(row: dict) -> None:
-        nonlocal kept_count, removed_count, current_target_name
-        target_idx = int(row.get("target_idx", 0))
-        target_name = str(row.get("target_name", "") or "")
-        cand_id = str(row.get("candidate_id", "") or "")
-        label = int(row.get("label", 0))
-        if target_name:
-            current_target_name = target_name
-        if cand_id not in pending:
-            return
-        bucket = pending[cand_id]
-        if target_idx > 0 and label == 1:
-            # Index 0 is the primary target; non-zero indices are analogs.
-            bucket["failed_analogs"].append(
-                target_names[target_idx]
-                if 0 <= target_idx < len(target_names)
-                else target_name
+        def _on_progress(done: int, total: int, info: dict) -> None:
+            nonlocal current_target_name, last_progress_done
+            # The subprocess reports rows it actually ran; add the skipped baseline
+            # so the user sees the true completed-pair count.
+            adjusted_done = min(total_pairs, done + initial_done)
+            last_progress_done = adjusted_done
+            if "target_name" in info:
+                current_target_name = str(info["target_name"] or "")
+            writer.write_progress(
+                done=adjusted_done,
+                total=total_pairs,
+                extra={
+                    "kept": kept_count,
+                    "removed": removed_count,
+                    "current_target": current_target_name,
+                },
             )
-        bucket["remaining"] -= 1
-        if bucket["remaining"] > 0:
-            return
 
-        failed = bucket["failed_analogs"]
-        status_str = "removed" if failed else "kept"
-        entry = {
-            "candidate_id": cand_id,
-            "status": status_str,
-            "failed_analogs": failed,
-        }
-        done_status[cand_id] = entry
-        with artifact_lock:
-            file_handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            file_handle.flush()
-        if status_str == "kept":
-            kept_count += 1
-        else:
-            removed_count += 1
-        writer.write_hit(
-            candidate_id=cand_id,
-            probability=0.0,
-            extra={"status": status_str, "failed_analogs": failed},
-        )
-        pending.pop(cand_id, None)
+        def _on_row(row: dict) -> None:
+            nonlocal kept_count, removed_count, current_target_name
+            target_idx = int(row.get("target_idx", 0))
+            target_name = str(row.get("target_name", "") or "")
+            cand_id = str(row.get("candidate_id", "") or "")
+            label = int(row.get("label", 0))
+            if target_name:
+                current_target_name = target_name
+            if cand_id not in pending:
+                return
+            bucket = pending[cand_id]
+            if target_idx > 0 and label == 1:
+                # Index 0 is the primary target; non-zero indices are analogs.
+                bucket["failed_analogs"].append(
+                    target_names[target_idx]
+                    if 0 <= target_idx < len(target_names)
+                    else target_name
+                )
+            bucket["remaining"] -= 1
+            if bucket["remaining"] > 0:
+                return
 
-    try:
-        try:
-            if results_path.exists() and results_path.stat().st_size > 0:
-                file_handle = open(results_path, "a", encoding="utf-8")
-            else:
-                file_handle = open(results_path, "w", encoding="utf-8")
-                file_handle.write(json.dumps({"meta": meta}, ensure_ascii=False) + "\n")
+            failed = bucket["failed_analogs"]
+            status_str = "removed" if failed else "kept"
+            entry = {
+                "candidate_id": cand_id,
+                "status": status_str,
+                "failed_analogs": failed,
+            }
+            done_status[cand_id] = entry
+            with artifact_lock:
+                file_handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
                 file_handle.flush()
-        except OSError as exc:
-            raise RuntimeError(f"Cannot open specificity artifact: {exc}") from exc
+            if status_str == "kept":
+                kept_count += 1
+            else:
+                removed_count += 1
+            writer.write_hit(
+                candidate_id=cand_id,
+                probability=0.0,
+                extra={"status": status_str, "failed_analogs": failed},
+            )
+            pending.pop(cand_id, None)
 
-        adapter = create_prediction_adapter(tools_config)
-        if not hasattr(adapter, "predict_specificity_batch"):
-            raise RuntimeError("Prediction adapter does not support predict_specificity_batch")
+        try:
+            try:
+                file_handle, _is_fresh = open_artifact(results_path, meta=meta)
+            except OSError as exc:
+                raise RuntimeError(f"Cannot open specificity artifact: {exc}") from exc
 
-        adapter.predict_specificity_batch(
-            candidates=candidates,
-            targets=all_targets,
-            progress_callback=_on_progress,
-            row_callback=_on_row,
-            cancel_event=cancel_event,
-            timeout_seconds=None,
-            progress_every=1,
-            skip_pairs=skip_pairs or None,
-        )
-    except Exception as exc:
-        raise RuntimeError(f"Specificity filter failed: {exc}") from exc
-    finally:
-        stop_cancel_poller.set()
-        cancel_poller.join(timeout=2)
-        if file_handle is not None:
-            file_handle.close()
+            adapter = create_prediction_adapter(tools_config)
+            if not hasattr(adapter, "predict_specificity_batch"):
+                raise RuntimeError("Prediction adapter does not support predict_specificity_batch")
 
-    if cancel_event.is_set():
+            adapter.predict_specificity_batch(
+                candidates=candidates,
+                targets=all_targets,
+                progress_callback=_on_progress,
+                row_callback=_on_row,
+                cancel_event=cancel_event,
+                timeout_seconds=None,
+                progress_every=1,
+                skip_pairs=skip_pairs or None,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Specificity filter failed: {exc}") from exc
+        finally:
+            if file_handle is not None:
+                file_handle.close()
+
+    if cancel_ctx.cancelled:
         writer.write_done(
             summary={
                 "cancelled": True,
@@ -716,56 +671,51 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
         extra={"resumed": len(existing_results)},
     )
 
-    cancel_event = threading.Event()
-    stop_cancel_poller = threading.Event()
     cmd_file = persistence.job_cmd_file(state.run_id, "docking_run")
 
-    cancel_poller = CmdFileCancelPoller(cmd_file, cancel_event, stop_cancel_poller)
+    with CancelContext(cmd_file) as cancel_ctx:
+        cancel_event = cancel_ctx.cancel_event
+        try:
+            if remaining_candidates and not cancel_ctx.cancelled:
+                adapter = create_vina_adapter(tools_config)
+                if exhaustiveness is not None and exhaustiveness != adapter.exhaustiveness:
+                    adapter = VinaAdapter(
+                        executable=adapter.executable,
+                        exhaustiveness=exhaustiveness,
+                        num_modes=plan.num_modes or adapter.num_modes,
+                        energy_range=plan.energy_range or adapter.energy_range,
+                        lazy=True,
+                    )
 
-    try:
-        if remaining_candidates and not cancel_event.is_set():
-            adapter = create_vina_adapter(tools_config)
-            if exhaustiveness is not None and exhaustiveness != adapter.exhaustiveness:
-                adapter = VinaAdapter(
-                    executable=adapter.executable,
-                    exhaustiveness=exhaustiveness,
-                    num_modes=plan.num_modes or adapter.num_modes,
-                    energy_range=plan.energy_range or adapter.energy_range,
-                    lazy=True,
-                )
-
-            for candidate in remaining_candidates:
-                if cancel_event.is_set():
-                    break
-                batch_results = adapter.run_batch(
-                    candidates=[candidate],
-                    target=target,
-                    receptor_paths=receptor_paths,
-                    grid_boxes=grid_boxes,
-                    work_dir=work_dir,
-                    seed=seed,
-                    per_ligand_timeout=per_ligand_timeout,
-                )
-                existing_results.extend(batch_results)
-                writer.write_progress(
-                    done=len(existing_results), total=len(top_candidates),
-                )
-                writer.write_hit(
-                    candidate_id=candidate.candidate_id,
-                    probability=0.0,
-                    extra={
-                        "docking_score": (
-                            batch_results[0].docking_score
-                            if batch_results and batch_results[0].docking_score is not None
-                            else None
-                        ),
-                    },
-                )
-    except Exception as exc:
-        raise RuntimeError(f"Docking failed: {exc}") from exc
-    finally:
-        stop_cancel_poller.set()
-        cancel_poller.join(timeout=2)
+                for candidate in remaining_candidates:
+                    if cancel_ctx.cancelled:
+                        break
+                    batch_results = adapter.run_batch(
+                        candidates=[candidate],
+                        target=target,
+                        receptor_paths=receptor_paths,
+                        grid_boxes=grid_boxes,
+                        work_dir=work_dir,
+                        seed=seed,
+                        per_ligand_timeout=per_ligand_timeout,
+                    )
+                    existing_results.extend(batch_results)
+                    writer.write_progress(
+                        done=len(existing_results), total=len(top_candidates),
+                    )
+                    writer.write_hit(
+                        candidate_id=candidate.candidate_id,
+                        probability=0.0,
+                        extra={
+                            "docking_score": (
+                                batch_results[0].docking_score
+                                if batch_results and batch_results[0].docking_score is not None
+                                else None
+                            ),
+                        },
+                    )
+        except Exception as exc:
+            raise RuntimeError(f"Docking failed: {exc}") from exc
 
     state.docking_results = existing_results
     persistence.save(state)
@@ -774,7 +724,7 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
         summary={
             "total": len(top_candidates),
             "completed": len(existing_results),
-            "cancelled": cancel_event.is_set(),
+            "cancelled": cancel_ctx.cancelled,
         }
     )
 

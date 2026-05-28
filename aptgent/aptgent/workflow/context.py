@@ -60,45 +60,29 @@ def get_user_brief(state: RunState) -> str | None:
 def record_intake_context(
     state: RunState,
     *,
-    user_brief: str | None = None,
-    sequence: str | None = None,
-    target_text: str | None = None,
     resolved_target: TargetMolecule | None = None,
-    modification_region: str | None = None,
     analogs: list[str] | None = None,
-    proposed_sites: list[int] | None = None,
-    time_budget_hours: int | None = None,
-    phase: str | None = None,
-    retry_count: int | None = None,
     last_resolution_error: str | None = None,
     clear_resolution_error: bool = False,
-    resolved_once: bool | None = None,
+    **fields: Any,
 ) -> None:
     context = state.context.intake
-    updates: dict[str, Any] = {
-        "user_brief": user_brief,
-        "sequence": sequence,
-        "target_input": target_text,
-        "modification_region": modification_region,
-        "proposed_sites": proposed_sites,
-        "time_budget_hours": time_budget_hours,
-        "phase": phase,
-        "retry_count": retry_count,
-        "resolved_once": resolved_once,
-    }
+    # Remap caller-facing key to context attribute name
+    if "target_text" in fields:
+        fields["target_input"] = fields.pop("target_text")
     if resolved_target is not None:
-        updates["target_label"] = (
+        fields["target_label"] = (
             resolved_target.resolved_name or resolved_target.input_text
         )
     if last_resolution_error is not None:
-        updates["last_resolution_error"] = last_resolution_error
+        fields["last_resolution_error"] = last_resolution_error
     elif clear_resolution_error:
         context.last_resolution_error = None
     if analogs is not None:
         context.analogs = [text for item in analogs if (text := clean_text(item))]
     patch_context(
         context,
-        updates,
+        fields,
         str_keys={
             "user_brief", "sequence", "target_input", "target_label",
             "modification_region", "last_resolution_error",
@@ -110,30 +94,8 @@ def record_intake_context(
 def record_pdb_intake_context(
     state: RunState,
     *,
-    pdb_id: str | None = None,
-    input_mode: str | None = None,
-    mixed_input_detected: bool | None = None,
-    download_status: str | None = None,
-    analysis_status: str | None = None,
-    artifact_path: str | None = None,
-    title: str | None = None,
-    chains: list[Any] | None = None,
-    ligands: list[Any] | None = None,
-    recommended_chain_id: str | None = None,
-    recommended_ligand_key: str | None = None,
-    selected_chain_id: str | None = None,
-    selected_ligand_key: str | None = None,
-    user_sequence: str | None = None,
-    derived_sequence: str | None = None,
-    sequence_match_status: str | None = None,
-    semantic_validation_status: str | None = None,
-    semantic_note: str | None = None,
-    review_category: str | None = None,
-    review_target_match: str | None = None,
-    review_confidence: str | None = None,
-    needs_user_selection: bool | None = None,
-    error: str | None = None,
     clear: bool = False,
+    **fields: Any,
 ) -> None:
     context = state.context.pdb_intake
     if clear:
@@ -142,31 +104,7 @@ def record_pdb_intake_context(
         context = reset
     patch_context(
         context,
-        {
-            "pdb_id": pdb_id,
-            "input_mode": input_mode,
-            "mixed_input_detected": mixed_input_detected,
-            "download_status": download_status,
-            "analysis_status": analysis_status,
-            "artifact_path": artifact_path,
-            "title": title,
-            "chains": chains,
-            "ligands": ligands,
-            "recommended_chain_id": recommended_chain_id,
-            "recommended_ligand_key": recommended_ligand_key,
-            "selected_chain_id": selected_chain_id,
-            "selected_ligand_key": selected_ligand_key,
-            "user_sequence": user_sequence,
-            "derived_sequence": derived_sequence,
-            "sequence_match_status": sequence_match_status,
-            "semantic_validation_status": semantic_validation_status,
-            "semantic_note": semantic_note,
-            "review_category": review_category,
-            "review_target_match": review_target_match,
-            "review_confidence": review_confidence,
-            "needs_user_selection": needs_user_selection,
-            "error": error,
-        },
+        fields,
         str_keys={
             "pdb_id", "artifact_path", "title",
             "recommended_chain_id", "recommended_ligand_key",
@@ -180,25 +118,15 @@ def record_pdb_intake_context(
 def record_secondary_structure_context(
     state: RunState,
     *,
-    lookup_status: str | None = None,
-    source: str | None = None,
-    query_sequence: str | None = None,
     match_ids: list[str] | None = None,
-    downloaded_artifact_path: str | None = None,
-    note: str | None = None,
+    **fields: Any,
 ) -> None:
     context = state.context.secondary_structure
     if match_ids is not None:
         context.match_ids = [text for item in match_ids if (text := clean_text(item))]
     patch_context(
         context,
-        {
-            "lookup_status": lookup_status,
-            "source": source,
-            "query_sequence": query_sequence,
-            "downloaded_artifact_path": downloaded_artifact_path,
-            "note": note,
-        },
+        fields,
         str_keys={"query_sequence", "downloaded_artifact_path", "note"},
     )
 
@@ -207,17 +135,9 @@ def record_site_proposal_context(
     state: RunState,
     *,
     proposals: list[dict[str, Any]] | None = None,
-    proposed_sites: list[int] | None = None,
-    reasoning: str | None = None,
-    confidence: str | None = None,
-    confirmed_sites: list[int] | None = None,
     llm_context: dict[str, Any] | None = None,
     extra_context: dict[str, Any] | None = None,
-    selection_source: str | None = None,
-    selected_proposal_index: int | None = None,
-    needs_regeneration: bool | None = None,
-    regeneration_reason: str | None = None,
-    preserve_proposal_indexes: list[int] | None = None,
+    **fields: Any,
 ) -> None:
     context = state.context.site_proposal
     if proposals is not None:
@@ -228,17 +148,7 @@ def record_site_proposal_context(
         context.extra_context = dict(extra_context)
     patch_context(
         context,
-        {
-            "proposed_sites": proposed_sites,
-            "reasoning": reasoning,
-            "confidence": confidence,
-            "confirmed_sites": confirmed_sites,
-            "selection_source": selection_source,
-            "selected_proposal_index": selected_proposal_index,
-            "needs_regeneration": needs_regeneration,
-            "regeneration_reason": regeneration_reason,
-            "preserve_proposal_indexes": preserve_proposal_indexes,
-        },
+        fields,
         str_keys={"reasoning", "confidence", "selection_source", "regeneration_reason"},
         list_keys={"proposed_sites", "confirmed_sites", "preserve_proposal_indexes"},
     )
@@ -327,26 +237,10 @@ def build_site_proposal_llm_context(state: RunState) -> dict[str, Any]:
 def record_docking_recommendation_context(
     state: RunState,
     *,
-    candidate_count: int,
     machine_profile: dict[str, Any],
-    time_budget_hours: int | None,
-    recommended_time_budget_hours: int | None,
-    recommended_top_k: int,
-    recommended_exhaustiveness: int | None = None,
-    recommended_num_modes: int | None = None,
-    recommended_energy_range: float | None = None,
-    recommended_per_ligand_timeout_seconds: int | None = None,
-    recommended_grid_padding_angstrom: float | None = None,
-    recommended_seed: int | None = None,
-    receptor_path_note: str = "",
-    grid_center_note: str = "",
-    reason: str = "",
-    display_markdown: str = "",
-    strategy: str = "",
-    phase: str = "initial",
-    accepted: bool = False,
     sequences_export_dir: str = "",
     structures_dir: str = "",
+    **fields: Any,
 ) -> None:
     context = state.context.docking_recommendation
     context.machine_profile = dict(machine_profile)
@@ -357,28 +251,7 @@ def record_docking_recommendation_context(
         dirs["structures_dir"] = structures_dir
     patch_context(
         context,
-        {
-            "candidate_count": candidate_count,
-            "time_budget_hours": time_budget_hours,
-            "recommended_time_budget_hours": recommended_time_budget_hours,
-            "recommended_top_k": recommended_top_k,
-            "recommended_exhaustiveness": recommended_exhaustiveness,
-            "recommended_num_modes": recommended_num_modes,
-            "recommended_energy_range": recommended_energy_range,
-            "recommended_per_ligand_timeout_seconds": (
-                recommended_per_ligand_timeout_seconds
-            ),
-            "recommended_grid_padding_angstrom": recommended_grid_padding_angstrom,
-            "recommended_seed": recommended_seed,
-            "receptor_path_note": receptor_path_note,
-            "grid_center_note": grid_center_note,
-            "reason": reason,
-            "display_markdown": display_markdown,
-            "strategy": strategy,
-            "phase": phase,
-            "accepted": accepted,
-            **dirs,
-        },
+        {**fields, **dirs},
         str_keys={"receptor_path_note", "grid_center_note"},
     )
     context.recommended_grid_size = []
@@ -386,24 +259,11 @@ def record_docking_recommendation_context(
 
 def record_tertiary_structure_context(
     state: RunState,
-    *,
-    provider: str | None = None,
-    receptor_source: str | None = None,
-    receptor_status: str | None = None,
-    job_id: str | None = None,
-    result_path: str | None = None,
-    error: str | None = None,
+    **fields: Any,
 ) -> None:
     patch_context(
         state.context.tertiary_structure,
-        {
-            "provider": provider,
-            "receptor_source": receptor_source,
-            "receptor_status": receptor_status,
-            "job_id": job_id,
-            "result_path": result_path,
-            "error": error,
-        },
+        fields,
         str_keys={"provider", "receptor_source", "job_id", "result_path", "error"},
     )
 
@@ -412,10 +272,7 @@ def record_specificity_recommendation_context(
     state: RunState,
     *,
     analog_names: list[str] | None = None,
-    display_markdown: str = "",
-    note: str = "",
-    phase: str = "initial",
-    accepted: bool = False,
+    **fields: Any,
 ) -> None:
     context = state.context.specificity_recommendation
     if analog_names is not None:
@@ -424,12 +281,7 @@ def record_specificity_recommendation_context(
         ]
     patch_context(
         context,
-        {
-            "display_markdown": display_markdown,
-            "note": note,
-            "phase": phase,
-            "accepted": accepted,
-        },
+        fields,
         str_keys={"note"},
     )
 

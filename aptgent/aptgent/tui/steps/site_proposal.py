@@ -4,7 +4,7 @@ from aptgent.domain.enums import Step
 from aptgent.llm.skills import SiteProposalSkill
 from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.steps.common import (
-    next_step,
+    next_primary_step,
     run_llm_interaction,
     validate_site_proposal_result,
 )
@@ -31,7 +31,7 @@ class SiteProposalHandler(StepHandler):
                 "No secondary structure available. Skipping site proposal.",
                 "warning-text",
             )
-            ns = next_step(Step.SITE_PROPOSAL)
+            ns = next_primary_step(Step.SITE_PROPOSAL)
             if ns:
                 self.screen.advance_to_step(ns)
             return
@@ -76,7 +76,7 @@ class SiteProposalHandler(StepHandler):
 
         try:
             skill = self.screen.app.runtime.create_skill(SiteProposalSkill)
-            self.screen.app.call_from_thread(
+            self._threadsafe(
                 self.screen.update_activity,
                 "Preparing site-proposal context...",
             )
@@ -112,10 +112,10 @@ class SiteProposalHandler(StepHandler):
                 structured_call=structured_result,
             )
         except Exception as exc:
-            self.screen.app.call_from_thread(
+            self._threadsafe(
                 self.screen.add_system_message, f"LLM error: {exc}", "error-text"
             )
-            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+            self._enable_input()
             return
 
         proposals = result.get("proposals", [])
@@ -163,16 +163,16 @@ class SiteProposalHandler(StepHandler):
             confidence,
             region_assessment=region_assessment,
         )
-        self.screen.app.call_from_thread(
+        self._threadsafe(
             lambda: self.screen.add_system_message(msg, markdown=True)
         )
 
-        self.screen.app.call_from_thread(self._show_choice_panel, proposals)
-        self.screen.app.call_from_thread(
+        self._threadsafe(self._show_choice_panel, proposals)
+        self._threadsafe(
             self.screen.set_input_placeholder,
             "Type positions (e.g. 3,7,12) or choose a recommended plan.",
         )
-        self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+        self._enable_input()
 
     def handle_user_input(self, text: str) -> None:
         state = self.screen.app.current_state
@@ -280,7 +280,7 @@ class SiteProposalHandler(StepHandler):
         record_site_proposal_context(state, confirmed_sites=sites)
         self.screen.app.save_state()
         self.screen.add_system_message(f"Confirmed mutation sites: {sites}")
-        ns = next_step(Step.SITE_PROPOSAL)
+        ns = next_primary_step(Step.SITE_PROPOSAL)
         if ns:
             self.screen.advance_to_step(ns)
 

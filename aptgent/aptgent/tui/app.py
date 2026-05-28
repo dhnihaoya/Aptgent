@@ -235,6 +235,14 @@ class AptgentApp(App):
         Binding("ctrl+q", "quit", "Quit", priority=True),
     ]
 
+    _ADAPTER_KEYS = frozenset({
+        "rna_fold_adapter", "vina_adapter", "prediction_adapter",
+        "molecule_resolver", "spatial_rank_adapter", "pdb_analysis_adapter",
+        "receptor_prep_adapter", "structure_lookup_adapter",
+        "structure_fetch_adapter", "tertiary_structure_adapter",
+        "intake_skill_factory", "pdb_review_skill_factory",
+    })
+
     def __init__(
         self,
         runtime: AppRuntime | None = None,
@@ -247,23 +255,8 @@ class AptgentApp(App):
             runtime = build_runtime()
         self.runtime = runtime
 
+        # Hot-path attribute kept as explicit assignment for direct __dict__ lookup.
         self.config = runtime.config
-        self.tools_config = runtime.tools_config
-        self.llm_config = runtime.llm_config
-        self.persistence = runtime.persistence
-        self.engine = runtime.engine
-        self.rna_fold_adapter = runtime.rna_fold_adapter
-        self.vina_adapter = runtime.vina_adapter
-        self.prediction_adapter = runtime.prediction_adapter
-        self.molecule_resolver = runtime.molecule_resolver
-        self.spatial_rank_adapter = runtime.spatial_rank_adapter
-        self.pdb_analysis_adapter = runtime.pdb_analysis_adapter
-        self.receptor_prep_adapter = runtime.receptor_prep_adapter
-        self.structure_lookup_adapter = runtime.structure_lookup_adapter
-        self.structure_fetch_adapter = runtime.structure_fetch_adapter
-        self.tertiary_structure_adapter = runtime.tertiary_structure_adapter
-        self.intake_skill_factory = runtime.intake_skill_factory
-        self.pdb_review_skill_factory = runtime.pdb_review_skill_factory
 
         self._state: RunState | None = None
         self._pending_start_message: str | None = None
@@ -276,6 +269,12 @@ class AptgentApp(App):
         self.register_theme(WARM_INDUSTRIAL_THEME)
         self.theme = self.DEFAULT_THEME
 
+    def __getattr__(self, name: str) -> Any:
+        runtime = self.__dict__.get("runtime")
+        if runtime is not None and hasattr(runtime, name):
+            return getattr(runtime, name)
+        raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
+
     @staticmethod
     def _runtime_from_kwargs(kwargs: dict[str, Any]) -> AppRuntime:
         config = kwargs.pop("config")
@@ -287,24 +286,14 @@ class AptgentApp(App):
             tools_config=tools_config,
             llm_config=llm_config,
         )
+        adapter_kwargs = {k: kwargs.pop(k) for k in AptgentApp._ADAPTER_KEYS if k in kwargs}
         return AppRuntime(
             config=config,
             tools_config=tools_config,
             llm_config=llm_config,
             persistence=persistence,
             engine=engine,
-            rna_fold_adapter=kwargs.pop("rna_fold_adapter", None),
-            vina_adapter=kwargs.pop("vina_adapter", None),
-            prediction_adapter=kwargs.pop("prediction_adapter", None),
-            molecule_resolver=kwargs.pop("molecule_resolver", None),
-            spatial_rank_adapter=kwargs.pop("spatial_rank_adapter", None),
-            pdb_analysis_adapter=kwargs.pop("pdb_analysis_adapter", None),
-            receptor_prep_adapter=kwargs.pop("receptor_prep_adapter", None),
-            structure_lookup_adapter=kwargs.pop("structure_lookup_adapter", None),
-            structure_fetch_adapter=kwargs.pop("structure_fetch_adapter", None),
-            tertiary_structure_adapter=kwargs.pop("tertiary_structure_adapter", None),
-            intake_skill_factory=kwargs.pop("intake_skill_factory", None),
-            pdb_review_skill_factory=kwargs.pop("pdb_review_skill_factory", None),
+            **adapter_kwargs,
         )
 
     def get_theme_variable_defaults(self) -> dict[str, str]:

@@ -5,7 +5,7 @@ from typing import Any
 
 from aptgent.domain.enums import Step
 from aptgent.tui.steps.base import StepHandler
-from aptgent.tui.steps.common import next_step
+from aptgent.tui.steps.common import next_primary_step
 from aptgent.tui.steps.empty_candidates import prepare_empty_candidate_recovery
 from aptgent.tui.steps.job_mixin import JobAttachMixin
 from aptgent.tui.widgets.chat_widgets import ProgressBubble
@@ -131,7 +131,7 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
 
         self._show_preview(state.candidates, state.predictions)
 
-        ns = next_step(Step.CANDIDATE_ENUMERATION)
+        ns = next_primary_step(Step.CANDIDATE_ENUMERATION)
         if ns:
             self.screen.advance_to_step(ns)
 

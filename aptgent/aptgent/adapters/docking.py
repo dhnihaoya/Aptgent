@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import subprocess
@@ -263,21 +262,3 @@ class VinaAdapter:
                 "num_modes": self.num_modes,
             },
         )
-class HardwareProbeAdapter:
-    """Simple runtime hardware probe for docking planning."""
-
-    def probe(self) -> dict[str, object]:
-        cpu_count = os.cpu_count() or 1
-        mem_bytes: int | None = None
-        try:
-            import psutil
-
-            mem_bytes = psutil.virtual_memory().total
-        except Exception:
-            pass
-
-        return {
-            "cpu_count": cpu_count,
-            "memory_bytes": mem_bytes,
-            "memory_gb": round(mem_bytes / (1024 ** 3), 2) if mem_bytes else None,
-        }

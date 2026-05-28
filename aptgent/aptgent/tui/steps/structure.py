@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from aptgent.domain.enums import Step
 from aptgent.tui.steps.base import StepHandler
-from aptgent.tui.steps.common import next_step, section_heading
+from aptgent.tui.steps.common import next_primary_step, section_heading
 from aptgent.workflow.context import get_sequence, record_secondary_structure_context
 
 
@@ -62,7 +62,7 @@ class StructureHandler(StepHandler):
                 note="Using PDB-derived secondary structure.",
             )
         except Exception as exc:
-            self.screen.app.call_from_thread(
+            self._threadsafe(
                 self.screen.add_tool_message,
                 f"PDB derivation failed ({exc}), falling back to RNAfold.",
             )
@@ -72,7 +72,7 @@ class StructureHandler(StepHandler):
         state = self.screen.app.current_state
         seq = get_sequence(state) or ""
         try:
-            self.screen.app.call_from_thread(
+            self._threadsafe(
                 self.screen.add_tool_message,
                 "\n".join(
                     [
@@ -96,10 +96,10 @@ class StructureHandler(StepHandler):
                 source="rnafold",
                 note=str(exc),
             )
-            self.screen.app.call_from_thread(
+            self._threadsafe(
                 self.screen.add_system_message, f"RNAfold error: {exc}", "error-text"
             )
-            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+            self._enable_input()
 
     def _store_secondary_structure(self, struct, *, source: str, note: str) -> None:
         state = self.screen.app.current_state
@@ -128,13 +128,13 @@ class StructureHandler(StepHandler):
                 f"- **Source**: `{struct.features.get('source', source)}`",
             ]
         )
-        self.screen.app.call_from_thread(
+        self._threadsafe(
             lambda: self.screen.add_system_message(
                 result_text,
                 extra_class="",
                 markdown=True,
             )
         )
-        ns = next_step(Step.SECONDARY_STRUCTURE)
+        ns = next_primary_step(Step.SECONDARY_STRUCTURE)
         if ns:
-            self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
+            self._threadsafe(self.screen.advance_to_step, ns)

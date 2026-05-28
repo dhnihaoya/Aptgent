@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from aptgent.domain.enums import Step
 from aptgent.tui.steps.base import StepHandler
-from aptgent.tui.steps.common import next_step
+from aptgent.tui.steps.common import next_primary_step
 
 
 class SpatialRankHandler(StepHandler):
@@ -53,14 +53,14 @@ class SpatialRankHandler(StepHandler):
             if len(sorted_results) > 15:
                 lines.append(f"  ... and {len(sorted_results) - 15} more")
 
-            self.screen.app.call_from_thread(
+            self._threadsafe(
                 self.screen.add_system_message, "\n".join(lines)
             )
-            ns = next_step(Step.SPATIAL_RANK)
+            ns = next_primary_step(Step.SPATIAL_RANK)
             if ns:
-                self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
+                self._threadsafe(self.screen.advance_to_step, ns)
         except Exception as exc:
-            self.screen.app.call_from_thread(
+            self._threadsafe(
                 self.screen.add_system_message, f"Ranking failed: {exc}", "error-text"
             )
-            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+            self._enable_input()

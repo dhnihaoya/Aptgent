@@ -156,33 +156,11 @@ class LLMClient:
         """Create from a pre-loaded config section (already env-expanded)."""
         instance = cls(config=llm_section)
         if log_dir is not None:
-            instance.set_log_dir(log_dir)
+            instance._logger.set_log_dir(log_dir)
         return instance
-
-    # -- backward compat --------------------------------------------------
-
-    @property
-    def max_reasoning_tokens(self) -> int:
-        return self.max_reasoning_chars
-
-    @max_reasoning_tokens.setter
-    def max_reasoning_tokens(self, value: int) -> None:
-        self.max_reasoning_chars = value
-
-    @property
-    def _log_dir(self) -> Path | None:
-        return self._logger.log_dir
 
     def set_log_dir(self, log_dir: str | Path) -> None:
         self._logger.set_log_dir(log_dir)
-
-    @staticmethod
-    def _redact_text(text: str) -> str:
-        return LLMCallLogger.redact_text(text)
-
-    def _log_call(self, **kwargs: Any) -> None:
-        kwargs.setdefault("model", self.model)
-        self._logger.log_call(**kwargs)
 
     # -- config / payload helpers -----------------------------------------
 
@@ -494,8 +472,9 @@ class LLMClient:
             return json.loads(content)
 
         result = self._with_retry("request", _attempt, should_cancel=should_cancel)
-        self._log_call(
+        self._logger.log_call(
             method="chat_json",
+            model=self.model,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             response=result,
@@ -535,8 +514,9 @@ class LLMClient:
             if not content:
                 raise ValueError("LLM returned empty content")
             parsed = json.loads(content)
-            self._log_call(
+            self._logger.log_call(
                 method="chat_json_events",
+                model=self.model,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 response={
@@ -581,8 +561,9 @@ class LLMClient:
                 "streaming request", _attempt, should_cancel=should_cancel,
             )
         finally:
-            self._log_call(
+            self._logger.log_call(
                 method="chat_json_stream",
+                model=self.model,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 response="".join(chunks)[:500] if chunks else None,
@@ -615,8 +596,9 @@ class LLMClient:
                 "text streaming request", _attempt, should_cancel=should_cancel,
             )
         finally:
-            self._log_call(
+            self._logger.log_call(
                 method="chat_text_stream",
+                model=self.model,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 response={

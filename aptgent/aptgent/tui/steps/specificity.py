@@ -8,7 +8,7 @@ from aptgent.llm.skills import AnalogParseSkill, AnalogSuggestionSkill
 from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.steps.common import (
     format_specificity_recommendation_markdown,
-    next_step,
+    next_primary_step,
     run_llm_interaction,
     validate_analog_suggestion_result,
 )
@@ -175,21 +175,21 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
             )
             self.screen.app.save_state()
             if markdown:
-                self.screen.app.call_from_thread(
+                self._threadsafe(
                     lambda md=markdown: self.screen.add_system_message(md, markdown=True)
                 )
             if analog_names:
-                self.screen.app.call_from_thread(self._show_recommendation_choice_panel)
+                self._threadsafe(self._show_recommendation_choice_panel)
             else:
-                self.screen.app.call_from_thread(
+                self._threadsafe(
                     self.screen.add_system_message,
                     "No analog suggestions were returned. Enter your own analogs or skip this step.",
                 )
-                self.screen.app.call_from_thread(self._customize)
-            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
-            self.screen.app.call_from_thread(self._refresh_input_placeholder)
+                self._threadsafe(self._customize)
+            self._enable_input()
+            self._threadsafe(self._refresh_input_placeholder)
         except Exception as exc:
-            self.screen.app.call_from_thread(
+            self._threadsafe(
                 self.screen.add_system_message, f"Suggestion failed: {exc}", "error-text"
             )
             state = self.screen.app.current_state
@@ -202,9 +202,9 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
                 accepted=False,
             )
             self.screen.app.save_state()
-            self.screen.app.call_from_thread(self._customize)
-            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
-            self.screen.app.call_from_thread(self._refresh_input_placeholder)
+            self._threadsafe(self._customize)
+            self._enable_input()
+            self._threadsafe(self._refresh_input_placeholder)
 
     def _recommended_analogs_text(self) -> str:
         analog_names = self.screen.app.current_state.context.specificity_recommendation.analog_names
@@ -315,13 +315,13 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
                 n for n in (m.strip() for m in result.get("molecule_names", [])) if n
             ))
             if not molecule_names:
-                self.screen.app.call_from_thread(
+                self._threadsafe(
                     self.screen.add_system_message,
                     "Could not identify any molecule names from your request. "
                     "Please try again with specific molecule names (e.g. 'caffeine and theobromine').",
                     "warning-text",
                 )
-                self.screen.app.call_from_thread(self._show_retry_custom_panel)
+                self._threadsafe(self._show_retry_custom_panel)
                 return
 
             resolved_pairs: list[tuple[str, bool]] = []
@@ -335,14 +335,14 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
                     resolved_pairs.append((name, False))
 
             if not resolved_names:
-                self.screen.app.call_from_thread(
+                self._threadsafe(
                     self.screen.add_system_message,
                     f"None of the identified molecules could be resolved: "
                     f"{', '.join(name for name, _ in resolved_pairs)}. "
                     "Please check the names and try again.",
                     "error-text",
                 )
-                self.screen.app.call_from_thread(self._show_retry_custom_panel)
+                self._threadsafe(self._show_retry_custom_panel)
                 return
 
             panel = self._custom_panel
@@ -351,15 +351,15 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
                     self._parse_in_flight = False
                     panel.show_confirmation(resolved_pairs)
 
-                self.screen.app.call_from_thread(_confirm)
+                self._threadsafe(_confirm)
 
         except Exception as exc:
-            self.screen.app.call_from_thread(
+            self._threadsafe(
                 self.screen.add_system_message,
                 f"Failed to parse request: {exc}",
                 "error-text",
             )
-            self.screen.app.call_from_thread(self._show_retry_custom_panel)
+            self._threadsafe(self._show_retry_custom_panel)
 
     def _show_retry_custom_panel(self) -> None:
         self._parse_in_flight = False
@@ -505,7 +505,7 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
                 msg += f"\nRemoved: {', '.join(removed_ids[:10])}"
         self.screen.add_system_message(msg)
 
-        ns = next_step(Step.SPECIFICITY_FILTER)
+        ns = next_primary_step(Step.SPECIFICITY_FILTER)
         if ns:
             self.screen.advance_to_step(ns)
 
@@ -523,7 +523,7 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
         ]
         self.screen.app.save_state()
         self.screen.add_system_message("Specificity filter skipped.")
-        ns = next_step(Step.SPECIFICITY_FILTER)
+        ns = next_primary_step(Step.SPECIFICITY_FILTER)
         if ns:
             self.screen.advance_to_step(ns)
 

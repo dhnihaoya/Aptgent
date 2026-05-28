@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from aptgent.domain.enums import Step
 from aptgent.domain.text_utils import clean_text
 from aptgent.workflow.engine import TRANSITIONS
 
@@ -46,7 +47,13 @@ def section_heading(title: str) -> str:
     return f"**{title}**"
 
 
-def next_step(step) -> Any:
+def next_primary_step(step: Step) -> Step | None:
+    """Return the first *different* step from this step's transition targets.
+
+    For steps with multiple outgoing edges (e.g. DOCKING_SELECTION),
+    this always picks the first target. Callers that need conditional
+    branching should inspect TRANSITIONS directly.
+    """
     targets = TRANSITIONS.get(step, [])
     if not targets:
         return None
@@ -54,6 +61,9 @@ def next_step(step) -> Any:
         if candidate != step:
             return candidate
     return targets[0]
+
+
+next_step = next_primary_step
 
 
 __all__ = [
@@ -75,6 +85,7 @@ __all__ = [
     "format_intake_confirmation",
     "format_specificity_recommendation_markdown",
     "next_step",
+    "next_primary_step",
     "normalize_sequence",
     "run_llm_interaction",
     "section_heading",

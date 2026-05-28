@@ -1,15 +1,12 @@
-"""Re-export shim -- all panel classes now live in :mod:`aptgent.tui.widgets.panels`."""
-
-from aptgent.tui.widgets.panels import (  # noqa: F401
+from ._core import (
     StructuredInputSubmitted,
     StructuredActionRequested,
     _BaseStructuredPanel,
     ActionMenuPanel,
-    MutationSitePanel,
-    PdbSelectionPanel,
-    AnalogCheckboxPanel,
-    SpecificityPanel,
-    AnalogCustomPanel,
+)
+from ._intake import MutationSitePanel, PdbSelectionPanel
+from ._specificity import AnalogCheckboxPanel, SpecificityPanel, AnalogCustomPanel
+from ._docking import (
     DockingStrategyPanel,
     DockingSourcePanel,
     DockingManualUploadPanel,

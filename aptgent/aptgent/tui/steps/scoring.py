@@ -4,7 +4,7 @@ from typing import Any
 
 from aptgent.domain.enums import Step
 from aptgent.tui.steps.base import StepHandler
-from aptgent.tui.steps.common import next_step
+from aptgent.tui.steps.common import next_primary_step
 from aptgent.tui.steps.empty_candidates import (
     is_empty_enumeration_result,
     prepare_empty_candidate_recovery,
@@ -65,7 +65,7 @@ class ScoringHandler(StepHandler):
         if len(sorted_preds) > 10:
             lines.append(f"  ... and {len(sorted_preds) - 10} more")
         self.screen.add_system_message("\n".join(lines))
-        ns = next_step(Step.PRIMARY_SCORING)
+        ns = next_primary_step(Step.PRIMARY_SCORING)
         if ns:
             self.screen.advance_to_step(ns)
 
@@ -93,17 +93,17 @@ class ScoringHandler(StepHandler):
             if len(sorted_preds) > 10:
                 lines.append(f"  ... and {len(sorted_preds) - 10} more")
 
-            self.screen.app.call_from_thread(
+            self._threadsafe(
                 self.screen.add_system_message, "\n".join(lines)
             )
-            ns = next_step(Step.PRIMARY_SCORING)
+            ns = next_primary_step(Step.PRIMARY_SCORING)
             if ns:
-                self.screen.app.call_from_thread(self.screen.advance_to_step, ns)
+                self._threadsafe(self.screen.advance_to_step, ns)
         except Exception as exc:
-            self.screen.app.call_from_thread(
+            self._threadsafe(
                 self.screen.add_system_message, f"Scoring failed: {exc}", "error-text"
             )
-            self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+            self._enable_input()
 
     def _handle_empty_candidates(self, state: Any) -> bool:
         if not is_empty_enumeration_result(state):

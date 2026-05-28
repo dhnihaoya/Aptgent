@@ -5,7 +5,7 @@ from pathlib import Path
 
 from aptgent.domain.enums import Step
 from aptgent.tui.steps.base import StepHandler
-from aptgent.tui.steps.common import next_step
+from aptgent.tui.steps.common import next_primary_step
 from aptgent.tui.steps.job_mixin import JobAttachMixin
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ class DockingRunHandler(JobAttachMixin, StepHandler):
             state.docking_results = []
             self.screen.app.save_state()
             self.screen.add_system_message("Docking skipped (no plan or top-k = 0).")
-            ns = next_step(Step.DOCKING_RUN)
+            ns = next_primary_step(Step.DOCKING_RUN)
             if ns:
                 self.screen.advance_to_step(ns)
             return
@@ -134,7 +134,7 @@ class DockingRunHandler(JobAttachMixin, StepHandler):
 
         self.screen.add_system_message("\n".join(lines))
 
-        ns = next_step(Step.DOCKING_RUN)
+        ns = next_primary_step(Step.DOCKING_RUN)
         if ns:
             self.screen.advance_to_step(ns)
 

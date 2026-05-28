@@ -38,6 +38,14 @@ class StepHandler:
             try:
                 work()
             finally:
-                self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
+                self._enable_input()
 
         self.screen.run_worker(_guarded, exclusive=True, thread=True)
+
+    def _threadsafe(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
+        """Schedule *fn* on the main Textual thread."""
+        self.screen.app.call_from_thread(fn, *args, **kwargs)
+
+    def _enable_input(self) -> None:
+        """Re-enable the input bar from a worker thread."""
+        self._threadsafe(self.screen.set_input_enabled, True)

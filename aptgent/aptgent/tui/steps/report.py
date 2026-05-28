@@ -281,7 +281,7 @@ class ReportHandler(StepHandler):
                 self.screen.app._configure_llm_logging(skill)
             chunks: list[str] = []
             bubble = None
-            self.screen.app.call_from_thread(self.screen.clear_activity)
+            self._threadsafe(self.screen.clear_activity)
             for event in skill.write_markdown_stream(context):
                 if isinstance(event, dict):
                     if event.get("type") != "content":
@@ -297,33 +297,33 @@ class ReportHandler(StepHandler):
                         nonlocal bubble
                         bubble = self.screen.add_streaming_message(markdown=True)
 
-                    self.screen.app.call_from_thread(make_bubble)
-                self.screen.app.call_from_thread(bubble.append_text, text)
+                    self._threadsafe(make_bubble)
+                self._threadsafe(bubble.append_text, text)
             markdown = "".join(chunks).strip()
             if bubble is not None:
-                self.screen.app.call_from_thread(bubble.finalize)
+                self._threadsafe(bubble.finalize)
         except Exception:
             markdown = format_deterministic_report_markdown(context)
-            self.screen.app.call_from_thread(
+            self._threadsafe(
                 self.screen.add_system_message, markdown, extra_class="", markdown=True,
             )
 
         if not markdown:
             markdown = format_deterministic_report_markdown(context)
-            self.screen.app.call_from_thread(
+            self._threadsafe(
                 self.screen.add_system_message, markdown, extra_class="", markdown=True,
             )
 
         state.final_report_markdown = markdown
         self.screen.app.save_state()
-        self.screen.app.call_from_thread(
+        self._threadsafe(
             self.screen.add_system_message,
             "Report is ready. Type `export` to save Markdown, or `finish` to exit.",
             extra_class="",
             markdown=True,
         )
-        self.screen.app.call_from_thread(self.screen.set_input_enabled, True)
-        self.screen.app.call_from_thread(
+        self._enable_input()
+        self._threadsafe(
             self.screen.set_input_placeholder, "Type 'export' or 'finish'"
         )
 
