@@ -131,7 +131,6 @@ class LLMClient:
             )
         self.base_url = self.config["base_url"]
         self.model = self.config["model"]
-        self.fast_model = self.config.get("fast_model", self.model)
         self.temperature = self.config.get("temperature", 0.2)
         self.json_temperature = self.config.get("json_temperature", 0.2)
         self.max_tokens = self.config.get("max_tokens", 4096)
@@ -475,7 +474,6 @@ class LLMClient:
                 temperature=self.json_temperature,
                 response_format={"type": "json_object"},
                 enable_thinking=False,
-                model=self.fast_model,
                 should_cancel=should_cancel,
             ):
                 if event.get("type") == "content":
@@ -503,7 +501,6 @@ class LLMClient:
         should_cancel: Callable[[], bool] | None = None,
         enable_thinking: bool = True,
     ):
-        use_model = self.model if enable_thinking else self.fast_model
 
         def _attempt():
             collected: list[str] = []
@@ -514,7 +511,6 @@ class LLMClient:
                 temperature=self.json_temperature,
                 response_format={"type": "json_object"},
                 enable_thinking=enable_thinking,
-                model=use_model,
                 should_cancel=should_cancel,
             ):
                 event_type = event.get("type")
@@ -561,7 +557,6 @@ class LLMClient:
                 temperature=self.json_temperature,
                 response_format={"type": "json_object"},
                 enable_thinking=False,
-                model=self.fast_model,
                 should_cancel=should_cancel,
             ):
                 if event.get("type") == "content":

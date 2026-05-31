@@ -49,7 +49,6 @@ def test_chat_json_events_streams_reasoning_and_final_json(tmp_path, monkeypatch
                 "[provider.openai]",
                 'base_url = "https://example.com/v1"',
                 'model = "glm-5.1"',
-                'fast_model = "glm-4.7-flashx"',
                 'api_key = "test-key"',
                 "temperature = 1",
                 "json_temperature = 0.2",

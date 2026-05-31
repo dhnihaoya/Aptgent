@@ -48,22 +48,22 @@ def kmer_features(sequence: str, k_list: list[int]) -> list[float]:
     return features
 
 
-_NEWLY_ADDED_DESCRIPTORS = frozenset(
-    {
-        "fr_term_acetylene",
-        "fr_tetrazole",
-        "fr_thiazole",
-        "fr_thiocyan",
-        "fr_thiophene",
-        "fr_unbrch_alkane",
-        "fr_urea",
-    }
-)
+from aptgent.predictor_runtime.descriptor_schema import TRAINING_DESCRIPTOR_NAMES
+
+_DESCRIPTOR_FUNC_BY_NAME = dict(Descriptors.descList)
+
+_MISSING_DESCRIPTOR_NAMES = [
+    name for name in TRAINING_DESCRIPTOR_NAMES if name not in _DESCRIPTOR_FUNC_BY_NAME
+]
+if _MISSING_DESCRIPTOR_NAMES:
+    missing = ", ".join(_MISSING_DESCRIPTOR_NAMES)
+    raise RuntimeError(
+        "Installed RDKit is missing descriptors required by the trained models: "
+        f"{missing}"
+    )
 
 _DESCRIPTOR_FUNCS = [
-    (name, func)
-    for name, func in Descriptors.descList
-    if name != "Ipc" and name not in _NEWLY_ADDED_DESCRIPTORS
+    (name, _DESCRIPTOR_FUNC_BY_NAME[name]) for name in TRAINING_DESCRIPTOR_NAMES
 ]
 
 

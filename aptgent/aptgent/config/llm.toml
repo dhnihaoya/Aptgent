@@ -1,7 +1,6 @@
 [provider.openai]
 base_url = "https://open.bigmodel.cn/api/paas/v4"
 model = "glm-5.1"
-fast_model = "glm-5.1"
 # Fallback API key (used when GLM_API_KEY env var is not set).
 api_key = "465afa7b084140fb814ea657b37805fe.9MLoVE4fJBkl1PUr"
 api_key_env = "GLM_API_KEY"

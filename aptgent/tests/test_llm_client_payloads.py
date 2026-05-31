@@ -11,7 +11,6 @@ def test_glm_payload_includes_temperature_and_thinking_by_default(tmp_path):
                 "[provider.openai]",
                 'base_url = "https://open.bigmodel.cn/api/paas/v4"',
                 'model = "glm-5.1"',
-                'fast_model = "glm-4.7-flashx"',
                 'api_key = "test-key"',
                 "temperature = 1",
             ]
@@ -29,7 +28,7 @@ def test_glm_payload_includes_temperature_and_thinking_by_default(tmp_path):
     assert payload["temperature"] == 0.2
     assert payload["thinking"] == {"type": "enabled"}
     assert payload["model"] == "glm-5.1"
-def test_json_payload_uses_fast_model(tmp_path):
+def test_json_payload_disables_thinking(tmp_path):
     config_path = tmp_path / "llm.toml"
     config_path.write_text(
         "\n".join(
@@ -37,7 +36,6 @@ def test_json_payload_uses_fast_model(tmp_path):
                 "[provider.openai]",
                 'base_url = "https://open.bigmodel.cn/api/paas/v4"',
                 'model = "glm-5.1"',
-                'fast_model = "glm-4.7-flashx"',
                 'api_key = "test-key"',
             ]
         ),
@@ -50,10 +48,10 @@ def test_json_payload_uses_fast_model(tmp_path):
         "user",
         temperature=0.2,
         response_format={"type": "json_object"},
-        model=client.fast_model,
+        enable_thinking=False,
     )
 
-    assert payload["model"] == "glm-4.7-flashx"
+    assert payload["model"] == "glm-5.1"
     assert "thinking" not in payload
 
 
