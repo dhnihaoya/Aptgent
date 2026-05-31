@@ -103,9 +103,13 @@ class ReceptorPreparationAdapter:
         *,
         obabel_command: str = "obabel",
         default_padding: float = 4.0,
+        minimize_command: str = "obminimize",
+        minimize_steps: int = 500,
     ) -> None:
         self.obabel_command = obabel_command
         self.default_padding = default_padding
+        self.minimize_command = minimize_command
+        self.minimize_steps = minimize_steps
 
     # ------------------------------------------------------------------
     # Sequence helpers (thin pass-throughs so callers don't import module fns)
@@ -188,6 +192,58 @@ class ReceptorPreparationAdapter:
         if proc.returncode != 0 or not output_path.exists():
             raise RuntimeError(
                 f"Open Babel failed for {pdb_path}: {proc.stderr.strip()}"
+            )
+        return output_path
+
+    # ------------------------------------------------------------------
+    # Energy minimization (obminimize with UFF)
+    # ------------------------------------------------------------------
+
+    def energy_minimize(
+        self,
+        pdb_path: str | Path,
+        output_path: str | Path,
+    ) -> Path:
+        """Minimize a DNA aptamer PDB structure using Open Babel's obminimize.
+
+        Invokes ``obminimize -ipdb <in> -opdb <out> -ff UFF -n <steps>``
+        which performs geometry optimization with the Universal Force Field.
+
+        Raises ``FileNotFoundError`` if ``obminimize`` is not found, or
+        ``RuntimeError`` if minimization fails.
+        """
+        pdb_path = Path(pdb_path)
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if not pdb_path.exists():
+            raise FileNotFoundError(f"Input PDB not found: {pdb_path}")
+
+        if shutil.which(self.minimize_command) is None:
+            raise FileNotFoundError(
+                f"{self.minimize_command} not found in PATH. Install Open Babel "
+                "(conda-forge) or set APTGENT_OBMINIMIZE."
+            )
+
+        cmd = [
+            self.minimize_command,
+            "-ipdb", str(pdb_path),
+            "-opdb", str(output_path),
+            "-ff", "UFF",
+            "-n", str(self.minimize_steps),
+        ]
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, check=False, timeout=300,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"obminimize timed out for {pdb_path}"
+            ) from exc
+
+        if proc.returncode != 0 or not output_path.exists():
+            raise RuntimeError(
+                f"obminimize failed for {pdb_path}: {proc.stderr.strip()}"
             )
         return output_path
 

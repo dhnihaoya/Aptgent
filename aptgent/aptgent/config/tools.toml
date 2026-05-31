@@ -35,6 +35,9 @@ base_url = "https://files.rcsb.org/download"
 obabel = "${APTGENT_OBABEL:-obabel}"
 # Padding (Angstroms) added to every axis of the aptamer-covering search box.
 padding_angstrom = 4.0
+# Energy minimization after RNA->DNA conversion (uses obminimize with UFF).
+minimize = true
+minimize_steps = 500
 
 [rnacomposer]
 # RNAComposer auto-mode for generating per-candidate 3D structures.

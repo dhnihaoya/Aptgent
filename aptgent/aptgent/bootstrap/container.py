@@ -123,6 +123,7 @@ def create_receptor_prep_adapter(tools_config: dict[str, Any]) -> Any:
     return ReceptorPreparationAdapter(
         obabel_command=cfg.get("obabel", "obabel"),
         default_padding=float(cfg.get("padding_angstrom", 4.0)),
+        minimize_steps=int(cfg.get("minimize_steps", 500)),
     )
 
 

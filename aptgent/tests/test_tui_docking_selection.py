@@ -46,6 +46,16 @@ class FakeReceptorPrepAdapter:
     def revert_ribose_to_deoxyribose(self, text: str) -> str:
         return text.replace("U A ", "DT A ")
 
+    def energy_minimize(
+        self,
+        pdb_path: str | Path,
+        output_path: str | Path,
+    ) -> Path:
+        out = Path(output_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(Path(pdb_path).read_text(encoding="utf-8"), encoding="utf-8")
+        return out
+
     def prepare_pdbqt(
         self,
         pdb_path: str | Path,

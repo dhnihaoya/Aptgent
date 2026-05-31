@@ -106,3 +106,48 @@ def test_scan_structure_directory_finds_files(tmp_path):
 
 def test_scan_structure_directory_handles_missing_dir(tmp_path):
     assert scan_structure_directory(tmp_path / "nope", ["cand_0"]) == {}
+
+
+def test_energy_minimize_raises_when_binary_missing(tmp_path):
+    pdb = tmp_path / "in.pdb"
+    pdb.write_text(
+        "ATOM      1  P     A A   1       0.000   0.000   0.000  1.00  0.00           P\n",
+        encoding="utf-8",
+    )
+    adapter = ReceptorPreparationAdapter(
+        minimize_command="definitely-not-a-real-binary-xyz",
+    )
+    with pytest.raises(FileNotFoundError):
+        adapter.energy_minimize(pdb, tmp_path / "out.pdb")
+
+
+def test_energy_minimize_raises_when_input_missing(tmp_path):
+    adapter = ReceptorPreparationAdapter()
+    with pytest.raises(FileNotFoundError):
+        adapter.energy_minimize(tmp_path / "nope.pdb", tmp_path / "out.pdb")
+
+
+def test_energy_minimize_returns_output_on_success(tmp_path, monkeypatch):
+    pdb = tmp_path / "in.pdb"
+    pdb.write_text(
+        "ATOM      1  P     A A   1       0.000   0.000   0.000  1.00  0.00           P\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out.pdb"
+    adapter = ReceptorPreparationAdapter(minimize_steps=100)
+
+    import subprocess
+    from unittest.mock import patch
+
+    def fake_run(cmd, **kwargs):
+        out.write_text(
+            "ATOM      1  P     A A   1       0.001   0.001   0.001  1.00  0.00           P\n",
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+
+    with patch("aptgent.adapters.receptor_prep.subprocess.run", side_effect=fake_run):
+        result = adapter.energy_minimize(pdb, out)
+
+    assert result == out
+    assert out.exists()

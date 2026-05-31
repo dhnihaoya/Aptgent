@@ -205,6 +205,9 @@ class _StructuresMixin:
                     Path(pdb_path).read_text(encoding="utf-8")
                 )
                 target_pdb.write_text(pdb_text, encoding="utf-8")
+                minimized_pdb = structures_dir / f"{cand_id}.min.pdb"
+                prep.energy_minimize(target_pdb, minimized_pdb)
+                target_pdb = minimized_pdb
                 pdbqt_path = structures_dir / f"{cand_id}.pdbqt"
                 prep.prepare_pdbqt(target_pdb, pdbqt_path, treat_as_dna=False)
                 receptor_paths[cand_id] = str(pdbqt_path)
