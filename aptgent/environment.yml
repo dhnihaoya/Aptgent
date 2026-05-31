@@ -12,7 +12,7 @@ dependencies:
   # ADT Edit -> Hydrogens -> Add).
   - openbabel>=3.1
   # ── scientific stack (predictor runtime) ────────────────
-  - rdkit>=2024.03
+  - rdkit==2023.09.5
   - scikit-learn>=1.4
   - xgboost>=2.0
   - numpy>=1.24
