@@ -1,0 +1,162 @@
+"""Tests for the cumulative ranking module."""
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from aptgent.domain.ranking import ProbHistogramRanker
+
+
+class TestProbHistogramRanker:
+    def test_single_model_single_candidate_rank_sum_is_1(self):
+        ranker = ProbHistogramRanker(num_models=1)
+        ranker.add([0.5])
+        ranker.finalize()
+        assert ranker.rank_sum([0.5]) == 1
+
+    def test_two_candidates_competition_rank(self):
+        ranker = ProbHistogramRanker(num_models=1)
+        ranker.add([0.9])
+        ranker.add([0.5])
+        ranker.finalize()
+        assert ranker.competition_rank([0.9]) == [1]
+        assert ranker.competition_rank([0.5]) == [2]
+
+    def test_tied_probabilities_get_same_min_rank(self):
+        """Standard competition ranking (min/tie method).
+        [0.9, 0.9, 0.8] → ranks [1, 1, 3]."""
+        ranker = ProbHistogramRanker(num_models=1)
+        ranker.add([0.9])
+        ranker.add([0.9])
+        ranker.add([0.8])
+        ranker.finalize()
+        assert ranker.competition_rank([0.9]) == [1]
+        assert ranker.competition_rank([0.8]) == [3]
+
+    def test_rank_sum_across_models(self):
+        """3 models, 3 candidates. Verify rank_sum aggregation."""
+        ranker = ProbHistogramRanker(num_models=3)
+        # Candidate A: [0.9, 0.8, 0.7]
+        ranker.add([0.9, 0.8, 0.7])
+        # Candidate B: [0.5, 0.9, 0.8]
+        ranker.add([0.5, 0.9, 0.8])
+        # Candidate C: [0.7, 0.7, 0.9]
+        ranker.add([0.7, 0.7, 0.9])
+        ranker.finalize()
+
+        # Model 0: A(0.9) > C(0.7) > B(0.5) → ranks 1, 3, 2
+        # Wait, actually: A=0.9 is highest, so rank 1. C=0.7, one greater (A=0.9), rank 2. B=0.5, two greater, rank 3.
+        # Model 1: B(0.9) > A(0.8) > C(0.7) → ranks 1, 2, 3
+        # Model 2: C(0.9) > B(0.8) > A(0.7) → ranks 1, 2, 3
+        assert ranker.competition_rank([0.9, 0.8, 0.7]) == [1, 2, 3]
+        assert ranker.rank_sum([0.9, 0.8, 0.7]) == 6
+
+        assert ranker.competition_rank([0.5, 0.9, 0.8]) == [3, 1, 2]
+        assert ranker.rank_sum([0.5, 0.9, 0.8]) == 6
+
+        assert ranker.competition_rank([0.7, 0.7, 0.9]) == [2, 3, 1]
+        assert ranker.rank_sum([0.7, 0.7, 0.9]) == 6
+
+    def test_rank_sum_matches_brute_force(self):
+        """Verify histogram ranks match brute-force argsort-based competition ranks."""
+        rng = np.random.RandomState(42)
+        n_candidates = 500
+        num_models = 9
+        probs = rng.uniform(0.0, 1.0, (n_candidates, num_models))
+        probs = np.round(probs, 6)  # match quantization
+
+        ranker = ProbHistogramRanker(num_models=num_models)
+        for i in range(n_candidates):
+            ranker.add(probs[i].tolist())
+        ranker.finalize()
+
+        # Brute-force competition ranks per model.
+        for m in range(num_models):
+            col = probs[:, m]
+            order = np.argsort(-col)  # descending
+            ranks = np.empty(n_candidates, dtype=int)
+            current_rank = 1
+            i = 0
+            while i < n_candidates:
+                # Find all ties at this level
+                j = i
+                while j < n_candidates and col[order[j]] == col[order[i]]:
+                    j += 1
+                for k in range(i, j):
+                    ranks[order[k]] = current_rank
+                current_rank = j + 1
+                i = j
+
+            for c in range(n_candidates):
+                hist_rank = ranker.competition_rank(probs[c].tolist())[m]
+                assert hist_rank == ranks[c], (
+                    f"Model {m}, candidate {c}: hist_rank={hist_rank}, brute_force={ranks[c]}"
+                )
+
+    def test_rank_sum_ordering_differs_from_mean_prob(self):
+        """Construct a case where mean-prob ranking differs from rank-sum ranking."""
+        ranker = ProbHistogramRanker(num_models=3)
+        # Candidate X: high average but inconsistent across models
+        # Candidate Y: lower average but consistently near top
+        #
+        # Fill with many low-prob candidates first.
+        for _ in range(100):
+            ranker.add([0.1, 0.1, 0.1])
+        # Candidate X: very high in one model, mediocre in two
+        ranker.add([0.95, 0.6, 0.6])
+        # Candidate Y: moderate across all models → lower rank_sum
+        ranker.add([0.7, 0.7, 0.7])
+
+        ranker.finalize()
+
+        rs_x = ranker.rank_sum([0.95, 0.6, 0.6])
+        rs_y = ranker.rank_sum([0.7, 0.7, 0.7])
+        mean_x = (0.95 + 0.6 + 0.6) / 3
+        mean_y = (0.7 + 0.7 + 0.7) / 3
+
+        # X has higher mean probability (0.717 > 0.7) but Y has lower rank_sum
+        assert mean_x > mean_y
+        assert rs_y < rs_x
+
+    def test_add_after_finalize_raises(self):
+        ranker = ProbHistogramRanker(num_models=1)
+        ranker.add([0.5])
+        ranker.finalize()
+        with pytest.raises(RuntimeError, match="Cannot add"):
+            ranker.add([0.6])
+
+    def test_rank_before_finalize_raises(self):
+        ranker = ProbHistogramRanker(num_models=1)
+        ranker.add([0.5])
+        with pytest.raises(RuntimeError, match="finalize"):
+            ranker.competition_rank([0.5])
+
+    def test_wrong_number_of_probabilities_raises(self):
+        ranker = ProbHistogramRanker(num_models=3)
+        with pytest.raises(ValueError, match="Expected 3"):
+            ranker.add([0.5, 0.6])
+
+    def test_quantized_probabilities_exact_bins(self):
+        """Probabilities rounded to 6 decimal places map to exact bins."""
+        ranker = ProbHistogramRanker(num_models=1)
+        ranker.add([0.123456])
+        ranker.add([0.123457])  # adjacent bin
+        ranker.finalize()
+        assert ranker.competition_rank([0.123457]) == [1]
+        assert ranker.competition_rank([0.123456]) == [2]
+
+    def test_zero_probabilities(self):
+        ranker = ProbHistogramRanker(num_models=2)
+        ranker.add([0.0, 0.0])
+        ranker.add([0.0, 0.5])
+        ranker.finalize()
+        assert ranker.rank_sum([0.0, 0.0]) == 3  # model0: 1 (tie), model1: 2
+        assert ranker.rank_sum([0.0, 0.5]) == 2  # model0: 1 (tie), model1: 1
+
+    def test_all_identical_probabilities(self):
+        """All candidates with same probs get rank 1 everywhere."""
+        ranker = ProbHistogramRanker(num_models=2)
+        for _ in range(100):
+            ranker.add([0.5, 0.5])
+        ranker.finalize()
+        assert ranker.rank_sum([0.5, 0.5]) == 2  # 1 + 1

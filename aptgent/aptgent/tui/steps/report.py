@@ -17,8 +17,7 @@ def _prediction_maps(state: Any) -> tuple[dict[str, Any], list[Any]]:
     by_id = {pred.candidate_id: pred for pred in ensemble}
     sorted_predictions = sorted(
         ensemble,
-        key=lambda item: item.probability if item.probability is not None else item.score,
-        reverse=True,
+        key=lambda item: item.raw_outputs.get("cumulative_rank", float("inf")),
     )
     return by_id, sorted_predictions
 

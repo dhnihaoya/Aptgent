@@ -114,6 +114,7 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
 
     from aptgent.bootstrap.container import create_prediction_adapter
     from aptgent.domain.models import CandidateSequence, Mutation, PredictionResult
+    from aptgent.domain.ranking import ProbHistogramRanker
     from aptgent.workflow.context import get_sequence
 
     bundle = load_config()
@@ -136,6 +137,7 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
     if timeout_seconds <= 0:
         timeout_seconds = None
 
+    num_models = enum_cfg.get("num_models", 9)
     total_space = 4 ** len(sites)
 
     run_dir = persistence.run_dir(state.run_id)
@@ -143,11 +145,10 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
     artifact_dir.mkdir(parents=True, exist_ok=True)
     results_path = artifact_dir / "scored_candidates.jsonl"
 
-    # --- Resume: load existing results ---
+    # --- Resume: rebuild histograms from existing results ---
     skip_first = 0
-    top_heap: list[tuple[float, int, dict]] = []
-    heap_counter = 0
     total_binding = 0
+    ranker = ProbHistogramRanker(num_models=num_models)
     run_meta = {"base_sequence": seq, "sites": sites, "total_space": total_space}
 
     header = read_jsonl_header(results_path)
@@ -158,23 +159,16 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
             pred = entry.get("prediction", {})
             if pred.get("label") == 1:
                 total_binding += 1
-                heap_counter += 1
-                prob = pred.get("probability", 0.0)
-                result_dict = {
-                    "sequence": entry["candidate"]["sequence"],
-                    "probability": prob,
-                    "model_probabilities": pred.get("model_probabilities", []),
-                }
-                if len(top_heap) < top_k_keep:
-                    heapq.heappush(top_heap, (prob, heap_counter, result_dict))
-                elif prob > top_heap[0][0]:
-                    heapq.heapreplace(top_heap, (prob, heap_counter, result_dict))
+                model_probs = pred.get("model_probabilities", [])
+                if len(model_probs) == num_models:
+                    ranker.add(model_probs)
 
     if skip_first >= total_space:
         writer.write_progress(done=total_space, total=total_space, extra={"binding": total_binding})
         _finalize_enumeration(
             writer, state, persistence, seq, sites, target,
-            top_heap, top_k_keep, total_space, total_binding, results_path,
+            ranker, top_k_keep, total_space, total_binding, results_path,
+            num_models,
         )
         return
 
@@ -203,25 +197,23 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
                 writer.write_progress(done=done, total=total, extra={"binding": total_binding})
 
             def _on_result(result: dict) -> None:
-                nonlocal total_binding, heap_counter
+                nonlocal total_binding
                 total_binding += 1
-                heap_counter += 1
 
                 prob = result.get("probability", 0.0)
+                model_probs = result.get("model_probabilities", [])
                 entry = {
                     "candidate": {"sequence": result["sequence"]},
                     "prediction": {
                         "label": 1,
                         "probability": prob,
-                        "model_probabilities": result.get("model_probabilities", []),
+                        "model_probabilities": model_probs,
                     },
                 }
                 file_handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-                if len(top_heap) < top_k_keep:
-                    heapq.heappush(top_heap, (prob, heap_counter, result))
-                elif prob > top_heap[0][0]:
-                    heapq.heapreplace(top_heap, (prob, heap_counter, result))
+                if len(model_probs) == num_models:
+                    ranker.add(model_probs)
 
                 if total_binding <= 20 or total_binding % 200 == 0:
                     writer.write_hit(
@@ -256,7 +248,8 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
 
     _finalize_enumeration(
         writer, state, persistence, seq, sites, target,
-        top_heap, top_k_keep, total_space, total_binding, results_path,
+        ranker, top_k_keep, total_space, total_binding, results_path,
+        num_models,
     )
 
 
@@ -267,23 +260,55 @@ def _finalize_enumeration(
     seq: str,
     sites: list[int],
     target: Any,
-    top_heap: list[tuple[float, int, dict]],
+    ranker: Any,
     top_k_keep: int,
     total_space: int,
     total_binding: int,
     results_path: Path,
+    num_models: int,
 ) -> None:
+    import heapq
+
     from aptgent.domain.models import CandidateSequence, Mutation, PredictionResult
 
-    top_heap.sort(key=lambda item: item[0], reverse=True)
+    ranker.finalize()
+
+    # Rescan jsonl to compute rank_sum for each candidate and keep top-K.
+    # Max-heap by rank_sum (negate for max-heap via heapq min-heap).
+    # Tiebreak: average probability descending (negate for consistent ordering).
+    top_heap: list[tuple[int, float, str, list[float]]] = []  # (rank_sum, -avg_prob, seq, model_probs)
+    skipped_count = 0
+
+    for entry in iter_result_lines(results_path):
+        pred = entry.get("prediction", {})
+        if pred.get("label") != 1:
+            continue
+        model_probs = pred.get("model_probabilities", [])
+        if len(model_probs) != num_models:
+            skipped_count += 1
+            continue
+        candidate_seq = entry["candidate"]["sequence"]
+        rs = ranker.rank_sum(model_probs)
+        avg_prob = sum(model_probs) / num_models
+
+        item = (rs, -avg_prob, candidate_seq, model_probs)
+        if len(top_heap) < top_k_keep:
+            heapq.heappush(top_heap, item)
+        elif item < top_heap[0]:
+            heapq.heapreplace(top_heap, item)
+
+    # Sort ascending by rank_sum, then descending by average probability.
+    top_heap.sort()
+
     top_candidates: list[CandidateSequence] = []
     top_predictions: list[PredictionResult] = []
 
-    for rank, (prob, _cnt, result) in enumerate(top_heap):
-        mutant_seq = result["sequence"]
-        muts = _diff_mutations(seq, mutant_seq, sites)
+    for rank, (rs, neg_avg, candidate_seq, model_probs) in enumerate(top_heap):
+        avg_prob = -neg_avg
+        muts = _diff_mutations(seq, candidate_seq, sites)
+        cumulative_rank = rank + 1
         cand = CandidateSequence(
-            sequence=mutant_seq,
+            sequence=candidate_seq,
             mutations=muts,
             edit_ratio=len(muts) / len(seq) if seq else 0.0,
             candidate_id=f"cand_{rank}",
@@ -294,10 +319,14 @@ def _finalize_enumeration(
                 candidate_id=cand.candidate_id,
                 model_name="ensemble",
                 target=target.smiles or "",
-                score=prob,
+                score=avg_prob,
                 label=1,
-                probability=prob,
-                raw_outputs={"model_probabilities": result.get("model_probabilities", [])},
+                probability=avg_prob,
+                raw_outputs={
+                    "model_probabilities": model_probs,
+                    "rank_sum": rs,
+                    "cumulative_rank": cumulative_rank,
+                },
             )
         )
 
@@ -306,14 +335,14 @@ def _finalize_enumeration(
         state.predictions = top_predictions
     persistence.save(state)
 
-    writer.write_done(
-        summary={
-            "total": total_space,
-            "hits": total_binding,
-            "kept": len(top_candidates),
-            "results_path": str(results_path),
-        }
-    )
+    summary: dict[str, Any] = {
+        "total": total_space,
+        "hits": total_binding,
+        "kept": len(top_candidates),
+        "skipped_mismatched_models": skipped_count,
+        "results_path": str(results_path),
+    }
+    writer.write_done(summary=summary)
 
 
 def _diff_mutations(original: str, mutant: str, sites: list[int]) -> list[Any]:
@@ -624,7 +653,10 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
         raise RuntimeError("Target molecule/SMILES missing")
 
     ens_preds = [p for p in state.predictions if p.model_name == "ensemble"]
-    sorted_preds = sorted(ens_preds, key=lambda item: item.probability or 0.0, reverse=True)
+    sorted_preds = sorted(
+        ens_preds,
+        key=lambda item: item.raw_outputs.get("cumulative_rank", float("inf")),
+    )
     top_k = plan.recommended_top_k
     top_cand_ids = {pred.candidate_id for pred in sorted_preds[:top_k]}
     top_candidates = [

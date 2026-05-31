@@ -51,7 +51,8 @@ class ScoringHandler(StepHandler):
     def _show_existing(self, state: Any) -> None:
         ens_preds = [p for p in state.predictions if p.model_name == "ensemble"]
         sorted_preds = sorted(
-            ens_preds, key=lambda item: item.probability or 0.0, reverse=True
+            ens_preds,
+            key=lambda item: item.raw_outputs.get("cumulative_rank", float("inf")),
         )
         lines = [
             f"Scoring already completed during enumeration "

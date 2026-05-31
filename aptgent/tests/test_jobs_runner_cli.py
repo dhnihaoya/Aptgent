@@ -83,6 +83,7 @@ def _fake_config(tmp_path):
                 "sub_batch_size": 4,
                 "progress_every": 1,
                 "mutation_batch_timeout_seconds": 0,
+                "num_models": 1,
             },
         },
     )
@@ -245,3 +246,139 @@ def test_docking_runner_normal_completion_is_not_cancelled(tmp_path, monkeypatch
     assert done["summary"]["cancelled"] is False
     assert saved is not None
     assert len(saved.docking_results) == 1
+
+
+class _FakeMultiModelAdapter:
+    """Returns multiple candidates with different model_probabilities."""
+
+    def __init__(self, results: list[dict]) -> None:
+        self._results = results
+
+    def predict_mutation_batch(
+        self,
+        *,
+        base_sequence,
+        target,
+        sites,
+        progress_callback,
+        result_callback,
+        progress_every,
+        cancel_event,
+        timeout_seconds,
+        skip_first,
+        sub_batch_size=None,
+    ):
+        total = len(self._results)
+        progress_callback(0, total, {})
+        for r in self._results:
+            result_callback(r)
+        progress_callback(total, total, {})
+
+
+def _multi_model_config(tmp_path, num_models=3):
+    return SimpleNamespace(
+        tools={},
+        workflow={
+            "paths": {"runs_dir": str(tmp_path)},
+            "enumeration": {
+                "top_k_keep": 10,
+                "sub_batch_size": 4,
+                "progress_every": 1,
+                "mutation_batch_timeout_seconds": 0,
+                "num_models": num_models,
+            },
+        },
+    )
+
+
+def test_enumeration_finalize_rank_sum_ordering_differs_from_mean_prob(tmp_path, monkeypatch):
+    """Verify that rank-sum ordering produces different results than mean-prob
+    when a candidate has inconsistent model scores."""
+    # 3 models, 3 candidates:
+    #   A: [0.9, 0.3, 0.3] → mean=0.5, rank_sum = 1+3+3 = 7
+    #   B: [0.5, 0.5, 0.5] → mean=0.5, rank_sum = 2+2+2 = 6 (better!)
+    #   C: [0.1, 0.9, 0.9] → mean≈0.633, rank_sum = 3+1+1 = 5 (best by rank-sum)
+    results = [
+        {"sequence": "AG", "probability": 0.5, "model_probabilities": [0.9, 0.3, 0.3]},
+        {"sequence": "TG", "probability": 0.5, "model_probabilities": [0.5, 0.5, 0.5]},
+        {"sequence": "GG", "probability": 0.633, "model_probabilities": [0.1, 0.9, 0.9]},
+    ]
+    adapter = _FakeMultiModelAdapter(results)
+
+    persistence = Persistence(runs_dir=tmp_path)
+    state = persistence.init_run("rank_sum_test")
+    state.current_step = Step.CANDIDATE_ENUMERATION
+    state.input_payload["initial_sequence"] = "AA"
+    state.target_molecule = TargetMolecule(
+        input_text="test",
+        smiles="C",
+        resolution_status="resolved",
+    )
+    state.confirmed_mutation_sites = [1]
+    persistence.save(state)
+
+    monkeypatch.setattr("aptgent.jobs.runner.load_config", lambda: _multi_model_config(tmp_path))
+    monkeypatch.setattr(
+        "aptgent.bootstrap.container.create_prediction_adapter",
+        lambda _tools_config: adapter,
+    )
+
+    events_path = persistence.job_events_file(state.run_id, "candidate_enumeration")
+    writer = EventWriter(events_path)
+    try:
+        _run_enumeration(writer, state, persistence)
+    finally:
+        writer.close()
+
+    saved = persistence.load(state.run_id)
+
+    # Order should be: C (rank_sum=5), B (rank_sum=6), A (rank_sum=7)
+    assert [c.sequence for c in saved.candidates] == ["GG", "TG", "AG"]
+    # cumulative_rank is 1-based
+    assert [p.raw_outputs["cumulative_rank"] for p in saved.predictions] == [1, 2, 3]
+    assert [p.raw_outputs["rank_sum"] for p in saved.predictions] == [5, 6, 7]
+    # probability is average of model probabilities (display score)
+    assert [round(p.probability, 3) for p in saved.predictions] == [0.633, 0.5, 0.5]
+
+
+def test_enumeration_finalize_skips_mismatched_model_count(tmp_path, monkeypatch):
+    """Candidates with wrong model_probabilities length are skipped."""
+    results = [
+        {"sequence": "AG", "probability": 0.8, "model_probabilities": [0.8, 0.8, 0.8]},
+        {"sequence": "TG", "probability": 0.5, "model_probabilities": [0.5]},  # wrong length
+    ]
+    adapter = _FakeMultiModelAdapter(results)
+
+    persistence = Persistence(runs_dir=tmp_path)
+    state = persistence.init_run("skip_test")
+    state.current_step = Step.CANDIDATE_ENUMERATION
+    state.input_payload["initial_sequence"] = "AA"
+    state.target_molecule = TargetMolecule(
+        input_text="test",
+        smiles="C",
+        resolution_status="resolved",
+    )
+    state.confirmed_mutation_sites = [1]
+    persistence.save(state)
+
+    monkeypatch.setattr("aptgent.jobs.runner.load_config", lambda: _multi_model_config(tmp_path))
+    monkeypatch.setattr(
+        "aptgent.bootstrap.container.create_prediction_adapter",
+        lambda _tools_config: adapter,
+    )
+
+    events_path = persistence.job_events_file(state.run_id, "candidate_enumeration")
+    writer = EventWriter(events_path)
+    try:
+        _run_enumeration(writer, state, persistence)
+    finally:
+        writer.close()
+
+    events = list(EventReader(events_path).iter_events())
+    done = events[-1]
+    saved = persistence.load(state.run_id)
+
+    assert done["summary"]["hits"] == 2
+    assert done["summary"]["kept"] == 1
+    assert done["summary"]["skipped_mismatched_models"] == 1
+    assert [c.sequence for c in saved.candidates] == ["AG"]
