@@ -115,15 +115,15 @@ class LLMClient:
             if config_path is None:
                 config_path = Path(__file__).parent.parent / "config" / "llm.toml"
             self.config = self._load_config(config_path)
-        # Priority: env var > config file fallback
+            self._apply_user_config()
+        # Priority: env var > user config (aptgent.local.toml) > bundled config
         api_key_env = self.config.get("api_key_env", "GLM_API_KEY")
-        config_fallback = self.config.get("api_key", "")
-        self.api_key = os.environ.get(api_key_env, "") or config_fallback
+        self.api_key = os.environ.get(api_key_env, "") or self.config.get("api_key", "")
         if not self.api_key:
             import warnings
             warnings.warn(
-                f"LLM API key not set. Set env var '{api_key_env}' or add 'api_key' to llm.toml. "
-                "LLM-powered features will be unavailable.",
+                f"LLM API key not set. Set '{api_key_env}' env var or add 'api_key' "
+                f"to aptgent.local.toml. LLM features will be unavailable.",
                 stacklevel=2,
             )
         self.base_url = self.config["base_url"]
@@ -172,6 +172,17 @@ class LLMClient:
         with open(path, "rb") as f:
             data = tomli.load(f)
         return data.get("provider", {}).get("openai", {})
+
+    def _apply_user_config(self) -> None:
+        import tomli
+
+        local = Path.cwd() / "aptgent.local.toml"
+        if not local.is_file():
+            return
+        with open(local, "rb") as f:
+            data = tomli.load(f)
+        overrides = data.get("provider", {}).get("openai", {})
+        self.config.update(overrides)
 
     @staticmethod
     def _extract_content(message: Any) -> str:

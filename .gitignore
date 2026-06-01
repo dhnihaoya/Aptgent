@@ -31,6 +31,9 @@ runs/
 # Environment variables
 .env
 
+# User secrets (copied from aptgent.local.toml.example)
+aptgent.local.toml
+
 # Claude Code / local tools
 .claude/
 .superpowers/

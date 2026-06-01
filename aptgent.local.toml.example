@@ -1,0 +1,5 @@
+# Copy this file to aptgent.local.toml and fill in your key.
+# aptgent.local.toml is gitignored — your key stays local.
+
+[provider.openai]
+api_key = "your-glm-api-key-here"

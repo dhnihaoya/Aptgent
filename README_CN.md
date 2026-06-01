@@ -46,6 +46,23 @@ conda activate aptgent
 
 Aptgent 使用智谱 GLM 模型提供 LLM 能力。你需要设置 API Key：
 
+**方式一：配置文件（推荐）**
+
+```bash
+cp aptgent.local.toml.example aptgent.local.toml
+```
+
+然后编辑 `aptgent.local.toml`，填入你的 Key：
+
+```toml
+[provider.openai]
+api_key = "你的智谱API Key"
+```
+
+`aptgent.local.toml` 已被 gitignore，不会被提交。
+
+**方式二：环境变量**
+
 ```bash
 export GLM_API_KEY="你的智谱API Key"
 ```
@@ -116,11 +133,13 @@ python -m aptgent
 | `tools.toml` | 外部工具路径（RNAfold、Vina 等） |
 | `llm.toml` | LLM 模型配置（默认使用智谱 GLM） |
 
+API Key 请通过 `aptgent.local.toml`（项目根目录）或 `GLM_API_KEY` 环境变量设置，详见上方「配置 API Key」章节。
+
 ### 环境变量
 
 | 变量 | 用途 |
 |------|------|
-| `GLM_API_KEY` | 智谱 API Key（必须设置） |
+| `GLM_API_KEY` | 智谱 API Key（也可通过 `aptgent.local.toml` 设置） |
 | `APTGENT_RNAFOLD` | RNAfold 可执行文件路径（默认从 PATH 查找） |
 | `APTGENT_VINA` | Vina 可执行文件路径（默认从 PATH 查找） |
 | `APTGENT_RUNS_DIR` | 运行数据存储目录（默认 `./runs`） |

@@ -229,13 +229,24 @@ temperature = 1
 max_tokens = 65536
 ```
 
-`LLMClient` uses `glm-5.1` for both text output and structured JSON calls. It resolves the API key as environment variable first, then config-file fallback. Prefer environment variables:
+`LLMClient` uses `glm-5.1` for both text output and structured JSON calls.
+
+**API key setup** — two options:
+
+1. **Config file (recommended):** copy `aptgent.local.toml.example` to `aptgent.local.toml` in the project root and fill in `api_key`. This file is gitignored.
+
+```bash
+cp aptgent.local.toml.example aptgent.local.toml
+# edit aptgent.local.toml → set api_key
+```
+
+2. **Environment variable:**
 
 ```bash
 export GLM_API_KEY=...
 ```
 
-Security note: do not commit real API keys. If this checkout contains a populated fallback key in `llm.toml`, rotate it and replace it with an empty placeholder.
+Key resolution order: `GLM_API_KEY` env var > `aptgent.local.toml` > bundled `llm.toml` (no key).
 
 ## Predictor Runtime
 
