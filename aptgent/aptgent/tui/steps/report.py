@@ -9,7 +9,8 @@ from aptgent.tui.steps.base import StepHandler
 
 
 def _candidate_id(candidate: Any, fallback_index: int) -> str:
-    return candidate.candidate_id or f"cand_{fallback_index}"
+    raw = candidate.candidate_id or f"cand_{fallback_index}"
+    return raw.replace(" ", "_")
 
 
 def _prediction_maps(state: Any) -> tuple[dict[str, Any], list[Any]]:

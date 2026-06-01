@@ -139,15 +139,16 @@ def test_energy_minimize_returns_output_on_success(tmp_path, monkeypatch):
     import subprocess
     from unittest.mock import patch
 
+    minimized = (
+        "ATOM      1  P     A A   1       0.001   0.001   0.001  1.00  0.00           P\n"
+    )
+
     def fake_run(cmd, **kwargs):
-        out.write_text(
-            "ATOM      1  P     A A   1       0.001   0.001   0.001  1.00  0.00           P\n",
-            encoding="utf-8",
-        )
-        return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout=minimized, stderr="")
 
     with patch("aptgent.adapters.receptor_prep.subprocess.run", side_effect=fake_run):
         result = adapter.energy_minimize(pdb, out)
 
     assert result == out
     assert out.exists()
+    assert out.read_text(encoding="utf-8") == minimized

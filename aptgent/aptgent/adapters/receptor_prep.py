@@ -206,8 +206,9 @@ class ReceptorPreparationAdapter:
     ) -> Path:
         """Minimize a DNA aptamer PDB structure using Open Babel's obminimize.
 
-        Invokes ``obminimize -ipdb <in> -opdb <out> -ff UFF -n <steps>``
-        which performs geometry optimization with the Universal Force Field.
+        Invokes ``obminimize -ff UFF -n <steps> <in>`` and writes stdout to
+        *output_path*.  ``obminimize`` sends minimized PDB to stdout (unlike
+        ``obabel``, it does not accept ``-o`` / ``-opdb`` flags).
 
         Raises ``FileNotFoundError`` if ``obminimize`` is not found, or
         ``RuntimeError`` if minimization fails.
@@ -227,10 +228,9 @@ class ReceptorPreparationAdapter:
 
         cmd = [
             self.minimize_command,
-            "-ipdb", str(pdb_path),
-            "-opdb", str(output_path),
             "-ff", "UFF",
             "-n", str(self.minimize_steps),
+            str(pdb_path),
         ]
         try:
             proc = subprocess.run(
@@ -241,10 +241,11 @@ class ReceptorPreparationAdapter:
                 f"obminimize timed out for {pdb_path}"
             ) from exc
 
-        if proc.returncode != 0 or not output_path.exists():
+        if proc.returncode != 0:
             raise RuntimeError(
                 f"obminimize failed for {pdb_path}: {proc.stderr.strip()}"
             )
+        output_path.write_text(proc.stdout, encoding="utf-8")
         return output_path
 
     # ------------------------------------------------------------------
