@@ -46,7 +46,7 @@ class DockingSelectionHandler(
         phase = recommendation.phase or "initial"
 
         self.screen.add_system_message(
-            f"Step 7: Docking Selection\n"
+            f"Step 6: Docking Selection\n"
             f"{len(state.candidates)} candidates available for docking."
         )
 
@@ -185,7 +185,7 @@ class DockingSelectionHandler(
         recommendation.grid_center_note = ""
         self.screen.app.save_state()
         self.screen.add_system_message("Docking skipped.")
-        self.screen.advance_to_step(Step.SPATIAL_RANK)
+        self.screen.advance_to_step(Step.SPECIFICITY_FILTER)
 
     # ------------------------------------------------------------------
     # Helpers

@@ -42,6 +42,19 @@ class SpatialRankHandler(StepHandler):
             for candidate in candidates
             if candidate.candidate_id not in excluded_ids
         ]
+
+        # Affinity gate: only rank candidates selected by affinity top-y.
+        affinity_ids = set(state.affinity_selected_ids) if state.affinity_selected_ids else set()
+        if affinity_ids and docked_ids:
+            candidates = [
+                candidate
+                for candidate in candidates
+                if candidate.candidate_id in affinity_ids
+            ]
+            docking_results = [
+                r for r in docking_results if r.candidate_id in affinity_ids
+            ]
+
         excluded_count = len(excluded_ids & docked_ids)
 
         if not candidates:

@@ -4,6 +4,7 @@ from typing import Any
 
 from aptgent.domain.enums import Step
 from aptgent.domain.models import SpecificityResult, TargetMolecule
+from aptgent.domain.ranking import select_top_y_by_affinity
 from aptgent.llm.skills import AnalogParseSkill, AnalogSuggestionSkill
 from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.steps.common import (
@@ -44,9 +45,10 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
 
     def enter(self) -> None:
         state = self.screen.app.current_state
+        self._compute_affinity_selection(state)
         recommendation = state.context.specificity_recommendation
         self.screen.add_system_message(
-            "Step 6: Specificity Filter\n"
+            "Step 7: Specificity Filter\n"
             "The LLM will first suggest important analog molecules, then you can accept, edit, or replace them before filtering."
         )
         if recommendation.display_markdown and recommendation.phase in {
@@ -115,6 +117,34 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
             self._customize()
         elif action == "skip-specificity":
             self._skip()
+
+    def _compute_affinity_selection(self, state: Any) -> None:
+        if state.affinity_selected_ids:
+            return
+        docking_results = state.docking_results
+        if not docking_results:
+            state.affinity_selected_ids = [
+                c.candidate_id for c in state.candidates
+            ]
+            self.screen.app.save_state()
+            return
+        plan = state.docking_plan
+        top_y = (
+            plan.affinity_top_k
+            if plan and plan.affinity_top_k
+            else state.context.docking_recommendation.recommended_affinity_top_k
+            or min(5, len(docking_results))
+        )
+        selected = select_top_y_by_affinity(
+            [r.model_dump() for r in docking_results],
+            top_y,
+        )
+        state.affinity_selected_ids = selected
+        self.screen.add_system_message(
+            f"Selected top-{top_y} by binding affinity: "
+            f"{len(selected)} sequences (ties included)."
+        )
+        self.screen.app.save_state()
 
     def _suggest(self) -> None:
         self.run_worker(self._suggest_worker, activity="Suggesting analog molecules...")

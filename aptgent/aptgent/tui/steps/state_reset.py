@@ -28,6 +28,7 @@ def _reset_candidate_outputs(state: Any) -> None:
     state.docking_plan = None
     state.docking_results = []
     state.spatial_ranks = []
+    state.affinity_selected_ids = []
     state.recommendations = []
     state.context.specificity_recommendation = SpecificityRecommendationContext()
     state.context.docking_recommendation = DockingRecommendationContext()

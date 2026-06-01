@@ -47,6 +47,8 @@ def build_report_context(state: Any) -> dict[str, Any]:
     }
     excluded_from_docked = specificity_excluded_ids & docked_ids
 
+    affinity_ids = set(state.affinity_selected_ids) if state.affinity_selected_ids else set()
+
     if state.spatial_ranks:
         ordered_docked_ids = [
             result.candidate_id
@@ -54,6 +56,22 @@ def build_report_context(state: Any) -> dict[str, Any]:
             if result.candidate_id in docked_ids
             and result.candidate_id not in specificity_excluded_ids
         ]
+        # spatial_ranks only covers the affinity top-y subset; append remaining
+        # docked candidates (reference only) sorted by docking score.
+        ranked_ids = set(ordered_docked_ids)
+        ordered_docked_ids.extend(
+            result.candidate_id
+            for result in sorted(
+                state.docking_results,
+                key=lambda item: (
+                    item.docking_score is None,
+                    item.docking_score if item.docking_score is not None else 0.0,
+                ),
+            )
+            if result.candidate_id in docked_ids
+            and result.candidate_id not in specificity_excluded_ids
+            and result.candidate_id not in ranked_ids
+        )
     else:
         ordered_docked_ids = [
             result.candidate_id
@@ -97,6 +115,7 @@ def build_report_context(state: Any) -> dict[str, Any]:
             {
                 "candidate_id": cand_id,
                 "final_priority": final_priority,
+                "affinity_selected": not affinity_ids or cand_id in affinity_ids,
                 "sequence": candidate.sequence if candidate else "",
                 "mutations": [
                     mutation.model_dump()
@@ -147,7 +166,8 @@ def build_report_context(state: Any) -> dict[str, Any]:
         "screening_overview": {
             "total_candidate_count": len(state.candidates),
             "ensemble_prediction_count": len(sorted_predictions),
-            "docked_candidate_count": len(docking_candidates),
+            "docked_candidate_count": len(docked_ids),
+            "affinity_selected_count": len(affinity_ids) if affinity_ids else len(docked_ids),
             "specificity_excluded_from_docked_count": len(excluded_from_docked),
             "non_docked_candidate_count": len(non_docked_predictions),
             "non_docked_score_min": min(probabilities) if probabilities else None,
@@ -192,12 +212,28 @@ def format_deterministic_report_markdown(context: dict[str, Any]) -> str:
                 ),
             ]
         )
+    affinity_selected_count = overview.get("affinity_selected_count", 0)
+    docked_count = overview.get("docked_candidate_count", 0)
+    affinity_filtered_out = docked_count - affinity_selected_count
+    if affinity_filtered_out > 0:
+        lines.extend(
+            [
+                "",
+                (
+                    f"{affinity_filtered_out} docked candidate(s) were not selected by "
+                    "binding affinity and are listed for reference below."
+                ),
+            ]
+        )
     if candidates:
         for candidate in candidates:
+            affinity_note = ""
+            if not candidate.get("affinity_selected", True):
+                affinity_note = " *(not affinity-selected)*"
             lines.extend(
                 [
                     "",
-                    f"### #{candidate['final_priority']} {candidate['candidate_id']}",
+                    f"### #{candidate['final_priority']} {candidate['candidate_id']}{affinity_note}",
                     "",
                     f"- Sequence: `{candidate['sequence']}`",
                     f"- Primary prediction score: **{_format_score(candidate['primary_score'])}**",

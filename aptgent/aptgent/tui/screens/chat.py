@@ -371,24 +371,24 @@ class ChatScreen(Screen):
 
         # Check enumeration job status
         if current in (Step.CANDIDATE_ENUMERATION, Step.PRIMARY_SCORING,
-                       Step.SPECIFICITY_FILTER, Step.DOCKING_SELECTION,
-                       Step.DOCKING_RUN, Step.SPATIAL_RANK, Step.FINAL_REPORT):
+                       Step.DOCKING_SELECTION, Step.DOCKING_RUN,
+                       Step.SPECIFICITY_FILTER, Step.SPATIAL_RANK, Step.FINAL_REPORT):
             if is_job_alive(persistence, run_id, "candidate_enumeration"):
                 self.add_system_message("Enumeration job is still running, attaching...")
                 return Step.CANDIDATE_ENUMERATION
 
-        # Check specificity job status
-        if current in (Step.SPECIFICITY_FILTER, Step.DOCKING_SELECTION,
-                       Step.DOCKING_RUN, Step.SPATIAL_RANK, Step.FINAL_REPORT):
-            if is_job_alive(persistence, run_id, "specificity_filter"):
-                self.add_system_message("Specificity job is still running, attaching...")
-                return Step.SPECIFICITY_FILTER
-
-        # Check docking job status
-        if current in (Step.DOCKING_RUN, Step.SPATIAL_RANK, Step.FINAL_REPORT):
+        # Check docking job status (docking now runs before specificity)
+        if current in (Step.DOCKING_RUN, Step.SPECIFICITY_FILTER,
+                       Step.SPATIAL_RANK, Step.FINAL_REPORT):
             if is_job_alive(persistence, run_id, "docking_run"):
                 self.add_system_message("Docking job is still running, attaching...")
                 return Step.DOCKING_RUN
+
+        # Check specificity job status
+        if current in (Step.SPECIFICITY_FILTER, Step.SPATIAL_RANK, Step.FINAL_REPORT):
+            if is_job_alive(persistence, run_id, "specificity_filter"):
+                self.add_system_message("Specificity job is still running, attaching...")
+                return Step.SPECIFICITY_FILTER
 
         return None
 

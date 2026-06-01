@@ -164,6 +164,73 @@ def test_specificity_excluded_candidates_dropped_from_ranking():
     assert context["screening_overview"]["specificity_excluded_from_docked_count"] == 1
 
 
+def _affinity_filter_report_state() -> RunState:
+    """Three docked; two affinity-selected with spatial ranks; one reference-only."""
+    state = RunState(run_id="affinity_report")
+    state.current_step = Step.FINAL_REPORT
+    state.target_molecule = TargetMolecule(
+        input_text="theophylline",
+        resolved_name="Theophylline",
+        smiles="Cn1cnc2[nH]cnc2c1=O",
+        resolution_status="resolved",
+    )
+    state.candidates = [
+        _candidate("cand_a", "ACGUACGUACGU"),
+        _candidate("cand_b", "GGGGCCCCAAAA"),
+        _candidate("cand_c", "UUUUAAAACCCC"),
+    ]
+    state.predictions = [
+        PredictionResult(
+            candidate_id=cid,
+            model_name="ensemble",
+            target="theophylline",
+            score=0.9,
+            label=1,
+            probability=0.9,
+        )
+        for cid in ("cand_a", "cand_b", "cand_c")
+    ]
+    state.affinity_selected_ids = ["cand_a", "cand_b"]
+    state.specificity_results = [
+        SpecificityResult(candidate_id="cand_a", status="kept"),
+        SpecificityResult(candidate_id="cand_b", status="kept"),
+    ]
+    state.docking_results = [
+        DockingResult(candidate_id="cand_a", docking_score=-8.0, status="completed"),
+        DockingResult(candidate_id="cand_b", docking_score=-7.0, status="completed"),
+        DockingResult(candidate_id="cand_c", docking_score=-5.0, status="completed"),
+    ]
+    state.spatial_ranks = [
+        SpatialRankResult(candidate_id="cand_a", spatial_score=2, rank=1),
+        SpatialRankResult(candidate_id="cand_b", spatial_score=1, rank=2),
+    ]
+    return state
+
+
+def test_report_lists_all_docked_including_non_affinity_selected():
+    context = build_report_context(_affinity_filter_report_state())
+
+    ids = [item["candidate_id"] for item in context["docking_candidates"]]
+    assert ids == ["cand_a", "cand_b", "cand_c"]
+    by_id = {item["candidate_id"]: item for item in context["docking_candidates"]}
+    assert by_id["cand_a"]["affinity_selected"] is True
+    assert by_id["cand_b"]["affinity_selected"] is True
+    assert by_id["cand_c"]["affinity_selected"] is False
+    assert by_id["cand_c"]["specificity_status"] == "pending"
+    assert by_id["cand_c"]["spatial_rank"] is None
+    assert context["screening_overview"]["docked_candidate_count"] == 3
+    assert context["screening_overview"]["affinity_selected_count"] == 2
+
+
+def test_non_affinity_selected_docked_shown_in_markdown():
+    markdown = format_deterministic_report_markdown(
+        build_report_context(_affinity_filter_report_state())
+    )
+    assert "cand_c" in markdown
+    assert "*(not affinity-selected)*" in markdown
+    assert "1 docked candidate(s) were not selected by binding affinity" in markdown
+
+
 def test_specificity_excluded_count_shown_in_markdown():
     markdown = format_deterministic_report_markdown(
         build_report_context(_specificity_gate_state())

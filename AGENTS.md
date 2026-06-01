@@ -175,9 +175,9 @@ LLM 调用日志记录到 `<run_dir>/logs/llm_calls.jsonl`，默认对用户输�
 3. `site_proposal`
 4. `candidate_enumeration`
 5. `primary_scoring`
-6. `specificity_filter`
-7. `docking_selection`（可跳过 docking 直接到 `spatial_rank`，见下方 docking skip 说明）
-8. `docking_run`
+6. `docking_selection`（可跳过 docking 直接到 `specificity_filter`，见下方 docking skip 说明）
+7. `docking_run`
+8. `specificity_filter`（仅对按结合自由能排名前 y 名的候选运行）
 9. `spatial_rank`
 10. `final_report`
 
@@ -191,7 +191,7 @@ intake step 内部包含 PDB 输入子流程（`tui/steps/pdb_intake.py`），�
 
 ### Docking skip 路径
 
-当 docking 不可用（Vina 未安装或配置禁用）时，`docking_selection` step 可直接跳转到 `spatial_rank`，跳过 `docking_run`。`DOCKING_SELECTION → SPATIAL_RANK` 转换已在 `TRANSITIONS` 中注册。TUI 层通过 `_is_docking_enabled()` 检测可用性，`_skip()` 执行跳转。
+当 docking 不可用（Vina 未安装或配置禁用）时，`docking_selection` step 可直接跳转到 `specificity_filter`，跳过 `docking_run`。`DOCKING_SELECTION → SPECIFICITY_FILTER` 转换已在 `TRANSITIONS` 中注册。TUI 层通过 `_is_docking_enabled()` 检测可用性，`_skip()` 执行跳转。跳过后 specificity filter 会对全部候选运行（无亲和力筛选）。
 
 ### Pose-based spatial ranking（论文 Section 3.4.3）
 

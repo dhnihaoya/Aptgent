@@ -313,7 +313,7 @@ async def test_skipping_docking_clears_plan_and_reaches_final_report(tmp_path):
         assert app.current_state.docking_results == []
         assert app.current_state.context.docking_recommendation.strategy == "skipped"
         assert app.current_state.context.docking_recommendation.phase == "skipped"
-        assert app.current_state.current_step == Step.FINAL_REPORT
+        assert app.current_state.current_step == Step.SPECIFICITY_FILTER
 
 
 @pytest.mark.anyio

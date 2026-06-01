@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from aptgent.domain.ranking import ProbHistogramRanker, rank_sums_from_model_probs
+from aptgent.domain.ranking import ProbHistogramRanker, rank_sums_from_model_probs, select_top_y_by_affinity
 
 
 class TestProbHistogramRanker:
@@ -215,3 +215,87 @@ class TestRankSumsFromModelProbs:
         # Low candidate should have highest rank_sum
         assert result[2] > result[0]
         assert result[2] > result[1]
+
+
+class TestSelectTopYByAffinity:
+    """Tests for the dense-rank top-y affinity selector."""
+
+    def test_empty_results(self):
+        assert select_top_y_by_affinity([], 5) == []
+
+    def test_all_none_scores(self):
+        results = [
+            {"candidate_id": "a", "docking_score": None},
+            {"candidate_id": "b", "docking_score": None},
+        ]
+        assert select_top_y_by_affinity(results, 5) == []
+
+    def test_basic_top_3(self):
+        results = [
+            {"candidate_id": "a", "docking_score": -8.0},
+            {"candidate_id": "b", "docking_score": -7.0},
+            {"candidate_id": "c", "docking_score": -6.0},
+            {"candidate_id": "d", "docking_score": -5.0},
+            {"candidate_id": "e", "docking_score": -4.0},
+        ]
+        selected = select_top_y_by_affinity(results, 3)
+        assert selected == ["a", "b", "c"]
+
+    def test_ties_included(self):
+        """3 tied at rank 1, 3 at rank 2, 3 at rank 3, 1 at rank 4, 1 at rank 5
+        → top 5 dense rank includes all 11."""
+        results = [
+            {"candidate_id": f"a{i}", "docking_score": -8.0}
+            for i in range(3)
+        ] + [
+            {"candidate_id": f"b{i}", "docking_score": -7.0}
+            for i in range(3)
+        ] + [
+            {"candidate_id": f"c{i}", "docking_score": -6.0}
+            for i in range(3)
+        ] + [
+            {"candidate_id": "d0", "docking_score": -5.0},
+            {"candidate_id": "e0", "docking_score": -4.0},
+        ]
+        selected = select_top_y_by_affinity(results, 5)
+        assert len(selected) == 11
+
+    def test_ties_at_boundary_included(self):
+        """If rank 2 has ties and top_y=2, all rank-2 candidates are included."""
+        results = [
+            {"candidate_id": "a", "docking_score": -9.0},
+            {"candidate_id": "b", "docking_score": -8.0},
+            {"candidate_id": "c", "docking_score": -8.0},
+            {"candidate_id": "d", "docking_score": -7.0},
+        ]
+        selected = select_top_y_by_affinity(results, 2)
+        assert "a" in selected
+        assert "b" in selected
+        assert "c" in selected
+        assert "d" not in selected
+
+    def test_top_y_larger_than_results(self):
+        results = [
+            {"candidate_id": "a", "docking_score": -8.0},
+            {"candidate_id": "b", "docking_score": -7.0},
+        ]
+        selected = select_top_y_by_affinity(results, 10)
+        assert len(selected) == 2
+
+    def test_skips_none_scores(self):
+        results = [
+            {"candidate_id": "a", "docking_score": -8.0},
+            {"candidate_id": "b", "docking_score": None},
+            {"candidate_id": "c", "docking_score": -7.0},
+        ]
+        selected = select_top_y_by_affinity(results, 5)
+        assert selected == ["a", "c"]
+
+    def test_ascending_order_lower_is_better(self):
+        results = [
+            {"candidate_id": "worst", "docking_score": -1.0},
+            {"candidate_id": "best", "docking_score": -10.0},
+            {"candidate_id": "mid", "docking_score": -5.0},
+        ]
+        selected = select_top_y_by_affinity(results, 1)
+        assert selected == ["best"]
