@@ -125,6 +125,7 @@ class DockingPlan(BaseModel):
     machine_profile: dict[str, Any] = Field(default_factory=dict)
     time_budget: Optional[int] = None
     recommended_top_k: int = 0
+    affinity_top_k: int = 0
     reason: str = ""
 
     receptor_source: str = "manual"  # "manual" | "rnacomposer"

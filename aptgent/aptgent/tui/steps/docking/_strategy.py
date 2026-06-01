@@ -87,6 +87,11 @@ class _StrategyMixin:
             "recommended_top_k",
             computed_plan.get("recommended_top_k") or 5,
         )
+        affinity_top_k = _pick(
+            "affinity_top_k",
+            "recommended_affinity_top_k",
+            None,
+        )
         exhaustiveness = _pick(
             "exhaustiveness",
             "recommended_exhaustiveness",
@@ -115,6 +120,9 @@ class _StrategyMixin:
         seed = _pick("seed", "recommended_seed", None)
         return {
             "default_top_k": int(top_k or 5),
+            "default_affinity_top_k": (
+                int(affinity_top_k) if affinity_top_k is not None else None
+            ),
             "default_exhaustiveness": int(exhaustiveness or 8),
             "default_num_modes": int(num_modes or DEFAULT_NUM_MODES),
             "default_energy_range": float(energy_range or DEFAULT_ENERGY_RANGE),
@@ -147,6 +155,7 @@ class _StrategyMixin:
 
         raw_overrides = {
             "top_k": data.get("top_k"),
+            "affinity_top_k": data.get("affinity_top_k"),
             "exhaustiveness": data.get("exhaustiveness"),
             "num_modes": data.get("num_modes"),
             "energy_range": data.get("energy_range"),
@@ -166,6 +175,12 @@ class _StrategyMixin:
         if top_k > candidate_count:
             top_k = candidate_count
 
+        affinity_top_k = applied.get("affinity_top_k")
+        if affinity_top_k is not None:
+            affinity_top_k = max(1, min(affinity_top_k, top_k))
+        else:
+            affinity_top_k = min(5, top_k)
+
         recommendation = state.context.docking_recommendation
         machine_profile = _machine_profile(state)
         plan = state.docking_plan or DockingPlan(
@@ -175,6 +190,7 @@ class _StrategyMixin:
         )
         plan.machine_profile = plan.machine_profile or machine_profile
         plan.recommended_top_k = top_k
+        plan.affinity_top_k = affinity_top_k
         if "exhaustiveness" in applied:
             plan.exhaustiveness = applied["exhaustiveness"]
         if "num_modes" in applied:
@@ -199,6 +215,7 @@ class _StrategyMixin:
 
         state.time_budget = applied.get("time_budget_hours")
         recommendation.recommended_top_k = top_k
+        recommendation.recommended_affinity_top_k = affinity_top_k
         recommendation.time_budget_hours = applied.get("time_budget_hours")
         recommendation.recommended_exhaustiveness = plan.exhaustiveness
         recommendation.recommended_num_modes = plan.num_modes

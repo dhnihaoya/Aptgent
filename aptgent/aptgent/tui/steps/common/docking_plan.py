@@ -277,6 +277,21 @@ def validate_docking_param_overrides(
                 )
             applied["top_k"] = clamped
 
+    if "affinity_top_k" in raw and raw["affinity_top_k"] is not None:
+        v = coerce_int(raw["affinity_top_k"])
+        if v is None:
+            warnings["affinity_top_k"] = (
+                f"affinity_top_k: ignored (could not interpret {raw['affinity_top_k']!r})."
+            )
+        else:
+            top_k_val = applied.get("top_k") or max(candidate_count, 1)
+            clamped = max(1, min(top_k_val, v))
+            if clamped != v:
+                warnings["affinity_top_k"] = (
+                    f"affinity_top_k: clamped {v} -> {clamped} (1..{top_k_val})."
+                )
+            applied["affinity_top_k"] = clamped
+
     if "exhaustiveness" in raw and raw["exhaustiveness"] is not None:
         clamped = _clamp_exhaustiveness(raw["exhaustiveness"])
         if clamped is None:

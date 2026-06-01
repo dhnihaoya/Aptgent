@@ -372,6 +372,9 @@ def _run_specificity(writer: EventWriter, state: Any, persistence: Persistence) 
     tools_config = bundle.tools
 
     candidates = list(state.candidates)
+    selected_ids = set(state.affinity_selected_ids) if state.affinity_selected_ids else set()
+    if selected_ids:
+        candidates = [c for c in candidates if c.candidate_id in selected_ids]
     target = state.target_molecule
     analogs = list(state.analogs)
 

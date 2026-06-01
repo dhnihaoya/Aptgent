@@ -121,3 +121,43 @@ def rank_sums_from_model_probs(per_candidate_probs: list[list[float]]) -> list[i
             i = j
 
     return ranks.sum(axis=1).tolist()
+
+
+def select_top_y_by_affinity(
+    docking_results: list[dict],
+    top_y: int,
+) -> list[str]:
+    """Select candidate ids whose docking_score dense rank ≤ *top_y*.
+
+    *docking_results* items must have ``candidate_id`` (str) and
+    ``docking_score`` (float | None).  Only completed results with a score
+    are considered.  Lower docking_score = stronger affinity.  Dense
+    ranking is used: equal scores share the same rank and the next distinct
+    score gets rank + 1.  All candidates with rank ≤ top_y are kept
+    (so ties may produce more than top_y ids).
+
+    Returns a list of candidate_id strings (may be shorter than top_y if
+    fewer valid results exist).
+    """
+    scored = [
+        (r["candidate_id"], r["docking_score"])
+        for r in docking_results
+        if r.get("docking_score") is not None
+    ]
+    if not scored:
+        return []
+
+    scored.sort(key=lambda x: x[1])
+
+    selected: list[str] = []
+    rank = 0
+    prev_score = None
+    for cid, score in scored:
+        if score != prev_score:
+            rank += 1
+            prev_score = score
+        if rank > top_y:
+            break
+        selected.append(cid)
+
+    return selected

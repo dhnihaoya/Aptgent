@@ -51,6 +51,7 @@ class DockingStrategyPanel(_BaseStructuredPanel):
 
     _FIELD_IDS = {
         "top_k": "dock-plan-top-k",
+        "affinity_top_k": "dock-plan-affinity-top-k",
         "exhaustiveness": "dock-plan-exhaustiveness",
         "num_modes": "dock-plan-num-modes",
         "energy_range": "dock-plan-energy-range",
@@ -66,6 +67,7 @@ class DockingStrategyPanel(_BaseStructuredPanel):
         machine_profile: dict | None = None,
         candidate_count: int = 0,
         default_top_k: int = 5,
+        default_affinity_top_k: int | None = None,
         default_exhaustiveness: int = 8,
         default_num_modes: int = 9,
         default_energy_range: float = 3.0,
@@ -80,6 +82,10 @@ class DockingStrategyPanel(_BaseStructuredPanel):
         self.candidate_count = candidate_count
         ceiling = candidate_count if candidate_count else default_top_k
         self.default_top_k = max(1, min(default_top_k, ceiling))
+        self.default_affinity_top_k = (
+            default_affinity_top_k if default_affinity_top_k is not None
+            else min(5, self.default_top_k)
+        )
         self.default_exhaustiveness = default_exhaustiveness
         self.default_num_modes = default_num_modes
         self.default_energy_range = default_energy_range
@@ -89,7 +95,7 @@ class DockingStrategyPanel(_BaseStructuredPanel):
         self.default_seed = default_seed
 
     def compose(self) -> ComposeResult:
-        yield Static("Docking Selection \u2014 Step 7", classes="panel-title")
+        yield Static("Docking Selection \u2014 Step 6", classes="panel-title")
         yield Static(
             "All Vina parameters live here. Use natural language in the chat "
             "input below to fill these fields (e.g. \"top 8, exhaustiveness 32, "
@@ -104,6 +110,11 @@ class DockingStrategyPanel(_BaseStructuredPanel):
         top_k_input = Input(id=self._FIELD_IDS["top_k"], placeholder="5")
         top_k_input.value = str(self.default_top_k)
         yield top_k_input
+
+        yield Static("Top-Y by binding affinity for specificity (default: min(5, top_k)):")
+        atk_input = Input(id=self._FIELD_IDS["affinity_top_k"], placeholder="5")
+        atk_input.value = str(self.default_affinity_top_k)
+        yield atk_input
 
         yield Static("Exhaustiveness (Vina default 8; 16/32 for generous compute):")
         exh_input = Input(id=self._FIELD_IDS["exhaustiveness"], placeholder="8")
@@ -232,6 +243,7 @@ class DockingStrategyPanel(_BaseStructuredPanel):
 
         return {
             "top_k": _int(self._read("top_k")),
+            "affinity_top_k": _int(self._read("affinity_top_k")),
             "exhaustiveness": _int(self._read("exhaustiveness")),
             "num_modes": _int(self._read("num_modes")),
             "energy_range": _float(self._read("energy_range")),
@@ -251,6 +263,9 @@ class DockingStrategyPanel(_BaseStructuredPanel):
         return {
             "phase": "strategy_submitted",
             "top_k": self._read("top_k") or str(self.default_top_k),
+            "affinity_top_k": (
+                self._read("affinity_top_k") or str(self.default_affinity_top_k)
+            ),
             "exhaustiveness": self._read("exhaustiveness")
             or str(self.default_exhaustiveness),
             "num_modes": self._read("num_modes") or str(self.default_num_modes),
@@ -584,7 +599,7 @@ class DockingParamPanel(_BaseStructuredPanel):
     def compose(self) -> ComposeResult:
         yield Static("Docking Configuration \u2014 Confirmation", classes="panel-title")
         yield Static(
-            "All parameters were already set in Step 7 / Phase 1. Review the "
+            "All parameters were already set in Step 6 / Phase 1. Review the "
             "summary below and submit, or press \"Cover whole aptamer\" to "
             "recompute every search box from the receptor geometry. To change "
             "any number, jump back to Phase 1.",

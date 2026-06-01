@@ -89,13 +89,13 @@ def _make_app(state, *, docking_enabled=True):
     return app
 
 
-def test_skip_advances_to_spatial_rank():
+def test_skip_advances_to_specificity_filter():
     state = _make_state()
     app = _make_app(state)
     screen = _FakeScreen(app)
     handler = DockingSelectionHandler(screen)
     handler._skip()
-    assert screen.advanced_to == Step.SPATIAL_RANK
+    assert screen.advanced_to == Step.SPECIFICITY_FILTER
 
 
 def test_is_docking_enabled_true_by_default():

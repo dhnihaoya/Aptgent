@@ -101,6 +101,7 @@ class DockingRecommendationContext(BaseModel):
     time_budget_hours: Optional[int] = None
     recommended_time_budget_hours: Optional[int] = None
     recommended_top_k: int = 0
+    recommended_affinity_top_k: Optional[int] = None
     recommended_exhaustiveness: Optional[int] = None
     recommended_num_modes: Optional[int] = None
     recommended_energy_range: Optional[float] = None
@@ -176,6 +177,7 @@ class RunState(BaseModel):
     docking_plan: Optional[DockingPlan] = None
     docking_results: list[DockingResult] = Field(default_factory=list)
     spatial_ranks: list[SpatialRankResult] = Field(default_factory=list)
+    affinity_selected_ids: list[str] = Field(default_factory=list)
     recommendations: list[FinalRecommendation] = Field(default_factory=list)
     final_report_markdown: str = ""
     final_report_context: dict[str, Any] = Field(default_factory=dict)

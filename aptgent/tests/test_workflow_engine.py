@@ -11,7 +11,7 @@ import json
 import pytest
 
 from aptgent.domain.enums import Step, Status
-from aptgent.workflow.engine import TRANSITIONS, WorkflowEngine
+from aptgent.workflow.engine import TRANSITIONS, _STEP_ORDER, WorkflowEngine
 from aptgent.workflow.persistence import Persistence
 from aptgent.workflow.state import RunState
 
@@ -32,6 +32,24 @@ def test_transitions_cover_all_active_steps():
             continue
         assert step in TRANSITIONS
         assert len(TRANSITIONS[step]) >= 1
+
+
+def test_step_order_docking_before_specificity():
+    """After primary_scoring comes docking_selection, not specificity_filter."""
+    ps_idx = _STEP_ORDER.index(Step.PRIMARY_SCORING)
+    ds_idx = _STEP_ORDER.index(Step.DOCKING_SELECTION)
+    dr_idx = _STEP_ORDER.index(Step.DOCKING_RUN)
+    sf_idx = _STEP_ORDER.index(Step.SPECIFICITY_FILTER)
+    assert ds_idx == ps_idx + 1
+    assert dr_idx == ds_idx + 1
+    assert sf_idx == dr_idx + 1
+
+
+def test_docking_selection_skip_transition():
+    """DOCKING_SELECTION can skip to SPECIFICITY_FILTER (not SPATIAL_RANK)."""
+    targets = TRANSITIONS[Step.DOCKING_SELECTION]
+    assert Step.DOCKING_RUN in targets
+    assert Step.SPECIFICITY_FILTER in targets
 
 
 def test_workflow_engine_transition(tmp_path):
