@@ -102,9 +102,6 @@ def _backoff_delay(attempt: int, exc: BaseException) -> float:
 
 
 class LLMClient:
-    _REPETITION_WINDOW = 200
-    _REPETITION_MIN_PATTERN = 40
-    _REPETITION_THRESHOLD = 3
 
     def __init__(
         self,
@@ -226,8 +223,11 @@ class LLMClient:
             )
         else:
             thinking_enabled = enable_thinking
-        if self._supports_thinking(use_model) and thinking_enabled:
-            payload["thinking"] = {"type": "enabled"}
+        if self._supports_thinking(use_model):
+            if thinking_enabled:
+                payload["thinking"] = {"type": "enabled"}
+            else:
+                payload["thinking"] = {"type": "disabled"}
         if stream:
             payload["stream"] = True
         if response_format is not None:
@@ -242,51 +242,6 @@ class LLMClient:
             pool=30.0,
         )
 
-    @staticmethod
-    def _detect_repetition(
-        buf: str,
-        window: int = _REPETITION_WINDOW,
-        min_pat: int = _REPETITION_MIN_PATTERN,
-        threshold: int = _REPETITION_THRESHOLD,
-    ) -> bool:
-        """Return True if the tail of *buf* contains a repeating pattern.
-
-        Uses prefix-hash pre-computation so each substring comparison is O(1)
-        instead of O(pat_len), bringing overall complexity from O(n^2) to
-        O(n log n).
-        """
-        tail = buf[-window:] if len(buf) > window else buf
-        if len(tail) < min_pat * threshold:
-            return False
-
-        _BASE = 257
-        _MOD = (1 << 61) - 1
-
-        n = len(tail)
-        ph = [0] * (n + 1)
-        bp = [1] * (n + 1)
-        for i, ch in enumerate(tail):
-            ph[i + 1] = (ph[i] * _BASE + ord(ch)) % _MOD
-            bp[i + 1] = (bp[i] * _BASE) % _MOD
-
-        def _hash(lo: int, hi: int) -> int:
-            return (ph[hi] - ph[lo] * bp[hi - lo]) % _MOD
-
-        max_pat = n // threshold
-        for pat_len in range(min_pat, max_pat + 1):
-            pat_hash = _hash(n - pat_len, n)
-            count = 0
-            pos = n - pat_len
-            while pos >= 0:
-                if _hash(pos, pos + pat_len) == pat_hash:
-                    count += 1
-                    if count >= threshold:
-                        return True
-                    pos -= pat_len
-                else:
-                    break
-        return False
-
     # -- core streaming + retry primitives --------------------------------
 
     def _iter_sse_events(
@@ -298,8 +253,6 @@ class LLMClient:
         reasoning_buf: list[str] = []
         reasoning_chars = 0
         reasoning_suppressed = False
-        content_buf: list[str] = []
-        content_suppressed = False
         for line in resp.iter_lines():
             if should_cancel is not None and should_cancel():
                 raise LLMCancelled()
@@ -325,32 +278,11 @@ class LLMClient:
                             "type": "reasoning",
                             "text": "\n\n[reasoning truncated — token limit]",
                         }
-                    elif len(reasoning_buf) % 8 == 0 and self._detect_repetition(
-                        "".join(reasoning_buf)
-                    ):
-                        reasoning_suppressed = True
-                        _log.info("Reasoning suppressed: repetitive loop detected")
-                        yield {
-                            "type": "reasoning",
-                            "text": "\n\n[reasoning truncated — repetitive loop detected]",
-                        }
                     else:
                         yield {"type": "reasoning", "text": reasoning}
                 content = self._extract_content(delta.get("content", ""))
-                if content and not content_suppressed:
-                    content_buf.append(content)
-                    if (
-                        len(content_buf) % 8 == 0
-                        and self._detect_repetition("".join(content_buf))
-                    ):
-                        content_suppressed = True
-                        _log.info("Content suppressed: repetitive loop detected")
-                        yield {
-                            "type": "content",
-                            "text": "\n\n[output truncated — repetitive loop detected]",
-                        }
-                    else:
-                        yield {"type": "content", "text": content}
+                if content:
+                    yield {"type": "content", "text": content}
             except Exception as exc:
                 _log.debug("SSE chunk parse failed: %s", exc)
 

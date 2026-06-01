@@ -52,7 +52,7 @@ def test_json_payload_disables_thinking(tmp_path):
     )
 
     assert payload["model"] == "glm-5.1"
-    assert "thinking" not in payload
+    assert payload["thinking"] == {"type": "disabled"}
 
 
 def test_iter_sse_events_emits_reasoning_before_content(tmp_path):
