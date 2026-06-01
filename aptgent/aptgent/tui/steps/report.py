@@ -331,14 +331,43 @@ class ReportHandler(StepHandler):
         state.final_report_context = context
         self.screen.app.save_state()
 
-        markdown = ""
+        # Always clear the activity spinner before rendering anything, even if
+        # the LLM skill fails to start, so it never lingers on screen.
+        self._threadsafe(self.screen.clear_activity)
+
+        markdown = self._stream_llm_report(context)
+        if not markdown:
+            markdown = format_deterministic_report_markdown(context)
+            self._threadsafe(
+                self.screen.add_system_message, markdown, extra_class="", markdown=True,
+            )
+
+        state.final_report_markdown = markdown
+        self.screen.app.save_state()
+        self._threadsafe(
+            self.screen.add_system_message,
+            "Report is ready. Type `export` to save Markdown, or `finish` to exit.",
+            extra_class="",
+            markdown=True,
+        )
+        self._enable_input()
+        self._threadsafe(
+            self.screen.set_input_placeholder, "Type 'export' or 'finish'"
+        )
+
+    def _stream_llm_report(self, context: dict[str, Any]) -> str:
+        """Stream the LLM Markdown report into a chat bubble.
+
+        Returns the streamed Markdown, or an empty string if generation fails.
+        On failure the partially-written bubble is removed so the deterministic
+        fallback never renders on top of a half-finished report.
+        """
+        bubble = None
+        chunks: list[str] = []
         try:
             skill = self.screen.app.runtime.create_skill(ReportSkill)
             if hasattr(self.screen.app, "_configure_llm_logging"):
                 self.screen.app._configure_llm_logging(skill)
-            chunks: list[str] = []
-            bubble = None
-            self._threadsafe(self.screen.clear_activity)
             for event in skill.write_markdown_stream(context):
                 if isinstance(event, dict):
                     if event.get("type") != "content":
@@ -359,30 +388,19 @@ class ReportHandler(StepHandler):
             markdown = "".join(chunks).strip()
             if bubble is not None:
                 self._threadsafe(bubble.finalize)
+            return markdown
         except Exception:
-            markdown = format_deterministic_report_markdown(context)
-            self._threadsafe(
-                self.screen.add_system_message, markdown, extra_class="", markdown=True,
-            )
+            if bubble is not None:
+                self._threadsafe(self._remove_bubble, bubble)
+            return ""
 
-        if not markdown:
-            markdown = format_deterministic_report_markdown(context)
-            self._threadsafe(
-                self.screen.add_system_message, markdown, extra_class="", markdown=True,
-            )
-
-        state.final_report_markdown = markdown
-        self.screen.app.save_state()
-        self._threadsafe(
-            self.screen.add_system_message,
-            "Report is ready. Type `export` to save Markdown, or `finish` to exit.",
-            extra_class="",
-            markdown=True,
-        )
-        self._enable_input()
-        self._threadsafe(
-            self.screen.set_input_placeholder, "Type 'export' or 'finish'"
-        )
+    @staticmethod
+    def _remove_bubble(bubble: Any) -> None:
+        try:
+            if bubble.is_mounted:
+                bubble.remove()
+        except Exception:
+            pass
 
     def handle_user_input(self, text: str) -> None:
         text_lower = text.strip().lower()
