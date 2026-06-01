@@ -13,7 +13,8 @@ _log = logging.getLogger(__name__)
 
 
 def _candidate_id(cand: Any, index: int) -> str:
-    return cand.candidate_id or f"cand_{index}"
+    raw = cand.candidate_id or f"cand_{index}"
+    return raw.replace(" ", "_")
 
 
 def _top_k_bundle(state: Any) -> tuple[int, list[Any]]:
@@ -21,7 +22,7 @@ def _top_k_bundle(state: Any) -> tuple[int, list[Any]]:
     top_k = (
         (plan.recommended_top_k if plan is not None else None)
         or state.context.docking_recommendation.recommended_top_k
-        or 5
+        or 100
     )
     return top_k, list(state.candidates[:top_k])
 
@@ -29,7 +30,7 @@ def _top_k_bundle(state: Any) -> tuple[int, list[Any]]:
 def _machine_profile(state: Any) -> dict[str, Any]:
     recommendation = state.context.docking_recommendation
     profile = recommendation.machine_profile
-    if profile is not None:
+    if profile:
         return dict(profile)
     import os
     cpu_count = os.cpu_count() or 1

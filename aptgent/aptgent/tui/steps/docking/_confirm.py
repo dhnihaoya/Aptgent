@@ -74,7 +74,7 @@ class _ConfirmMixin:
         self.screen.app.save_state()
 
         self.screen.add_system_message(
-            f"Docking plan: top-{plan.recommended_top_k} candidates, "
+            f"Docking plan: {plan.recommended_top_k} candidates, "
             f"{len(plan.receptor_paths)} receptors, exhaustiveness={plan.exhaustiveness}."
         )
         ns = next_primary_step(Step.DOCKING_SELECTION)

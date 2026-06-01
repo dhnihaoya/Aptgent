@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from aptgent.domain.models import DockingPlan
-from aptgent.llm.skills import DockingParamsParseSkill, DockingPlannerSkill
+from aptgent.llm.skills import DockingPlannerSkill
 from aptgent.tui.steps.common import (
     DEFAULT_ENERGY_RANGE,
     DEFAULT_GRID_PADDING_ANGSTROM,
@@ -58,8 +58,7 @@ class _StrategyMixin:
             )
         )
         self.screen.set_input_placeholder(
-            "Describe docking parameter changes in natural language, or type "
-            "'skip' to skip docking."
+            "Describe docking parameter changes in natural language."
         )
 
     def _panel_defaults(
@@ -85,7 +84,7 @@ class _StrategyMixin:
         top_k = _pick(
             "recommended_top_k",
             "recommended_top_k",
-            computed_plan.get("recommended_top_k") or 5,
+            computed_plan.get("recommended_top_k") or 100,
         )
         affinity_top_k = _pick(
             "affinity_top_k",
@@ -119,7 +118,7 @@ class _StrategyMixin:
         )
         seed = _pick("seed", "recommended_seed", None)
         return {
-            "default_top_k": int(top_k or 5),
+            "default_top_k": int(top_k or 100),
             "default_affinity_top_k": (
                 int(affinity_top_k) if affinity_top_k is not None else None
             ),
@@ -171,7 +170,7 @@ class _StrategyMixin:
         for warning in warnings.values():
             self.screen.add_system_message(warning, "warning-text")
 
-        top_k = applied.get("top_k") or 5
+        top_k = applied.get("top_k") or 100
         if top_k > candidate_count:
             top_k = candidate_count
 
@@ -236,7 +235,7 @@ class _StrategyMixin:
         top_k_default = (
             (plan.recommended_top_k if plan is not None else None)
             or state.context.docking_recommendation.recommended_top_k
-            or 5
+            or 100
         )
         self.run_worker(
             lambda: self._llm_hint_worker(top_k_default, time_budget),
@@ -247,6 +246,8 @@ class _StrategyMixin:
         self,
         top_k_default: int,
         time_budget: int | None,
+        *,
+        user_guidance: str | None = None,
     ) -> None:
         state = self.screen.app.current_state
         candidate_count = len(state.candidates)
@@ -264,35 +265,54 @@ class _StrategyMixin:
         config_timeout = _per_ligand_timeout_default_cached()
         try:
             skill = self.screen.app.runtime.create_skill(DockingPlannerSkill)
-            result = run_llm_interaction(
-                self.screen,
-                display_stream=lambda: skill.explain_plan_stream(
-                    candidate_count=candidate_count,
-                    machine_profile=machine_profile,
-                    time_budget_hours=time_budget,
-                    computed_top_k=plan["recommended_top_k"],
-                    computed_time_budget_hours=plan["recommended_time_budget_hours"],
-                    target_smiles=target_smiles,
-                    target_name=target_name,
-                    per_ligand_timeout_default_seconds=config_timeout,
-                ),
-                structured_call=lambda: validate_docking_recommendation_result(
-                    skill.plan(
+            payload: dict[str, Any] = {
+                "candidate_count": candidate_count,
+                "machine_profile": machine_profile,
+                "time_budget_hours": time_budget,
+                "computed_top_k": plan["recommended_top_k"],
+                "computed_time_budget_hours": plan["recommended_time_budget_hours"],
+                "target_smiles": target_smiles,
+                "target_name": target_name,
+                "per_ligand_timeout_default_seconds": config_timeout,
+            }
+            if user_guidance:
+                payload["user_guidance"] = user_guidance
+
+            streamed_result: dict[str, object] = {}
+
+            def display_stream():
+                for event in skill.invoke_json_events(payload):
+                    if isinstance(event, dict) and event.get("type") == "result":
+                        value = event.get("value")
+                        if isinstance(value, dict):
+                            streamed_result.clear()
+                            streamed_result.update(value)
+                        continue
+                    yield event
+
+            def structured_result() -> dict:
+                if streamed_result:
+                    return validate_docking_recommendation_result(
+                        streamed_result,
                         candidate_count=candidate_count,
                         machine_profile=machine_profile,
                         time_budget_hours=time_budget,
-                        computed_top_k=plan["recommended_top_k"],
-                        computed_time_budget_hours=plan["recommended_time_budget_hours"],
                         target_smiles=target_smiles,
-                        target_name=target_name,
-                        per_ligand_timeout_default_seconds=config_timeout,
-                    ),
+                        per_ligand_timeout_default=config_timeout,
+                    )
+                return validate_docking_recommendation_result(
+                    skill.plan(**payload),
                     candidate_count=candidate_count,
                     machine_profile=machine_profile,
                     time_budget_hours=time_budget,
                     target_smiles=target_smiles,
                     per_ligand_timeout_default=config_timeout,
-                ),
+                )
+
+            result = run_llm_interaction(
+                self.screen,
+                display_stream=display_stream,
+                structured_call=structured_result,
             )
             top_k = result.get("recommended_top_k", top_k_default)
             exhaustiveness = result.get("recommended_exhaustiveness", 8)
@@ -308,6 +328,7 @@ class _StrategyMixin:
             seed = result.get("recommended_seed")
             recommended_time = result.get("recommended_time_budget_hours")
             reason = result.get("reason", "")
+
             markdown = format_docking_recommendation_markdown(
                 candidate_count=candidate_count,
                 machine_profile=machine_profile,
@@ -345,9 +366,6 @@ class _StrategyMixin:
                 accepted=False,
             )
             self.screen.app.save_state()
-            self._threadsafe(
-                self.screen.add_system_message, markdown, "", True
-            )
             overrides = {
                 "top_k": top_k,
                 "exhaustiveness": exhaustiveness,
@@ -359,10 +377,7 @@ class _StrategyMixin:
                 "seed": seed,
             }
             self._threadsafe(
-                self._apply_overrides_to_panel,
-                overrides,
-                "Filled the form with LLM-recommended parameters; "
-                "press Continue to accept or edit fields first.",
+                self._show_recommended_panel, overrides, markdown,
             )
         except Exception as exc:
             self._threadsafe(
@@ -373,93 +388,55 @@ class _StrategyMixin:
         finally:
             self._enable_input()
 
-    def _nl_parse_worker(
-        self, text: str, live_params: dict[str, Any] | None = None
-    ) -> None:
-        state = self.screen.app.current_state
-        candidate_count = len(state.candidates)
-        current_params: dict[str, Any] = live_params or {}
-        try:
-            skill = self.screen.app.runtime.create_skill(DockingParamsParseSkill)
-            raw = skill.parse(
-                text,
-                current_params=current_params,
-                candidate_count=candidate_count,
-            )
-        except Exception as exc:
-            self._report_error(
-                f"Could not parse natural language overrides: {exc}"
-            )
-            return
-
-        applied, warnings, action = validate_docking_param_overrides(
-            raw, candidate_count=candidate_count
-        )
-
-        if action == "skip":
-            self._threadsafe(self._skip)
-            return
-        if action == "use_llm_hint":
-            self._enable_input()
-            self._threadsafe(self._on_llm_hint)
-            return
-        if action == "use_defaults":
-            applied = self._default_overrides()
-
-        for warning in warnings.values():
-            self._threadsafe(
-                self.screen.add_system_message, warning, "warning-text"
-            )
-
-        if not applied and action != "apply":
-            self._threadsafe(
-                self.screen.add_system_message,
-                "I did not understand any parameter overrides in that message. "
-                "Try something like 'top 8, exhaustiveness 32, seed 42' or 'skip'.",
-                "warning-text",
-            )
-            self._enable_input()
-            return
-
-        summary_lines = ["Applied from your message:"] if applied else []
-        for key, val in applied.items():
-            summary_lines.append(f"  - {key} = {val}")
-        summary = "\n".join(summary_lines) if summary_lines else ""
-
-        self._threadsafe(
-            self._apply_overrides_to_panel,
-            applied,
-            summary,
-        )
-        self._enable_input()
-
-    def _default_overrides(self) -> dict[str, Any]:
-        state = self.screen.app.current_state
-        candidate_count = len(state.candidates)
-        machine_profile = _machine_profile(state)
-        plan = compute_deterministic_docking_plan(
-            candidate_count=candidate_count,
-            machine_profile=machine_profile,
-            time_budget_hours=state.time_budget,
-        )
-        return {
-            "top_k": plan["recommended_top_k"] or 5,
-            "exhaustiveness": plan["recommended_exhaustiveness"] or 8,
-            "num_modes": DEFAULT_NUM_MODES,
-            "energy_range": DEFAULT_ENERGY_RANGE,
-            "grid_padding_angstrom": DEFAULT_GRID_PADDING_ANGSTROM,
-            "per_ligand_timeout_seconds": _per_ligand_timeout_default_cached(),
-            "time_budget_hours": state.time_budget,
-            "seed": None,
-        }
-
-    def _apply_overrides_to_panel(
+    def _show_recommended_panel(
         self,
         overrides: dict[str, Any],
-        summary: str,
+        markdown: str = "",
     ) -> None:
-        widget = self.screen._active_structured_widget
-        if isinstance(widget, DockingStrategyPanel):
-            widget.apply_overrides(overrides)
-        if summary:
-            self.screen.add_system_message(summary)
+        """Replace the strategy panel with a confirm_only pre-filled panel."""
+        if markdown:
+            self.screen.add_system_message(markdown, "", True)
+        state = self.screen.app.current_state
+        machine_profile = _machine_profile(state)
+        candidate_count = len(state.candidates)
+        config_timeout = _per_ligand_timeout_default_cached()
+        self.screen.add_structured_widget(
+            DockingStrategyPanel(
+                machine_profile=machine_profile,
+                candidate_count=candidate_count,
+                confirm_only=True,
+                default_top_k=int(overrides.get("top_k") or 100),
+                default_affinity_top_k=int(
+                    overrides.get("affinity_top_k")
+                    or min(5, overrides.get("top_k") or 100)
+                ),
+                default_exhaustiveness=int(
+                    overrides.get("exhaustiveness") or 8
+                ),
+                default_num_modes=int(
+                    overrides.get("num_modes") or DEFAULT_NUM_MODES
+                ),
+                default_energy_range=float(
+                    overrides.get("energy_range") or DEFAULT_ENERGY_RANGE
+                ),
+                default_grid_padding_angstrom=float(
+                    overrides.get("grid_padding_angstrom")
+                    or DEFAULT_GRID_PADDING_ANGSTROM
+                ),
+                default_per_ligand_timeout_seconds=(
+                    int(overrides["per_ligand_timeout_seconds"])
+                    if overrides.get("per_ligand_timeout_seconds") is not None
+                    else int(config_timeout) if config_timeout else None
+                ),
+                default_time_budget_hours=(
+                    int(overrides["time_budget_hours"])
+                    if overrides.get("time_budget_hours") is not None
+                    else None
+                ),
+                default_seed=(
+                    int(overrides["seed"])
+                    if overrides.get("seed") is not None
+                    else None
+                ),
+            )
+        )

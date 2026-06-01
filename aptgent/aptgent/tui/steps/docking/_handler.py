@@ -69,12 +69,6 @@ class DockingSelectionHandler(
         cleaned = text.strip()
         if not cleaned:
             return
-        lowered = cleaned.lower()
-        if lowered == "skip" or "skip docking" in lowered or lowered in {
-            "\u8df3\u8fc7", "\u8df3\u8fc7 docking",
-        }:
-            self._skip()
-            return
 
         state = self.screen.app.current_state
         phase = state.context.docking_recommendation.phase or "initial"
@@ -91,18 +85,18 @@ class DockingSelectionHandler(
         ):
             self._show_strategy_panel()
 
-        # Snapshot live form values on the UI thread before the worker starts,
-        # so the NL parser sees what the user currently has in the form.
-        widget = self.screen._active_structured_widget
-        live_params: dict[str, Any] = (
-            widget.live_params()
-            if isinstance(widget, DockingStrategyPanel)
-            else {}
+        plan = state.docking_plan
+        top_k_default = (
+            (plan.recommended_top_k if plan is not None else None)
+            or state.context.docking_recommendation.recommended_top_k
+            or 100
         )
 
         self.run_worker(
-            lambda: self._nl_parse_worker(cleaned, live_params),
-            activity="Parsing your docking parameters...",
+            lambda: self._llm_hint_worker(
+                top_k_default, state.time_budget, user_guidance=cleaned,
+            ),
+            activity="Preparing an LLM docking hint...",
         )
 
     # ------------------------------------------------------------------
@@ -129,9 +123,6 @@ class DockingSelectionHandler(
     # ------------------------------------------------------------------
 
     def handle_action(self, action: str) -> None:
-        if action == "strategy:skip":
-            self._skip()
-            return
         if action == "llm-hint" or action.startswith("llm-hint:"):
             self._on_llm_hint()
             return

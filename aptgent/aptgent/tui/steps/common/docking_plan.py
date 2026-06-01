@@ -77,7 +77,7 @@ def default_top_k(
     """Compute a sensible default top-k."""
     if candidate_count <= 0:
         return 0
-    paper_default = 5
+    paper_default = 100
     if time_budget_hours is None:
         return min(candidate_count, paper_default)
     cpu_count = coerce_int(machine_profile.get("cpu_count")) or 1
@@ -346,7 +346,7 @@ def validate_docking_param_overrides(
     action: str | None = None
     if isinstance(action_raw, str):
         candidate = action_raw.strip().lower()
-        if candidate in {"apply", "skip", "use_llm_hint", "use_defaults"}:
+        if candidate in {"apply", "use_llm_hint", "use_defaults"}:
             action = candidate
 
     return applied, warnings, action
@@ -405,7 +405,7 @@ def format_docking_recommendation_markdown(
         f"{section_heading('Recommended Docking Setup')}\n\n"
         f"- Candidates available: **{candidate_count}**\n"
         f"- Time budget: **{budget_text}**\n"
-        f"- Suggested batch: **top {recommended_top_k}**\n"
+        f"- Candidates to dock: **{recommended_top_k}**\n"
         f"- Exhaustiveness: **{exh_text}**\n"
         f"- Num modes: **{num_modes_text}**\n"
         f"- Energy range: **{energy_text}**\n"

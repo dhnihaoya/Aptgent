@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Horizontal, HorizontalGroup, VerticalGroup
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input, Static
 
@@ -15,7 +15,7 @@ _log = logging.getLogger(__name__)
 
 
 class DockingStrategyPanel(_BaseStructuredPanel):
-    """Phase 1: full docking parameter form (Vina knobs + skip).
+    """Phase 1: full docking parameter form (Vina knobs).
 
     This panel is the **single editable source** for every docking parameter
     the user can change. The downstream :class:`DockingParamPanel` is a
@@ -24,6 +24,10 @@ class DockingStrategyPanel(_BaseStructuredPanel):
     LLM Hint and the chat free-text input both call back via
     :meth:`apply_overrides` to populate the form. The user still has to
     press Continue to submit.
+
+    When *confirm_only* is True the panel shows pre-filled values with only
+    a Continue button — used after an LLM recommendation so the user just
+    confirms.
     """
 
     DEFAULT_CSS = """
@@ -47,6 +51,17 @@ class DockingStrategyPanel(_BaseStructuredPanel):
     DockingStrategyPanel Horizontal > Button {
         margin-right: 1;
     }
+    DockingStrategyPanel .field-col {
+        width: 1fr;
+        height: auto;
+        padding-right: 2;
+    }
+    DockingStrategyPanel .field-label {
+        height: 1;
+    }
+    DockingStrategyPanel .field-col Input {
+        margin: 0 0 1 0;
+    }
     """
 
     _FIELD_IDS = {
@@ -66,7 +81,7 @@ class DockingStrategyPanel(_BaseStructuredPanel):
         *,
         machine_profile: dict | None = None,
         candidate_count: int = 0,
-        default_top_k: int = 5,
+        default_top_k: int = 100,
         default_affinity_top_k: int | None = None,
         default_exhaustiveness: int = 8,
         default_num_modes: int = 9,
@@ -75,11 +90,13 @@ class DockingStrategyPanel(_BaseStructuredPanel):
         default_per_ligand_timeout_seconds: int | None = None,
         default_time_budget_hours: int | None = None,
         default_seed: int | None = None,
+        confirm_only: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.machine_profile = machine_profile or {}
         self.candidate_count = candidate_count
+        self.confirm_only = confirm_only
         ceiling = candidate_count if candidate_count else default_top_k
         self.default_top_k = max(1, min(default_top_k, ceiling))
         self.default_affinity_top_k = (
@@ -95,82 +112,110 @@ class DockingStrategyPanel(_BaseStructuredPanel):
         self.default_seed = default_seed
 
     def compose(self) -> ComposeResult:
-        yield Static("Docking Selection \u2014 Step 6", classes="panel-title")
-        yield Static(
-            "All Vina parameters live here. Use natural language in the chat "
-            "input below to fill these fields (e.g. \"top 8, exhaustiveness 32, "
-            "seed 42\"). Click Continue when ready.",
-            classes="panel-help",
-        )
+        if self.confirm_only:
+            yield Static("Docking Recommendation \u2014 Confirm", classes="panel-title")
+            yield Static(
+                "Values below have been pre-filled based on the recommendation. "
+                "Review and press Continue to proceed.",
+                classes="panel-help",
+            )
+        else:
+            yield Static("Docking Selection \u2014 Step 6", classes="panel-title")
+            yield Static(
+                "Configure docking parameters below, or use the chat input to "
+                "describe what you want (e.g. \"dock 8, exhaustiveness 32\"). "
+                "Click Continue when ready.",
+                classes="panel-help",
+            )
         yield Static(f"[dim]{self._machine_info()}[/]")
         yield Static(f"Available candidates: [bold]{self.candidate_count}[/bold]")
 
-        yield Static("Core", classes="section-heading")
-        yield Static("Top-K candidates to dock (default: 5):")
-        top_k_input = Input(id=self._FIELD_IDS["top_k"], placeholder="5")
-        top_k_input.value = str(self.default_top_k)
-        yield top_k_input
+        # --- Core: candidate selection ---
+        yield Static("Candidate Selection", classes="section-heading")
+        with HorizontalGroup():
+            with VerticalGroup(classes="field-col"):
+                yield Static("Candidates to dock:", classes="field-label")
+                top_k_input = Input(id=self._FIELD_IDS["top_k"], placeholder="100")
+                top_k_input.value = str(self.default_top_k)
+                yield top_k_input
+            with VerticalGroup(classes="field-col"):
+                yield Static("Specificity-screen candidates:", classes="field-label")
+                atk_input = Input(
+                    id=self._FIELD_IDS["affinity_top_k"], placeholder="5",
+                )
+                atk_input.value = str(self.default_affinity_top_k)
+                yield atk_input
 
-        yield Static("Top-Y by binding affinity for specificity (default: min(5, top_k)):")
-        atk_input = Input(id=self._FIELD_IDS["affinity_top_k"], placeholder="5")
-        atk_input.value = str(self.default_affinity_top_k)
-        yield atk_input
+        # --- Vina options: exhaustiveness + other knobs ---
+        yield Static("Vina Options", classes="section-heading")
+        with HorizontalGroup():
+            with VerticalGroup(classes="field-col"):
+                yield Static("Exhaustiveness (8/16/32):", classes="field-label")
+                exh_input = Input(
+                    id=self._FIELD_IDS["exhaustiveness"], placeholder="8",
+                )
+                exh_input.value = str(self.default_exhaustiveness)
+                yield exh_input
+            with VerticalGroup(classes="field-col"):
+                yield Static("num_modes (1..20):", classes="field-label")
+                nm_input = Input(id=self._FIELD_IDS["num_modes"], placeholder="9")
+                nm_input.value = str(self.default_num_modes)
+                yield nm_input
+        with HorizontalGroup():
+            with VerticalGroup(classes="field-col"):
+                yield Static("energy_range kcal/mol:", classes="field-label")
+                er_input = Input(
+                    id=self._FIELD_IDS["energy_range"], placeholder="3.0",
+                )
+                er_input.value = str(self.default_energy_range)
+                yield er_input
+            with VerticalGroup(classes="field-col"):
+                yield Static("Grid padding \u00c5:", classes="field-label")
+                pad_input = Input(
+                    id=self._FIELD_IDS["grid_padding_angstrom"],
+                    placeholder="4.0",
+                )
+                pad_input.value = str(self.default_grid_padding_angstrom)
+                yield pad_input
+        with HorizontalGroup():
+            with VerticalGroup(classes="field-col"):
+                yield Static("Per-ligand timeout sec:", classes="field-label")
+                timeout_input = Input(
+                    id=self._FIELD_IDS["per_ligand_timeout_seconds"],
+                    placeholder="1800",
+                )
+                if self.default_per_ligand_timeout_seconds is not None:
+                    timeout_input.value = str(self.default_per_ligand_timeout_seconds)
+                yield timeout_input
+            with VerticalGroup(classes="field-col"):
+                yield Static("Time budget hours (advisory):", classes="field-label")
+                budget_input = Input(
+                    id=self._FIELD_IDS["time_budget_hours"],
+                    placeholder="e.g. 4",
+                )
+                if self.default_time_budget_hours is not None:
+                    budget_input.value = str(self.default_time_budget_hours)
+                yield budget_input
 
-        yield Static("Exhaustiveness (Vina default 8; 16/32 for generous compute):")
-        exh_input = Input(id=self._FIELD_IDS["exhaustiveness"], placeholder="8")
-        exh_input.value = str(self.default_exhaustiveness)
-        yield exh_input
-
-        yield Static("Vina options", classes="section-heading")
-        yield Static("num_modes (Vina default 9, range 1..20):")
-        nm_input = Input(id=self._FIELD_IDS["num_modes"], placeholder="9")
-        nm_input.value = str(self.default_num_modes)
-        yield nm_input
-
-        yield Static("energy_range kcal/mol (Vina default 3.0):")
-        er_input = Input(id=self._FIELD_IDS["energy_range"], placeholder="3.0")
-        er_input.value = str(self.default_energy_range)
-        yield er_input
-
-        yield Static("Grid padding \u00c5 (default 4.0; box auto-covers aptamer):")
-        pad_input = Input(
-            id=self._FIELD_IDS["grid_padding_angstrom"],
-            placeholder="4.0",
-        )
-        pad_input.value = str(self.default_grid_padding_angstrom)
-        yield pad_input
-
-        yield Static("Per-ligand timeout sec (blank = use config default):")
-        timeout_input = Input(
-            id=self._FIELD_IDS["per_ligand_timeout_seconds"],
-            placeholder="1800",
-        )
-        if self.default_per_ligand_timeout_seconds is not None:
-            timeout_input.value = str(self.default_per_ligand_timeout_seconds)
-        yield timeout_input
-
+        # --- Advanced ---
         yield Static("Advanced", classes="section-heading")
-        yield Static(
-            "Time budget hours (blank = unset, advisory only):",
-        )
-        budget_input = Input(
-            id=self._FIELD_IDS["time_budget_hours"],
-            placeholder="e.g. 4",
-        )
-        if self.default_time_budget_hours is not None:
-            budget_input.value = str(self.default_time_budget_hours)
-        yield budget_input
+        with HorizontalGroup():
+            with VerticalGroup(classes="field-col"):
+                yield Static("Seed (blank = random):", classes="field-label")
+                seed_input = Input(
+                    id=self._FIELD_IDS["seed"], placeholder="optional",
+                )
+                if self.default_seed is not None:
+                    seed_input.value = str(self.default_seed)
+                yield seed_input
+            with VerticalGroup(classes="field-col"):
+                pass
 
-        yield Static("Seed (blank = let Vina randomize):")
-        seed_input = Input(id=self._FIELD_IDS["seed"], placeholder="optional")
-        if self.default_seed is not None:
-            seed_input.value = str(self.default_seed)
-        yield seed_input
-
+        # --- Action buttons ---
         with Horizontal():
             yield Button("Continue", id="btn-dock-plan-continue", variant="primary")
-            yield Button("Get LLM Hint", id="btn-dock-plan-llm")
-            yield Button("Skip Docking", id="btn-dock-plan-skip", variant="warning")
+            if not self.confirm_only:
+                yield Button("Get LLM Hint", id="btn-dock-plan-llm")
 
     def apply_overrides(self, overrides: dict) -> list[str]:
         """Write *overrides* (already-validated dict) back into the Inputs.
@@ -293,13 +338,6 @@ class DockingStrategyPanel(_BaseStructuredPanel):
                     "llm-hint",
                 )
             )
-        elif event.button.id == "btn-dock-plan-skip":
-            self.post_message(
-                StructuredActionRequested(
-                    Step.DOCKING_SELECTION,
-                    "strategy:skip",
-                )
-            )
 
 
 class DockingSourcePanel(_BaseStructuredPanel):
@@ -317,7 +355,7 @@ class DockingSourcePanel(_BaseStructuredPanel):
     }
     """
 
-    def __init__(self, *, top_k: int = 5, **kwargs) -> None:
+    def __init__(self, *, top_k: int = 100, **kwargs) -> None:
         super().__init__(**kwargs)
         self.top_k = top_k
 
@@ -639,7 +677,7 @@ class DockingParamPanel(_BaseStructuredPanel):
             f"{self.time_budget} h" if self.time_budget is not None else "not set"
         )
         return (
-            f"\u2022 top_k: [bold]{self.top_k}[/]\n"
+            f"\u2022 Candidates to dock: [bold]{self.top_k}[/]\n"
             f"\u2022 exhaustiveness: [bold]{self.recommended_exhaustiveness}[/]\n"
             f"\u2022 num_modes: [bold]{self.num_modes}[/]\n"
             f"\u2022 energy_range: [bold]{self.energy_range}[/] kcal/mol\n"
