@@ -30,4 +30,4 @@ class DockingParamsParseOutput(BaseModel):
     per_ligand_timeout_seconds: Optional[int] = None
     time_budget_hours: Optional[int] = None
     seed: Optional[int] = None
-    action: Optional[Literal["apply", "skip", "use_llm_hint", "use_defaults"]] = None
+    action: Optional[Literal["apply", "use_llm_hint", "use_defaults"]] = None

@@ -25,6 +25,7 @@ class DockingPlannerSkill(BaseSkill):
         target_smiles: str | None = None,
         target_name: str | None = None,
         per_ligand_timeout_default_seconds: int | None = None,
+        user_guidance: str | None = None,
     ) -> str:
         payload: dict[str, Any] = {
             "candidate_count": candidate_count,
@@ -41,6 +42,8 @@ class DockingPlannerSkill(BaseSkill):
             payload["target_smiles"] = target_smiles
         if target_name:
             payload["target_name"] = target_name
+        if user_guidance:
+            payload["user_guidance"] = user_guidance
         return "Docking planner context:\n" + json.dumps(
             payload, indent=2, ensure_ascii=False
         )
@@ -58,6 +61,7 @@ class DockingPlannerSkill(BaseSkill):
                 per_ligand_timeout_default_seconds=payload.get(
                     "per_ligand_timeout_default_seconds"
                 ),
+                user_guidance=payload.get("user_guidance"),
             )
         return super().build_user_message(payload)
 
@@ -72,6 +76,7 @@ class DockingPlannerSkill(BaseSkill):
         target_smiles: str | None = None,
         target_name: str | None = None,
         per_ligand_timeout_default_seconds: int | None = None,
+        user_guidance: str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "candidate_count": candidate_count,
@@ -88,35 +93,9 @@ class DockingPlannerSkill(BaseSkill):
             payload["target_smiles"] = target_smiles
         if target_name is not None:
             payload["target_name"] = target_name
+        if user_guidance:
+            payload["user_guidance"] = user_guidance
         return self.invoke(payload).raw
-
-    def explain_plan_stream(
-        self,
-        candidate_count: int,
-        machine_profile: dict[str, Any],
-        time_budget_hours: int | None,
-        *,
-        computed_top_k: int | None = None,
-        computed_time_budget_hours: int | None = None,
-        target_smiles: str | None = None,
-        target_name: str | None = None,
-        per_ligand_timeout_default_seconds: int | None = None,
-    ):
-        if self.display_prompt is None:
-            raise RuntimeError(
-                "docking_planner skill: display prompt is missing."
-            )
-        user = self._build_user_message(
-            candidate_count,
-            machine_profile,
-            time_budget_hours,
-            computed_top_k,
-            computed_time_budget_hours,
-            target_smiles,
-            target_name,
-            per_ligand_timeout_default_seconds,
-        )
-        return self.client.chat_text_stream(self.display_prompt, user)
 
 
 DockingPlannerSkill._bind_directory(_SKILL_DIR)

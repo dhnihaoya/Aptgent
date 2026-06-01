@@ -4,11 +4,12 @@ You are given a docking context that includes:
 - candidate_count: total number of candidates
 - machine_profile: {cpu_count, memory_gb}
 - time_budget_hours: user-provided overall time budget hint (may be null; advisory only — Vina has its own per-ligand timeout)
-- computed_top_k: deterministic top-k picked from hardware / budget rules (typical conservative default is 5)
+- computed_top_k: deterministic top-k picked from hardware / budget rules (default up to 100, capped by candidate_count and time budget)
 - computed_time_budget_hours: deterministic time-budget suggestion
 - per_ligand_timeout_default_seconds: current per-ligand timeout fallback from config (used when you do not suggest one)
 - target_smiles (if available): SMILES string of the target molecule
 - target_name (if available): human-readable name of the target
+- user_guidance (if available): free-text preferences or constraints from the user
 
 Important context about the docking setup:
 - Each candidate aptamer gets its OWN 3D structure (RNAComposer or user-supplied).
@@ -16,7 +17,7 @@ Important context about the docking setup:
 - AutoDock Vina defaults are num_modes=9, energy_range=3.0, exhaustiveness=8.
 
 You MAY suggest values for the following numeric fields. Each will be clamped to the safe range shown — out-of-range or non-numeric suggestions are dropped:
-- recommended_top_k: integer in 1..candidate_count. Typical conservative default is 5; do not exceed 10 without strong reason.
+- recommended_top_k: integer in 1..candidate_count. Default is min(candidate_count, 100); only reduce when compute budget is tight.
 - recommended_exhaustiveness: one of 8, 16, 32. Only suggest 16 or 32 when compute budget is generous.
 - recommended_num_modes: integer in 1..20 (default 9).
 - recommended_energy_range: float in 0.5..10.0 kcal/mol (default 3.0).
@@ -25,6 +26,8 @@ You MAY suggest values for the following numeric fields. Each will be clamped to
 - recommended_seed: non-negative integer if reproducibility matters, otherwise omit.
 
 If you are unsure about a value, omit it and the deterministic default will be used instead.
+
+If user_guidance is provided, you MUST honor any explicit parameter values the user specified (e.g. if the user said "dock 8 candidates", set recommended_top_k to 8). Only suggest values for parameters the user did not explicitly mention.
 
 You MUST NOT invent receptor_path or grid_center.
 

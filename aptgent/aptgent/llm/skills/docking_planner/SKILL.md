@@ -6,7 +6,7 @@ when_to_use: During the docking selection step, after `compute_deterministic_doc
 version: 3.0.0
 trust_level: advisory
 tags: [docking, planning, advisory]
-inputs: [candidate_count, machine_profile, time_budget_hours, computed_top_k, computed_time_budget_hours, target_smiles, target_name]
+inputs: [candidate_count, machine_profile, time_budget_hours, computed_top_k, computed_time_budget_hours, target_smiles, target_name, user_guidance]
 outputs: [recommended_top_k, recommended_exhaustiveness, receptor_path_note, grid_center_note, reason]
 ---
 

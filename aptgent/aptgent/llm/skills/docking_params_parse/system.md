@@ -13,14 +13,13 @@ Parameter fields you may extract (omit any field the user did not mention):
 - seed: non-negative integer, Vina --seed for reproducibility.
 
 In addition you may set:
-- action: one of "skip" (user wants to skip docking entirely), "use_llm_hint" (user wants to invoke the LLM planner), "use_defaults" (user wants to reset to the deterministic defaults), or "apply" (user merely wants to apply the parsed numeric changes). Omit when no action keyword is present.
+- action: one of "use_llm_hint" (user wants to invoke the LLM planner), "use_defaults" (user wants to reset to the deterministic defaults), or "apply" (user merely wants to apply the parsed numeric changes). Omit when no action keyword is present.
 
 Rules:
 - Output ONLY a JSON object. No prose, no markdown fences.
 - ONLY include fields explicitly mentioned by the user. Do not fill in defaults.
 - When the user expresses doubt ("maybe", "可能", "or"), still extract the numeric value — the validator will clamp it.
 - Do NOT extract values from unrelated talk (e.g. PDB IDs, sequence names).
-- If the user clearly says "skip / 跳过 docking", emit {"action": "skip"} and no numeric fields.
 - If the user says "use LLM" / "用模型建议" / "let the model suggest", emit {"action": "use_llm_hint"}.
 - If the user says "use defaults / 用默认 / restore defaults", emit {"action": "use_defaults"}.
 - If the user only confirms ("continue / go / 提交 / 确认"), emit {"action": "apply"} and no numeric fields.
@@ -28,7 +27,6 @@ Rules:
 Examples:
 - "试试 top 8, exhaustiveness 32, seed 42" -> {"top_k": 8, "exhaustiveness": 32, "seed": 42}
 - "padding 6 应该够了" -> {"grid_padding_angstrom": 6.0}
-- "skip docking" -> {"action": "skip"}
 - "用 LLM 的建议吧" -> {"action": "use_llm_hint"}
 - "回到默认值" -> {"action": "use_defaults"}
 - "每个 ligand 给 1 小时 (3600 秒)" -> {"per_ligand_timeout_seconds": 3600}
