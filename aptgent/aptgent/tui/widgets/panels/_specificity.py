@@ -5,7 +5,7 @@ import logging
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
-from textual.widgets import Button, Input, SelectionList, Static
+from textual.widgets import Button, SelectionList, Static
 
 from aptgent.domain.enums import Step
 
@@ -25,7 +25,10 @@ class AnalogCheckboxPanel(_BaseStructuredPanel):
     }
     AnalogCheckboxPanel > Button {
         margin-top: 1;
-        width: 100%;
+        margin-right: 1;
+    }
+    AnalogCheckboxPanel Horizontal {
+        height: auto;
     }
     """
 
@@ -57,12 +60,14 @@ class AnalogCheckboxPanel(_BaseStructuredPanel):
         ]
         self.selection_list = SelectionList(*selections, id="analog-selection-list")
         yield self.selection_list
-        self.confirm_button = Button(
-            "Confirm Selection",
-            id="btn-confirm-analogs",
-            variant="success",
-        )
-        yield self.confirm_button
+        with Horizontal():
+            self.confirm_button = Button(
+                "Confirm Selection",
+                id="btn-confirm-analogs",
+                variant="success",
+            )
+            yield self.confirm_button
+            yield Button("Back", id="btn-back-analogs")
 
     def on_mount(self) -> None:
         if self.selection_list is not None:
@@ -80,6 +85,13 @@ class AnalogCheckboxPanel(_BaseStructuredPanel):
                 StructuredInputSubmitted(
                     Step.SPECIFICITY_FILTER,
                     {"action": "run", "analogs_text": selected},
+                )
+            )
+        elif event.button.id == "btn-back-analogs":
+            self.post_message(
+                StructuredInputSubmitted(
+                    Step.SPECIFICITY_FILTER,
+                    {"action": "back"},
                 )
             )
 
@@ -158,7 +170,11 @@ class SpecificityPanel(_BaseStructuredPanel):
 
 
 class AnalogCustomPanel(_BaseStructuredPanel):
-    """Natural-language analog entry with LLM parsing and confirmation."""
+    """Confirmation panel for LLM-parsed analog results.
+
+    Renders a resolved/unresolved list with Confirm/Try Again buttons.
+    Always constructed with ``resolved_pairs`` from ``_parse_custom_worker``.
+    """
 
     DEFAULT_CSS = """
     AnalogCustomPanel > .panel-help {
@@ -182,54 +198,38 @@ class AnalogCustomPanel(_BaseStructuredPanel):
         self,
         *,
         target_name: str = "",
-        title: str = "Custom Specificity Analogs",
-        help_text: str = "Describe the analogs you want in natural language.",
+        resolved_pairs: list[tuple[str, bool]] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.target_name = target_name
-        self.title = title
-        self.help_text = help_text
-        self._resolved_analogs_text: str = ""
-        self._resolved_pairs: list[tuple[str, bool]] = []
+        self.resolved_pairs = resolved_pairs
+        resolved_names = [name for name, ok in (resolved_pairs or []) if ok]
+        self._resolved_analogs_text = ", ".join(resolved_names)
 
     def compose(self) -> ComposeResult:
-        yield Static(self.title, classes="panel-title")
-        if self.target_name:
-            yield Static(f"Target: [bold]{self.target_name}[/]")
-        yield Static(self.help_text, classes="panel-help")
-        yield Input(
-            id="custom-analog-input",
-            placeholder="e.g. just caffeine is fine",
-        )
+        yield Static("Parsed Analogs", classes="panel-title")
+        lines: list[str] = []
+        for name, ok in (self.resolved_pairs or []):
+            if ok:
+                lines.append(f"  [green]\u2713[/green] {name}")
+            else:
+                lines.append(f"  [red]\u2717[/red] {name} (could not resolve)")
+        if lines:
+            yield Static("\n".join(lines), classes="resolved-list")
         with Horizontal():
-            yield Button("Parse My Request", id="btn-parse-custom", variant="primary")
-            yield Button("Skip", id="btn-skip-custom")
+            yield Button("Confirm and Run", id="btn-confirm-custom", variant="success")
+            yield Button("Try Again", id="btn-retry-custom")
 
     def on_mount(self) -> None:
         try:
-            self.query_one("#custom-analog-input", Input).focus()
+            self.query_one("#btn-confirm-custom", Button).focus()
         except NoMatches:
             _log.debug("Focus target missing during on_mount", exc_info=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         btn_id = event.button.id
-        if btn_id == "btn-parse-custom":
-            text = self.query_one("#custom-analog-input", Input).value.strip()
-            self.post_message(
-                StructuredInputSubmitted(
-                    Step.SPECIFICITY_FILTER,
-                    {"action": "parse_custom", "custom_text": text},
-                )
-            )
-        elif btn_id == "btn-skip-custom":
-            self.post_message(
-                StructuredInputSubmitted(
-                    Step.SPECIFICITY_FILTER,
-                    {"action": "skip"},
-                )
-            )
-        elif btn_id == "btn-confirm-custom":
+        if btn_id == "btn-confirm-custom":
             self.post_message(
                 StructuredInputSubmitted(
                     Step.SPECIFICITY_FILTER,
@@ -237,51 +237,9 @@ class AnalogCustomPanel(_BaseStructuredPanel):
                 )
             )
         elif btn_id == "btn-retry-custom":
-            self._reset_to_input_mode()
-
-    def show_confirmation(self, resolved_pairs: list[tuple[str, bool]]) -> None:
-        self._resolved_pairs = resolved_pairs
-        resolved_names = [name for name, ok in resolved_pairs if ok]
-        self._resolved_analogs_text = ", ".join(resolved_names)
-
-        for child in list(self.children):
-            child.remove()
-
-        self.mount(Static("Parsed Analogs", classes="panel-title"))
-        lines: list[str] = []
-        for name, ok in resolved_pairs:
-            if ok:
-                lines.append(f"  [green]\u2713[/green] {name}")
-            else:
-                lines.append(f"  [red]\u2717[/red] {name} (could not resolve)")
-        if lines:
-            self.mount(Static("\n".join(lines), classes="resolved-list"))
-        with Horizontal():
-            self.mount(Button("Confirm and Run", id="btn-confirm-custom", variant="success"))
-            self.mount(Button("Try Again", id="btn-retry-custom"))
-        try:
-            self.query_one("#btn-confirm-custom", Button).focus()
-        except NoMatches:
-            _log.debug("Focus target missing after confirmation mount", exc_info=True)
-
-    def _reset_to_input_mode(self) -> None:
-        self._resolved_pairs = []
-        self._resolved_analogs_text = ""
-        for child in list(self.children):
-            child.remove()
-
-        self.mount(Static(self.title, classes="panel-title"))
-        if self.target_name:
-            self.mount(Static(f"Target: [bold]{self.target_name}[/]"))
-        self.mount(Static(self.help_text, classes="panel-help"))
-        self.mount(Input(
-            id="custom-analog-input",
-            placeholder="e.g. just caffeine is fine",
-        ))
-        with Horizontal():
-            self.mount(Button("Parse My Request", id="btn-parse-custom", variant="primary"))
-            self.mount(Button("Skip", id="btn-skip-custom"))
-        try:
-            self.query_one("#custom-analog-input", Input).focus()
-        except NoMatches:
-            _log.debug("Focus target missing after retry mount", exc_info=True)
+            self.post_message(
+                StructuredInputSubmitted(
+                    Step.SPECIFICITY_FILTER,
+                    {"action": "retry_custom"},
+                )
+            )

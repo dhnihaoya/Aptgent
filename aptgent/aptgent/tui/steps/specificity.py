@@ -40,7 +40,6 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
         self._kept_count = 0
         self._removed_count = 0
         self._current_target = ""
-        self._custom_panel: AnalogCustomPanel | None = None
         self._parse_in_flight = False
 
     def enter(self) -> None:
@@ -69,12 +68,6 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
             self.screen.add_structured_widget(panel)
             self.screen.set_input_enabled(True)
         elif recommendation.phase == "editing_custom":
-            target = state.target_molecule
-            panel = AnalogCustomPanel(
-                target_name=target.input_text if target else "",
-            )
-            self._custom_panel = panel
-            self.screen.add_structured_widget(panel)
             self.screen.set_input_enabled(True)
         else:
             self._suggest()
@@ -94,22 +87,19 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
             self._customize()
         else:
             recommendation = self.screen.app.current_state.context.specificity_recommendation
-            if recommendation.phase in {"editing_recommended", "editing_custom"}:
+            if recommendation.phase == "editing_custom":
+                self._parse_custom_analogs(text)
+            elif recommendation.phase == "editing_recommended":
                 self._run_filter(text, echo_user=False)
 
     def handle_structured_input(self, data: dict) -> None:
         action = data.get("action", "run")
         if action == "skip":
             self._skip()
-        elif action == "parse_custom":
-            custom_text = data.get("custom_text", "")
-            if custom_text.strip():
-                self._parse_custom_analogs(custom_text)
-            else:
-                self.screen.add_system_message(
-                    "Please describe which analogs you want to use.",
-                    "warning-text",
-                )
+        elif action == "retry_custom":
+            self._return_to_custom_input(message="Enter the analogs you want to use.")
+        elif action == "back":
+            self._back_to_choices()
         else:
             analogs_text = data.get("analogs_text", "")
             self._run_filter(analogs_text, echo_user=bool(analogs_text.strip()))
@@ -265,12 +255,7 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
         recommendation.phase = "editing_custom"
         recommendation.accepted = False
         self.screen.app.save_state()
-        target = self.screen.app.current_state.target_molecule
-        panel = AnalogCustomPanel(
-            target_name=target.input_text if target else "",
-        )
-        self._custom_panel = panel
-        self.screen.add_structured_widget(panel)
+        self.screen.clear_structured_widget()
         self.screen.set_input_enabled(True)
         self._refresh_input_placeholder()
 
@@ -278,7 +263,6 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
         if self._parse_in_flight:
             return
         self._parse_in_flight = True
-        self.screen.add_user_message(f"Custom request: {text}")
         self.run_worker(
             lambda: self._parse_custom_worker(text),
             activity="Parsing analog request...",
@@ -321,7 +305,7 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
                     "Please try again with specific molecule names (e.g. 'caffeine and theobromine').",
                     "warning-text",
                 )
-                self._threadsafe(self._show_retry_custom_panel)
+                self._threadsafe(self._return_to_custom_input)
                 return
 
             resolved_pairs: list[tuple[str, bool]] = []
@@ -342,16 +326,19 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
                     "Please check the names and try again.",
                     "error-text",
                 )
-                self._threadsafe(self._show_retry_custom_panel)
+                self._threadsafe(self._return_to_custom_input)
                 return
 
-            panel = self._custom_panel
-            if panel is not None:
-                def _confirm():
-                    self._parse_in_flight = False
-                    panel.show_confirmation(resolved_pairs)
+            def _confirm():
+                self._parse_in_flight = False
+                target = self.screen.app.current_state.target_molecule
+                panel = AnalogCustomPanel(
+                    target_name=target.input_text if target else "",
+                    resolved_pairs=resolved_pairs,
+                )
+                self.screen.add_structured_widget(panel)
 
-                self._threadsafe(_confirm)
+            self._threadsafe(_confirm)
 
         except Exception as exc:
             self._threadsafe(
@@ -359,18 +346,17 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
                 f"Failed to parse request: {exc}",
                 "error-text",
             )
-            self._threadsafe(self._show_retry_custom_panel)
+            self._threadsafe(self._return_to_custom_input)
 
-    def _show_retry_custom_panel(self) -> None:
+    def _return_to_custom_input(
+        self,
+        message: str = "Please try again with specific molecule names (e.g. 'caffeine and theobromine').",
+    ) -> None:
         self._parse_in_flight = False
         self.screen.clear_structured_widget()
-        target = self.screen.app.current_state.target_molecule
-        panel = AnalogCustomPanel(
-            target_name=target.input_text if target else "",
-        )
-        self._custom_panel = panel
-        self.screen.add_structured_widget(panel)
+        self.screen.add_system_message(message, "warning-text")
         self.screen.set_input_enabled(True)
+        self._refresh_input_placeholder()
 
     def _run_filter(self, analogs_text: str, *, echo_user: bool) -> None:
         if echo_user:
@@ -571,11 +557,27 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
     def _show_recommendation_choice_panel(self) -> None:
         self.screen.add_structured_widget(self._build_recommendation_choice_panel())
 
+    def _back_to_choices(self) -> None:
+        recommendation = self.screen.app.current_state.context.specificity_recommendation
+        recommendation.phase = "awaiting_decision"
+        recommendation.accepted = False
+        self.screen.app.save_state()
+        self.screen.clear_structured_widget()
+        self._show_recommendation_choice_panel()
+        self.screen.set_input_enabled(True)
+        self._refresh_input_placeholder()
+
     def _refresh_input_placeholder(self) -> None:
         phase = self.screen.app.current_state.context.specificity_recommendation.phase
         if phase == "awaiting_decision":
             self.screen.set_input_placeholder("Type 'accept', 'edit', 'custom', or 'skip'.")
-        elif phase in {"editing_recommended", "editing_custom"}:
-            self.screen.set_input_placeholder("Use the analog input box below, or type 'skip' to skip this step.")
+        elif phase == "editing_custom":
+            self.screen.set_input_placeholder(
+                "Describe the analogs you want (e.g. 'just caffeine'), or type 'skip'."
+            )
+        elif phase == "editing_recommended":
+            self.screen.set_input_placeholder(
+                "Use the analog input box below, or type 'skip' to skip this step."
+            )
         else:
             self.screen.set_input_placeholder("Preparing analog recommendations...")
