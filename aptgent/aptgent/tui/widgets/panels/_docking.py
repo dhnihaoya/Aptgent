@@ -503,14 +503,14 @@ class DockingRNAComposerProgressPanel(_BaseStructuredPanel):
         self,
         *,
         total: int = 0,
-        completed: int = 0,
-        current_candidate: str = "",
+        fetched: int = 0,
+        postprocessed: int = 0,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.total = total
-        self.completed = completed
-        self.current_candidate = current_candidate
+        self.fetched = fetched
+        self.postprocessed = postprocessed
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -525,31 +525,44 @@ class DockingRNAComposerProgressPanel(_BaseStructuredPanel):
             "switch to manual upload at any time.",
             classes="panel-help",
         )
-        progress = f"{self.completed} / {self.total} done"
-        if self.current_candidate:
-            progress += f" \u2014 current: {self.current_candidate}"
-        yield Static(progress, classes="panel-note", id="dock-rnacomposer-progress")
+        yield Static(
+            f"Fetching: {self.fetched} / {self.total} structures received",
+            classes="panel-note",
+            id="dock-rnacomposer-fetch-progress",
+        )
+        yield Static(
+            f"Post-processing: {self.postprocessed} / {self.total} converted and minimized",
+            classes="panel-note",
+            id="dock-rnacomposer-post-progress",
+        )
         with Horizontal():
             yield Button("Cancel", id="btn-rnacomposer-cancel", variant="warning")
 
-    def update_progress(
+    def update_pipeline_progress(
         self,
         *,
-        completed: int,
+        fetched: int,
+        postprocessed: int,
         total: int,
-        current_candidate: str = "",
-        elapsed_seconds: float | None = None,
+        fetching_candidate: str = "",
+        fetching_elapsed: float | None = None,
+        postprocessing_candidate: str = "",
     ) -> None:
-        self.completed = completed
+        self.fetched = fetched
+        self.postprocessed = postprocessed
         self.total = total
-        self.current_candidate = current_candidate
         try:
-            progress = f"{completed} / {total} done"
-            if current_candidate:
-                progress += f" \u2014 current: {current_candidate}"
-            if elapsed_seconds is not None:
-                progress += f" (waiting {elapsed_seconds:.0f}s)"
-            self.query_one("#dock-rnacomposer-progress", Static).update(progress)
+            fetch_line = f"Fetching: {fetched} / {total} structures received"
+            if fetching_candidate:
+                fetch_line += f" \u2014 current: {fetching_candidate}"
+            if fetching_elapsed is not None:
+                fetch_line += f" (waiting {fetching_elapsed:.0f}s)"
+            self.query_one("#dock-rnacomposer-fetch-progress", Static).update(fetch_line)
+
+            post_line = f"Post-processing: {postprocessed} / {total} converted and minimized"
+            if postprocessing_candidate:
+                post_line += f" \u2014 current: {postprocessing_candidate}"
+            self.query_one("#dock-rnacomposer-post-progress", Static).update(post_line)
         except NoMatches:
             _log.debug("Progress label missing during update", exc_info=True)
 

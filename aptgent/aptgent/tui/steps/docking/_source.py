@@ -97,6 +97,5 @@ class _SourceMixin:
             self.screen.add_structured_widget(
                 DockingRNAComposerProgressPanel(
                     total=len(top_candidates),
-                    completed=0,
                 )
             )

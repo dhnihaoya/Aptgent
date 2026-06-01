@@ -1,6 +1,7 @@
 """Phase 3 mixin: structure preparation (manual upload + RNAComposer worker)."""
 from __future__ import annotations
 
+import concurrent.futures
 from pathlib import Path
 from typing import Any
 
@@ -164,61 +165,158 @@ class _StructuresMixin:
             return
 
         total = len(candidates)
-        completed = 0
-        try:
-            for cand_id, sequence in candidates:
-                if self._rnacomposer_cancel.is_set():
-                    break
-                self._update_rnacomposer_progress(completed, total, cand_id)
-                try:
-                    rna_seq = prep.dna_to_rna(sequence)
+        if total == 0:
+            self._threadsafe(
+                self.screen.add_system_message,
+                "No candidates to submit to RNAComposer.",
+                "warning-text",
+            )
+            self._threadsafe(self._show_strategy_panel)
+            return
 
-                    def _on_poll(poll_count: int, elapsed: float) -> None:
-                        self._update_rnacomposer_progress(
-                            completed, total, cand_id, elapsed_seconds=elapsed,
+        fetched_count = 0
+        postprocessed_count = 0
+
+        # -- helpers -------------------------------------------------------
+
+        def _fetch_one(cand_id: str, sequence: str) -> str | None:
+            if self._rnacomposer_cancel.is_set():
+                return None
+            rna_seq = prep.dna_to_rna(sequence)
+
+            def _on_poll(poll_count: int, elapsed: float) -> None:
+                if self._rnacomposer_cancel.is_set():
+                    raise RuntimeError("cancelled")
+                self._update_rnacomposer_progress(
+                    fetched=fetched_count,
+                    postprocessed=postprocessed_count,
+                    total=total,
+                    fetching_candidate=cand_id,
+                    fetching_elapsed=elapsed,
+                )
+
+            try:
+                adapter.predict_to_path(
+                    rna_seq,
+                    secondary_structure="",
+                    output_dir=structures_dir,
+                    candidate_id=cand_id,
+                    on_poll=_on_poll,
+                )
+            except Exception as exc:
+                if self._rnacomposer_cancel.is_set():
+                    return None
+                self._threadsafe(
+                    self.screen.add_system_message,
+                    f"RNAComposer failed for {cand_id}: {exc}",
+                    "error-text",
+                )
+                record_tertiary_structure_context(
+                    state,
+                    provider="rnacomposer",
+                    receptor_source="rnacomposer",
+                    receptor_status="failed",
+                    error=str(exc),
+                )
+                return None
+            return cand_id
+
+        def _postprocess_one(cand_id: str) -> None:
+            nonlocal postprocessed_count
+            source_pdb = structures_dir / f"{cand_id}.pdb"
+            target_pdb = structures_dir / f"{cand_id}.dna.pdb"
+            pdb_text = prep.revert_ribose_to_deoxyribose(
+                source_pdb.read_text(encoding="utf-8")
+            )
+            target_pdb.write_text(pdb_text, encoding="utf-8")
+            minimized_pdb = structures_dir / f"{cand_id}.min.pdb"
+            prep.energy_minimize(target_pdb, minimized_pdb)
+            target_pdb = minimized_pdb
+            pdbqt_path = structures_dir / f"{cand_id}.pdbqt"
+            prep.prepare_pdbqt(target_pdb, pdbqt_path, treat_as_dna=False)
+            box = prep.compute_box(pdbqt_path, padding=(
+                state.docking_plan.grid_padding_angstrom
+                if state.docking_plan is not None
+                else DEFAULT_GRID_PADDING_ANGSTROM
+            ))
+            # Commit only after all steps succeed
+            receptor_paths[cand_id] = str(pdbqt_path)
+            grid_boxes[cand_id] = box.as_dict()
+            postprocessed_count += 1
+
+        # -- pipeline loop -------------------------------------------------
+
+        candidate_ready = [False] * total
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                # Fetch first candidate synchronously
+                first_id, first_seq = candidates[0]
+                self._update_rnacomposer_progress(
+                    fetched=0, postprocessed=0, total=total,
+                    fetching_candidate=first_id,
+                )
+                result = _fetch_one(first_id, first_seq)
+                if result is not None:
+                    candidate_ready[0] = True
+                fetched_count = 1
+
+                fetch_future: concurrent.futures.Future | None = None
+
+                for i in range(total):
+                    if self._rnacomposer_cancel.is_set():
+                        break
+
+                    cand_id, sequence = candidates[i]
+
+                    # Start fetching next candidate in background
+                    if i + 1 < total:
+                        next_id, next_seq = candidates[i + 1]
+                        fetch_future = executor.submit(
+                            _fetch_one, next_id, next_seq,
                         )
 
-                    pdb_path = adapter.predict_to_path(
-                        rna_seq,
-                        secondary_structure="",
-                        output_dir=structures_dir,
-                        candidate_id=cand_id,
-                        on_poll=_on_poll,
-                    )
-                except Exception as exc:
-                    self._threadsafe(
-                        self.screen.add_system_message,
-                        f"RNAComposer failed for {cand_id}: {exc}",
-                        "error-text",
-                    )
-                    record_tertiary_structure_context(
-                        state,
-                        provider="rnacomposer",
-                        receptor_source="rnacomposer",
-                        receptor_status="failed",
-                        error=str(exc),
-                    )
-                    return
+                    # Post-process current candidate (only if fetch succeeded)
+                    if candidate_ready[i]:
+                        self._update_rnacomposer_progress(
+                            fetched=fetched_count,
+                            postprocessed=postprocessed_count,
+                            total=total,
+                            postprocessing_candidate=cand_id,
+                        )
+                        try:
+                            _postprocess_one(cand_id)
+                        except Exception as exc:
+                            candidate_ready[i] = False
+                            self._threadsafe(
+                                self.screen.add_system_message,
+                                f"Post-processing failed for {cand_id}: {exc}",
+                                "error-text",
+                            )
+                            record_tertiary_structure_context(
+                                state,
+                                provider="rnacomposer",
+                                receptor_source="rnacomposer",
+                                receptor_status="failed",
+                                error=str(exc),
+                            )
+                        self._update_rnacomposer_progress(
+                            fetched=fetched_count,
+                            postprocessed=postprocessed_count,
+                            total=total,
+                        )
 
-                target_pdb = structures_dir / f"{cand_id}.pdb"
-                pdb_text = prep.revert_ribose_to_deoxyribose(
-                    Path(pdb_path).read_text(encoding="utf-8")
-                )
-                target_pdb.write_text(pdb_text, encoding="utf-8")
-                minimized_pdb = structures_dir / f"{cand_id}.min.pdb"
-                prep.energy_minimize(target_pdb, minimized_pdb)
-                target_pdb = minimized_pdb
-                pdbqt_path = structures_dir / f"{cand_id}.pdbqt"
-                prep.prepare_pdbqt(target_pdb, pdbqt_path, treat_as_dna=False)
-                receptor_paths[cand_id] = str(pdbqt_path)
-                box = prep.compute_box(pdbqt_path, padding=(
-                    state.docking_plan.grid_padding_angstrom
-                    if state.docking_plan is not None
-                    else DEFAULT_GRID_PADDING_ANGSTROM
-                ))
-                grid_boxes[cand_id] = box.as_dict()
-                completed += 1
-                self._update_rnacomposer_progress(completed, total, "")
+                    # Wait for next fetch to complete
+                    if fetch_future is not None:
+                        try:
+                            result = fetch_future.result()
+                        except Exception:
+                            result = None
+                        fetch_future = None
+                        if result is not None:
+                            candidate_ready[i + 1] = True
+                        fetched_count = i + 2
+
         except Exception as exc:
             self._threadsafe(
                 self.screen.add_system_message,
@@ -230,18 +328,36 @@ class _StructuresMixin:
         if self._rnacomposer_cancel.is_set():
             self._threadsafe(
                 self.screen.add_system_message,
-                f"RNAComposer cancelled after {completed}/{total} candidates.",
+                f"RNAComposer cancelled after {postprocessed_count}/{total} candidates.",
                 "warning-text",
             )
             self._threadsafe(self._show_strategy_panel)
             return
+
+        if postprocessed_count == 0:
+            self._threadsafe(
+                self.screen.add_system_message,
+                f"All {total} RNAComposer predictions failed.",
+                "error-text",
+            )
+            self._threadsafe(self._show_strategy_panel)
+            return
+
+        failed_count = total - postprocessed_count
+        if failed_count > 0:
+            self._threadsafe(
+                self.screen.add_system_message,
+                f"RNAComposer: {failed_count}/{total} candidates failed, "
+                f"proceeding with {postprocessed_count} successful.",
+                "warning-text",
+            )
 
         _apply_docking_plan(
             state,
             receptor_paths=receptor_paths,
             grid_boxes=grid_boxes,
             source="rnacomposer",
-            top_k=total,
+            top_k=postprocessed_count,
         )
         record_tertiary_structure_context(
             state,
@@ -254,26 +370,30 @@ class _StructuresMixin:
         self._threadsafe(self.screen.app.save_state)
         self._threadsafe(
             self.screen.add_system_message,
-            f"RNAComposer prepared {total} per-candidate PDBQTs in {structures_dir}.",
+            f"RNAComposer prepared {postprocessed_count}/{total} per-candidate PDBQTs in {structures_dir}.",
         )
         self._threadsafe(self._show_param_panel)
 
     def _update_rnacomposer_progress(
         self,
-        completed: int,
+        fetched: int,
+        postprocessed: int,
         total: int,
-        current: str,
         *,
-        elapsed_seconds: float | None = None,
+        fetching_candidate: str = "",
+        fetching_elapsed: float | None = None,
+        postprocessing_candidate: str = "",
     ) -> None:
         def _update() -> None:
             widget = getattr(self.screen, "_active_structured_widget", None)
             if isinstance(widget, DockingRNAComposerProgressPanel):
-                widget.update_progress(
-                    completed=completed,
+                widget.update_pipeline_progress(
+                    fetched=fetched,
+                    postprocessed=postprocessed,
                     total=total,
-                    current_candidate=current,
-                    elapsed_seconds=elapsed_seconds,
+                    fetching_candidate=fetching_candidate,
+                    fetching_elapsed=fetching_elapsed,
+                    postprocessing_candidate=postprocessing_candidate,
                 )
 
         self._threadsafe(_update)
