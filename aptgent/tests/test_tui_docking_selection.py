@@ -275,6 +275,113 @@ async def test_rnacomposer_auto_path_prepares_receptors(tmp_path):
         assert rna.calls == ["ACGUACGU", "ACGUACGU"]
 
 
+class _FailingFetchAdapter(FakeRNAComposerAdapter):
+    """Succeeds on all candidates except cand-1."""
+
+    def predict_to_path(
+        self,
+        sequence: str,
+        secondary_structure: str = "",
+        output_dir: str | Path = ".",
+        *,
+        candidate_id: str | None = None,
+        on_poll: Any = None,
+    ) -> str:
+        if candidate_id == "cand-1":
+            self.calls.append(sequence)
+            raise RuntimeError("server error")
+        return super().predict_to_path(
+            sequence,
+            secondary_structure=secondary_structure,
+            output_dir=output_dir,
+            candidate_id=candidate_id,
+            on_poll=on_poll,
+        )
+
+
+async def _navigate_to_rnacomposer(pilot, app, *, top_k: str = "3") -> None:
+    """Advance strategy → source → RNAComposer and wait for docking_plan."""
+    strategy_panel = app.screen.query_one(DockingStrategyPanel)
+    strategy_panel.query_one("#dock-plan-top-k", Input).value = top_k
+    strategy_panel.query_one("#btn-dock-plan-continue", Button).focus()
+    await pilot.pause()
+    await pilot.press("enter")
+    await pilot.pause()
+    await pilot.pause()
+
+    source_panel = app.screen.query_one(DockingSourcePanel)
+    source_panel.query_one("#btn-source-rnacomposer", Button).focus()
+    await pilot.pause()
+    await pilot.press("enter")
+    for _ in range(60):
+        if (
+            app.current_state.docking_plan is not None
+            and app.current_state.docking_plan.receptor_source == "rnacomposer"
+        ):
+            break
+        await pilot.pause()
+
+
+@pytest.mark.anyio
+async def test_rnacomposer_pipeline_with_3_candidates(tmp_path):
+    """Pipeline should fetch and post-process all candidates."""
+    app = make_app(tmp_path)
+    state = app.engine.create_run("dock_pipeline3")
+    state.current_step = Step.DOCKING_SELECTION
+    state.candidates = [
+        CandidateSequence(sequence="ACGTACGT", candidate_id=f"cand-{i}")
+        for i in range(3)
+    ]
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        prep, rna = _attach_fake_adapters(app)
+        app.set_run_id("dock_pipeline3")
+        app.push_screen("chat")
+        await pilot.pause()
+        await pilot.pause()
+
+        await _navigate_to_rnacomposer(pilot, app)
+
+        plan = app.current_state.docking_plan
+        assert plan is not None
+        assert set(plan.receptor_paths.keys()) == {"cand-0", "cand-1", "cand-2"}
+        assert len(rna.calls) == 3
+
+
+@pytest.mark.anyio
+async def test_rnacomposer_pipeline_partial_failure(tmp_path):
+    """Pipeline should continue when one candidate fetch fails."""
+    app = make_app(tmp_path)
+    state = app.engine.create_run("dock_partial_fail")
+    state.current_step = Step.DOCKING_SELECTION
+    state.candidates = [
+        CandidateSequence(sequence="ACGTACGT", candidate_id="cand-0"),
+        CandidateSequence(sequence="ACGTACGT", candidate_id="cand-1"),
+        CandidateSequence(sequence="ACGTACGT", candidate_id="cand-2"),
+    ]
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        prep = FakeReceptorPrepAdapter()
+        rna = _FailingFetchAdapter()
+        app.receptor_prep_adapter = prep
+        app.tertiary_structure_adapter = rna
+        app.set_run_id("dock_partial_fail")
+        app.push_screen("chat")
+        await pilot.pause()
+        await pilot.pause()
+
+        await _navigate_to_rnacomposer(pilot, app)
+
+        plan = app.current_state.docking_plan
+        assert plan is not None
+        assert set(plan.receptor_paths.keys()) == {"cand-0", "cand-2"}
+        assert len(rna.calls) == 3
+
+
 @pytest.mark.anyio
 async def test_param_panel_is_readonly_confirmation(tmp_path):
     """Phase 4 panel must NOT expose editable numeric inputs anymore."""
