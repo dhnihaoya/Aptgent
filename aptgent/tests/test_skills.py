@@ -149,8 +149,8 @@ def test_docking_params_parse_output_accepts_partial_payload():
 
 
 def test_docking_params_parse_output_accepts_action_only():
-    output = DockingParamsParseOutput.model_validate({"action": "skip"})
-    assert output.action == "skip"
+    output = DockingParamsParseOutput.model_validate({"action": "use_defaults"})
+    assert output.action == "use_defaults"
     assert output.top_k is None
 
 

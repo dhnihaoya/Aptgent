@@ -15,7 +15,6 @@ from aptgent.domain.models import (
     CandidateSequence,
     DockingPlan,
     GridBox,
-    TargetMolecule,
 )
 from aptgent.tui.steps import docking_selection as docking_selection_module
 from aptgent.tui.widgets.structured_input import (
@@ -141,7 +140,7 @@ async def test_topk_panel_renders_with_paper_default(tmp_path):
         await pilot.pause()
 
         panel = app.screen.query_one(DockingStrategyPanel)
-        assert panel.query_one("#dock-plan-top-k", Input).value == "5"
+        assert panel.query_one("#dock-plan-top-k", Input).value == "20"
 
 
 @pytest.mark.anyio
@@ -274,46 +273,6 @@ async def test_rnacomposer_auto_path_prepares_receptors(tmp_path):
         assert plan.receptor_source == "rnacomposer"
         assert set(plan.receptor_paths.keys()) == {"cand-1", "cand-2"}
         assert rna.calls == ["ACGUACGU", "ACGUACGU"]
-
-
-@pytest.mark.anyio
-async def test_skipping_docking_clears_plan_and_reaches_final_report(tmp_path):
-    app = make_app(tmp_path)
-    state = app.engine.create_run("dock_skip_case")
-    state.current_step = Step.DOCKING_SELECTION
-    state.target_molecule = TargetMolecule(
-        input_text="caffeine",
-        resolved_name="Caffeine",
-        smiles="Cn1cnc2n(C)c(=O)n(C)c(=O)c12",
-        resolution_status="resolved",
-    )
-    state.candidates = [
-        CandidateSequence(sequence=f"ACGT{i:02d}", candidate_id=f"cand-{i}")
-        for i in range(1, 4)
-    ]
-    app.persistence.save(state)
-
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        _attach_fake_adapters(app)
-        app.set_run_id("dock_skip_case")
-        app.push_screen("chat")
-        await pilot.pause()
-        await pilot.pause()
-
-        strategy_panel = app.screen.query_one(DockingStrategyPanel)
-        strategy_panel.query_one("#btn-dock-plan-skip", Button).focus()
-        await pilot.pause()
-        await pilot.press("enter")
-        await pilot.pause()
-        await pilot.pause()
-        await pilot.pause()
-
-        assert app.current_state.docking_plan is None
-        assert app.current_state.docking_results == []
-        assert app.current_state.context.docking_recommendation.strategy == "skipped"
-        assert app.current_state.context.docking_recommendation.phase == "skipped"
-        assert app.current_state.current_step == Step.SPECIFICITY_FILTER
 
 
 @pytest.mark.anyio
@@ -526,10 +485,10 @@ class _StubNlSkill:
 
 
 @pytest.mark.anyio
-async def test_nl_parse_fills_strategy_panel_without_submitting(
+async def test_nl_parse_shows_confirm_only_panel(
     tmp_path, monkeypatch
 ):
-    """Natural language overrides must fill the form, not auto-submit."""
+    """NL input \u2192 planner \u2192 confirm_only pre-filled panel (no auto-submit)."""
 
     app = make_app(tmp_path)
     state = app.engine.create_run("dock_nl_parse")
@@ -540,20 +499,28 @@ async def test_nl_parse_fills_strategy_panel_without_submitting(
     ]
     app.persistence.save(state)
 
-    stub = _StubNlSkill(
-        {"top_k": 8, "exhaustiveness": 32, "seed": 42, "num_modes": 15}
-    )
+    class _StubPlannerSkill:
+        """Stub for DockingPlannerSkill that returns a canned plan."""
+        def plan(self, **kwargs):
+            return {
+                "recommended_top_k": 8,
+                "recommended_exhaustiveness": 32,
+                "recommended_num_modes": 15,
+                "recommended_seed": 42,
+                "reason": "stub reason",
+                "receptor_path_note": "stub receptor note",
+                "grid_center_note": "stub grid note",
+            }
 
     async with app.run_test() as pilot:
         await pilot.pause()
         _attach_fake_adapters(app)
         app.set_run_id("dock_nl_parse")
-        # Patch the runtime skill factory to return our stub for the NL skill
         original = app.runtime.create_skill
 
         def _fake_create_skill(cls):
-            if cls.__name__ == "DockingParamsParseSkill":
-                return stub
+            if cls.__name__ == "DockingPlannerSkill":
+                return _StubPlannerSkill()
             return original(cls)
 
         object.__setattr__(app.runtime, "create_skill", _fake_create_skill)
@@ -567,77 +534,32 @@ async def test_nl_parse_fills_strategy_panel_without_submitting(
         handler.handle_user_input(
             "top 8, exhaustiveness 32, seed 42, num_modes 15"
         )
-        # let worker finish
-        for _ in range(40):
-            if app.screen.query_one("#dock-plan-top-k", Input).value == "8":
-                break
+        # Wait for the confirm_only panel to appear
+        for _ in range(80):
+            panel = None
+            try:
+                panel = app.screen.query_one(DockingStrategyPanel)
+                if panel.confirm_only:
+                    break
+            except NoMatches:
+                pass
             await pilot.pause()
 
-        strategy_panel = app.screen.query_one(DockingStrategyPanel)
-        assert strategy_panel.query_one("#dock-plan-top-k", Input).value == "8"
+        confirm_panel = app.screen.query_one(DockingStrategyPanel)
+        assert confirm_panel.confirm_only is True
+        assert confirm_panel.query_one("#dock-plan-top-k", Input).value == "8"
         assert (
-            strategy_panel.query_one("#dock-plan-exhaustiveness", Input).value
+            confirm_panel.query_one("#dock-plan-exhaustiveness", Input).value
             == "32"
         )
-        assert strategy_panel.query_one("#dock-plan-num-modes", Input).value == "15"
-        assert strategy_panel.query_one("#dock-plan-seed", Input).value == "42"
+        assert confirm_panel.query_one("#dock-plan-num-modes", Input).value == "15"
+        assert confirm_panel.query_one("#dock-plan-seed", Input).value == "42"
 
         # Should NOT have advanced to the source panel.
         with pytest.raises(NoMatches):
             app.screen.query_one(DockingSourcePanel)
         # State.docking_plan should not have been written yet.
         assert app.current_state.docking_plan is None
-
-
-@pytest.mark.anyio
-async def test_nl_parse_skip_action_short_circuits_to_skip(
-    tmp_path, monkeypatch
-):
-    app = make_app(tmp_path)
-    state = app.engine.create_run("dock_nl_skip")
-    state.current_step = Step.DOCKING_SELECTION
-    state.target_molecule = TargetMolecule(
-        input_text="caffeine",
-        resolved_name="Caffeine",
-        smiles="Cn1cnc2n(C)c(=O)n(C)c(=O)c12",
-        resolution_status="resolved",
-    )
-    state.candidates = [
-        CandidateSequence(sequence=f"ACGT{i:02d}", candidate_id=f"cand-{i}")
-        for i in range(1, 4)
-    ]
-    app.persistence.save(state)
-
-    stub = _StubNlSkill({"action": "skip"})
-
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        _attach_fake_adapters(app)
-        app.set_run_id("dock_nl_skip")
-        original = app.runtime.create_skill
-
-        def _fake_create_skill(cls):
-            if cls.__name__ == "DockingParamsParseSkill":
-                return stub
-            return original(cls)
-
-        object.__setattr__(app.runtime, "create_skill", _fake_create_skill)
-        app.push_screen("chat")
-        await pilot.pause()
-        await pilot.pause()
-
-        handler = app.screen._handler
-        assert handler is not None
-        handler.handle_user_input("\u8df3\u8fc7 docking")  # "skip docking" in zh
-        for _ in range(40):
-            if app.current_state.context.docking_recommendation.strategy == "skipped":
-                break
-            await pilot.pause()
-
-        assert app.current_state.docking_plan is None
-        assert (
-            app.current_state.context.docking_recommendation.strategy == "skipped"
-        )
 
 
 @pytest.mark.anyio
