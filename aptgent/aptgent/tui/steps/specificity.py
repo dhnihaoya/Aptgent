@@ -146,6 +146,18 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
         )
         self.screen.app.save_state()
 
+    def _affinity_filtered_candidates(self, state: Any) -> list[Any]:
+        """Return candidates filtered to the affinity-selected subset.
+
+        Mirrors the filtering in ``runner._run_specificity`` so the TUI
+        displays counts consistent with what the detached job processes.
+        """
+        candidates = list(state.candidates)
+        selected_ids = set(state.affinity_selected_ids) if state.affinity_selected_ids else set()
+        if selected_ids:
+            candidates = [c for c in candidates if c.candidate_id in selected_ids]
+        return candidates
+
     def _suggest(self) -> None:
         self.run_worker(self._suggest_worker, activity="Suggesting analog molecules...")
 
@@ -393,7 +405,7 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
             self.screen.add_user_message(f"Filter with: {analogs_text}")
 
         state = self.screen.app.current_state
-        candidates = state.candidates
+        candidates = self._affinity_filtered_candidates(state)
 
         if not analogs_text.strip():
             self.screen.add_system_message("No analogs provided. Nothing to filter.")
@@ -489,7 +501,7 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
         kept = int(summary.get("kept", self._kept_count))
         removed = int(summary.get("removed", self._removed_count))
         total_candidates = int(
-            summary.get("candidates", len(state.candidates))
+            summary.get("candidates", len(self._affinity_filtered_candidates(state)))
         )
         cancelled = bool(summary.get("cancelled"))
 
@@ -535,7 +547,7 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
         state = self.screen.app.current_state
         state.specificity_results = [
             SpecificityResult(candidate_id=c.candidate_id or "", status="skipped")
-            for c in state.candidates
+            for c in self._affinity_filtered_candidates(state)
         ]
         self.screen.app.save_state()
         self.screen.add_system_message("Specificity filter skipped.")
