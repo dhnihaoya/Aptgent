@@ -176,7 +176,10 @@ class LLMClient:
     def _apply_user_config(self) -> None:
         import tomli
 
-        local = Path.cwd() / "aptgent.local.toml"
+        # Walk up from the bundled config to find the project root.
+        # __file__ is .../Aptgent/aptgent/aptgent/llm/client.py → project root is 4 levels up.
+        project_root = Path(__file__).resolve().parent.parent.parent.parent
+        local = project_root / "aptgent.local.toml"
         if not local.is_file():
             return
         with open(local, "rb") as f:
