@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from aptgent.domain.enums import Step
+from aptgent.domain.ranking import rank_sums_from_model_probs
 from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.steps.common import next_primary_step
 from aptgent.tui.steps.empty_candidates import (
@@ -58,10 +59,15 @@ class ScoringHandler(StepHandler):
             f"Scoring already completed during enumeration "
             f"({len(sorted_preds)} candidates):"
         ]
-        for pred in sorted_preds[:10]:
+        for rank_idx, pred in enumerate(sorted_preds[:10], start=1):
             label_str = "Binding" if pred.label == 1 else "Non-binding"
+            rs = pred.raw_outputs.get("rank_sum")
+            rs_str = f"rank_sum={rs}" if rs is not None else ""
+            prob_str = f"P={pred.probability:.4f}" if pred.probability is not None else ""
+            parts = [rs_str, prob_str]
+            detail = ", ".join(p for p in parts if p)
             lines.append(
-                f"  {pred.candidate_id}: {label_str} (P={pred.probability:.4f})"
+                f"  #{rank_idx} {pred.candidate_id}: {detail} ({label_str})"
             )
         if len(sorted_preds) > 10:
             lines.append(f"  ... and {len(sorted_preds) - 10} more")
@@ -81,15 +87,47 @@ class ScoringHandler(StepHandler):
             self.screen.app.save_state()
 
             ens_preds = [p for p in results if p.model_name == "ensemble"]
-            sorted_preds = sorted(
-                ens_preds, key=lambda item: item.probability or 0.0, reverse=True
-            )
+
+            # Collect per-model probabilities for rank_sum computation.
+            per_candidate_probs: list[list[float]] = []
+            valid_indices: list[int] = []
+            for idx, pred in enumerate(ens_preds):
+                individual = pred.raw_outputs.get("individual", {})
+                if not individual:
+                    continue
+                probs = [v.get("probability", 0.0) for v in individual.values()]
+                per_candidate_probs.append(probs)
+                valid_indices.append(idx)
+
+            if per_candidate_probs:
+                rank_sums = rank_sums_from_model_probs(per_candidate_probs)
+                for i, pred_idx in enumerate(valid_indices):
+                    ens_preds[pred_idx].raw_outputs["rank_sum"] = rank_sums[i]
+
+            # Sort: candidates with rank_sum first (ascending), then by probability descending.
+            def _sort_key(item: Any) -> tuple:
+                rs = item.raw_outputs.get("rank_sum")
+                return (0, rs) if rs is not None else (1, -(item.probability or 0.0))
+
+            sorted_preds = sorted(ens_preds, key=_sort_key)
+
+            # Assign cumulative_rank (1-based position by rank_sum order).
+            for rank_idx, pred in enumerate(sorted_preds, start=1):
+                if "rank_sum" in pred.raw_outputs:
+                    pred.raw_outputs["cumulative_rank"] = rank_idx
+
+            self.screen.app.save_state()
 
             lines = [f"Scored {len(sorted_preds)} candidates (ensemble):"]
-            for pred in sorted_preds[:10]:
+            for rank_idx, pred in enumerate(sorted_preds[:10], start=1):
                 label_str = "Binding" if pred.label == 1 else "Non-binding"
+                rs = pred.raw_outputs.get("rank_sum")
+                rs_str = f"rank_sum={rs}" if rs is not None else ""
+                prob_str = f"P={pred.probability:.4f}" if pred.probability is not None else ""
+                parts = [rs_str, prob_str]
+                detail = ", ".join(p for p in parts if p)
                 lines.append(
-                    f"  {pred.candidate_id}: {label_str} (P={pred.probability:.4f})"
+                    f"  #{rank_idx} {pred.candidate_id}: {detail} ({label_str})"
                 )
             if len(sorted_preds) > 10:
                 lines.append(f"  ... and {len(sorted_preds) - 10} more")

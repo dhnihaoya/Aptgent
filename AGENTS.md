@@ -183,6 +183,10 @@ LLM 调用日志记录到 `<run_dir>/logs/llm_calls.jsonl`，默认对用户输�
 
 `ChatScreen.advance_to_step()` 会调用 `WorkflowEngine.transition_to()` 并保存状态；如果你看到状态推进异常，优先沿这条链检查。
 
+### Primary scoring（rank_sum 展示）
+
+`primary_scoring` 步骤的排序和展示与 `spatial_rank` 一致，使用 **rank_sum（各模型竞争排名之和，越小越好）**。快速路径（枚举时已产出预测）按 `cumulative_rank` 排序；回退路径（`predict_batch`）从 `raw_outputs["individual"]` 提取各模型概率，调用 `domain.ranking.rank_sums_from_model_probs` 计算 rank_sum 后排序。两条路径均以 `#rank {candidate_id}: rank_sum=..., P=...` 格式展示。
+
 intake step 内部包含 PDB 输入子流程（`tui/steps/pdb_intake.py`），当用户提供 PDB ID 时会自动触发 PDB 下载、解析、链/配体选择和 LLM 语义审查。这是 intake step 内部的分支，不是独立的 workflow step。
 
 ### Docking skip 路径

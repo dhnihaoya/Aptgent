@@ -142,7 +142,7 @@ def test_create_receptor_prep_adapter():
         from aptgent.bootstrap.container import create_receptor_prep_adapter
         create_receptor_prep_adapter({"receptor_prep": {"obabel": "obabel", "padding_angstrom": "5.0"}})
         MockAdapter.assert_called_once_with(
-            obabel_command="obabel", default_padding=5.0,
+            obabel_command="obabel", default_padding=5.0, minimize_steps=500,
         )
 
 

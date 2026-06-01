@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from aptgent.domain.ranking import ProbHistogramRanker
+from aptgent.domain.ranking import ProbHistogramRanker, rank_sums_from_model_probs
 
 
 class TestProbHistogramRanker:
@@ -160,3 +160,58 @@ class TestProbHistogramRanker:
             ranker.add([0.5, 0.5])
         ranker.finalize()
         assert ranker.rank_sum([0.5, 0.5]) == 2  # 1 + 1
+
+
+class TestRankSumsFromModelProbs:
+    """Tests for the in-memory rank_sums_from_model_probs helper."""
+
+    def test_empty_input(self):
+        assert rank_sums_from_model_probs([]) == []
+
+    def test_single_candidate_single_model(self):
+        assert rank_sums_from_model_probs([[0.5]]) == [1]
+
+    def test_two_candidates_two_models(self):
+        probs = [[0.9, 0.2], [0.3, 0.8]]
+        result = rank_sums_from_model_probs(probs)
+        # Model 0: 0.9 > 0.3 → ranks [1, 2]
+        # Model 1: 0.8 > 0.2 → ranks [2, 1]
+        assert result == [3, 3]
+
+    def test_tied_probabilities_share_min_rank(self):
+        probs = [[0.9], [0.9], [0.5]]
+        result = rank_sums_from_model_probs(probs)
+        # Both 0.9 tie at rank 1; 0.5 gets rank 3
+        assert result == [1, 1, 3]
+
+    def test_matches_brute_force_histogram(self):
+        """rank_sums_from_model_probs should match ProbHistogramRanker results."""
+        rng = np.random.RandomState(123)
+        n_candidates = 200
+        num_models = 9
+        probs = rng.uniform(0.0, 1.0, (n_candidates, num_models))
+        probs = np.round(probs, 6)
+
+        ranker = ProbHistogramRanker(num_models=num_models)
+        for i in range(n_candidates):
+            ranker.add(probs[i].tolist())
+        ranker.finalize()
+
+        expected = [ranker.rank_sum(probs[i].tolist()) for i in range(n_candidates)]
+        actual = rank_sums_from_model_probs(probs.tolist())
+
+        assert actual == expected
+
+    def test_ordering_matches_intuition(self):
+        # Consistently high → low rank_sum; spiky → higher rank_sum
+        probs = [
+            [0.95, 0.6, 0.6],   # spiky
+            [0.7, 0.7, 0.7],    # consistent
+            [0.1, 0.1, 0.1],    # low
+        ]
+        result = rank_sums_from_model_probs(probs)
+        # Consistent candidate (idx 1) should beat spiky (idx 0)
+        assert result[1] < result[0]
+        # Low candidate should have highest rank_sum
+        assert result[2] > result[0]
+        assert result[2] > result[1]

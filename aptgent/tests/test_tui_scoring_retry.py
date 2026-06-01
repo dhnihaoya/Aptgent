@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from aptgent.domain.enums import Step
-from aptgent.domain.models import SecondaryStructure
+from aptgent.domain.models import PredictionResult, SecondaryStructure
 from aptgent.tui.steps.scoring import ScoringHandler
 from aptgent.tui.widgets.structured_input import ActionMenuPanel
 
@@ -263,3 +263,187 @@ async def test_primary_scoring_back_from_empty_llm_state_triggers_regeneration(t
         assert context.extra_context["site_selection_feedback"]["reason"] == (
             "no_positive_candidates"
         )
+
+
+# ---------------------------------------------------------------------------
+# Display tests: rank_sum / #rank format
+# ---------------------------------------------------------------------------
+
+class _FakeScreenForDisplay:
+    """Minimal fake screen capturing add_system_message calls."""
+
+    def __init__(self, app):
+        self.app = app
+        self.messages: list[str] = []
+        self.advanced_to: Step | None = None
+
+    def add_system_message(self, text: str, extra_class: str = "", **_kwargs):
+        self.messages.append(text)
+
+    def set_input_enabled(self, _enabled: bool):
+        pass
+
+    def advance_to_step(self, step: Step):
+        self.advanced_to = step
+
+    def show_activity(self, activity: str):
+        pass
+
+    def run_worker(self, fn, **kwargs):
+        fn()
+
+    def _threadsafe(self, fn, *args, **kwargs):
+        fn(*args, **kwargs)
+
+
+def _make_state_with_predictions(app, run_id, predictions):
+    """Create a run with pre-populated predictions and matching candidates."""
+    from aptgent.domain.models import CandidateSequence
+
+    state = app.engine.create_run(run_id)
+    state.current_step = Step.PRIMARY_SCORING
+    state.predictions = predictions
+    state.candidates = [
+        CandidateSequence(candidate_id=p.candidate_id, sequence="ACGT", mutation_sites=[])
+        for p in predictions
+    ]
+    state.target_molecule = None  # not needed for fast path
+    app.persistence.save(state)
+    app.set_run_id(run_id)
+    return state
+
+
+def test_show_existing_displays_rank_and_rank_sum(tmp_path):
+    app = make_app(tmp_path)
+    preds = [
+        PredictionResult(
+            candidate_id="cand_B",
+            model_name="ensemble",
+            target="X",
+            score=0.8,
+            label=1,
+            probability=0.8,
+            raw_outputs={"cumulative_rank": 2, "rank_sum": 14},
+        ),
+        PredictionResult(
+            candidate_id="cand_A",
+            model_name="ensemble",
+            target="X",
+            score=0.9,
+            label=1,
+            probability=0.9,
+            raw_outputs={"cumulative_rank": 1, "rank_sum": 9},
+        ),
+    ]
+    _make_state_with_predictions(app, "fast_display", preds)
+
+    screen = _FakeScreenForDisplay(app)
+    ScoringHandler(screen).enter()
+
+    combined = "\n".join(screen.messages)
+    assert "#1 cand_A" in combined
+    assert "rank_sum=9" in combined
+    assert "#2 cand_B" in combined
+    assert "rank_sum=14" in combined
+
+
+def test_show_existing_without_rank_sum_still_works(tmp_path):
+    app = make_app(tmp_path)
+    preds = [
+        PredictionResult(
+            candidate_id="cand_X",
+            model_name="ensemble",
+            target="X",
+            score=0.7,
+            label=0,
+            probability=0.7,
+            raw_outputs={"cumulative_rank": 1},
+        ),
+    ]
+    _make_state_with_predictions(app, "fast_no_rs", preds)
+
+    screen = _FakeScreenForDisplay(app)
+    ScoringHandler(screen).enter()
+
+    combined = "\n".join(screen.messages)
+    assert "#1 cand_X" in combined
+    assert "rank_sum=" not in combined
+    assert "P=0.7000" in combined
+
+
+def test_score_fallback_computes_rank_sum(tmp_path):
+    app = make_app(tmp_path)
+    state = app.engine.create_run("fallback_rs")
+    state.current_step = Step.PRIMARY_SCORING
+    from aptgent.domain.models import CandidateSequence, TargetMolecule
+
+    state.candidates = [
+        CandidateSequence(candidate_id="spiky", sequence="ACGT", mutation_sites=[0]),
+        CandidateSequence(candidate_id="consistent", sequence="ACGA", mutation_sites=[0]),
+    ]
+    state.target_molecule = TargetMolecule(
+        input_text="theophylline",
+        resolved_name="theophylline",
+        smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C",
+        resolution_status="resolved",
+    )
+    app.persistence.save(state)
+    app.set_run_id("fallback_rs")
+
+    # Mock predict_batch to return candidates with individual model probs.
+    # spiky: high in model_a, low in model_b/c → rank_sum=5
+    # consistent: moderate across all → rank_sum=4 (wins)
+    mock_results = [
+        PredictionResult(
+            candidate_id="spiky",
+            model_name="ensemble",
+            target="CN1C=NC2=C1C(=O)N(C(=O)N2C)C",
+            score=0.52,
+            label=1,
+            probability=0.52,
+            raw_outputs={
+                "individual": {
+                    "model_a": {"label": 1, "probability": 0.95},
+                    "model_b": {"label": 0, "probability": 0.3},
+                    "model_c": {"label": 0, "probability": 0.3},
+                }
+            },
+        ),
+        PredictionResult(
+            candidate_id="consistent",
+            model_name="ensemble",
+            target="CN1C=NC2=C1C(=O)N(C(=O)N2C)C",
+            score=0.7,
+            label=1,
+            probability=0.7,
+            raw_outputs={
+                "individual": {
+                    "model_a": {"label": 1, "probability": 0.7},
+                    "model_b": {"label": 1, "probability": 0.7},
+                    "model_c": {"label": 1, "probability": 0.7},
+                }
+            },
+        ),
+    ]
+    app.prediction_adapter.predict_batch = lambda c, t: mock_results
+
+    # call_from_thread requires a running Textual loop; patch to call directly.
+    app.call_from_thread = lambda fn, *args, **kwargs: fn(*args, **kwargs)
+
+    screen = _FakeScreenForDisplay(app)
+    ScoringHandler(screen).enter()
+
+    combined = "\n".join(screen.messages)
+    # Should contain rank_sum in display
+    assert "rank_sum=" in combined
+    # "consistent" should rank higher (lower rank_sum) than "spiky"
+    assert "#1 consistent" in combined
+    assert "#2 spiky" in combined
+
+    # Verify raw_outputs written
+    updated_preds = app.current_state.predictions
+    by_id = {p.candidate_id: p for p in updated_preds}
+    assert "rank_sum" in by_id["consistent"].raw_outputs
+    assert "rank_sum" in by_id["spiky"].raw_outputs
+    assert "cumulative_rank" in by_id["consistent"].raw_outputs
+    assert "cumulative_rank" in by_id["spiky"].raw_outputs

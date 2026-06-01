@@ -85,3 +85,39 @@ class ProbHistogramRanker:
     def rank_sum(self, model_probs: list[float] | tuple[float, ...]) -> int:
         """Return the sum of per-model competition ranks (lower is better)."""
         return sum(self.competition_rank(model_probs))
+
+
+def rank_sums_from_model_probs(per_candidate_probs: list[list[float]]) -> list[int]:
+    """Compute rank_sum for each candidate from per-model probabilities.
+
+    Each inner list holds one candidate's probabilities across models
+    (all lists must be the same length).  Uses argsort-based competition
+    ranking (min/tie convention) per model, then sums across models.
+
+    Returns a list of rank_sums in the same order as the input candidates.
+    """
+    if not per_candidate_probs:
+        return []
+
+    num_candidates = len(per_candidate_probs)
+    num_models = len(per_candidate_probs[0])
+
+    probs = np.array(per_candidate_probs, dtype=np.float64)
+    ranks = np.zeros_like(probs, dtype=np.int64)
+
+    for m in range(num_models):
+        col = probs[:, m]
+        # argsort descending
+        order = np.argsort(-col)
+        current_rank = 1
+        i = 0
+        while i < num_candidates:
+            j = i
+            while j < num_candidates and col[order[j]] == col[order[i]]:
+                j += 1
+            for k in range(i, j):
+                ranks[order[k], m] = current_rank
+            current_rank = j + 1
+            i = j
+
+    return ranks.sum(axis=1).tolist()
