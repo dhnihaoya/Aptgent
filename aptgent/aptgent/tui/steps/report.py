@@ -6,6 +6,7 @@ from typing import Any
 from aptgent.domain.models import FinalRecommendation
 from aptgent.llm.skills import ReportSkill
 from aptgent.tui.steps.base import StepHandler
+from aptgent.tui.steps.common import run_llm_interaction
 from aptgent.tui.steps.docking._helpers import _candidate_id
 
 
@@ -327,11 +328,39 @@ class ReportHandler(StepHandler):
         state.final_report_context = context
         self.screen.app.save_state()
 
-        # Always clear the activity spinner before rendering anything, even if
-        # the LLM skill fails to start, so it never lingers on screen.
-        self._threadsafe(self.screen.clear_activity)
+        skill = self.screen.app.runtime.create_skill(ReportSkill)
+        if hasattr(self.screen.app, "_configure_llm_logging"):
+            self.screen.app._configure_llm_logging(skill)
 
-        markdown = self._stream_llm_report(context)
+        chunks: list[str] = []
+        stream_completed = False
+
+        def display_stream():
+            nonlocal stream_completed
+            for event in skill.write_markdown_stream(context):
+                if isinstance(event, dict) and event.get("type") == "content":
+                    text = event.get("text", "")
+                    if text:
+                        chunks.append(text)
+                yield event
+            stream_completed = True
+
+        markdown = ""
+        try:
+            run_llm_interaction(
+                self.screen,
+                display_stream=display_stream,
+                structured_call=lambda: {},
+            )
+            # Only trust the streamed Markdown when the stream finished cleanly.
+            # ``run_llm_interaction`` swallows mid-stream errors, so without this
+            # guard a truncated report could be stored as the final deliverable
+            # instead of the deterministic fallback.
+            if stream_completed:
+                markdown = "".join(chunks).strip()
+        except Exception:
+            pass
+
         if not markdown:
             markdown = format_deterministic_report_markdown(context)
             self._threadsafe(
@@ -350,53 +379,6 @@ class ReportHandler(StepHandler):
         self._threadsafe(
             self.screen.set_input_placeholder, "Type 'export' or 'finish'"
         )
-
-    def _stream_llm_report(self, context: dict[str, Any]) -> str:
-        """Stream the LLM Markdown report into a chat bubble.
-
-        Returns the streamed Markdown, or an empty string if generation fails.
-        On failure the partially-written bubble is removed so the deterministic
-        fallback never renders on top of a half-finished report.
-        """
-        bubble = None
-        chunks: list[str] = []
-        try:
-            skill = self.screen.app.runtime.create_skill(ReportSkill)
-            if hasattr(self.screen.app, "_configure_llm_logging"):
-                self.screen.app._configure_llm_logging(skill)
-            for event in skill.write_markdown_stream(context):
-                if isinstance(event, dict):
-                    if event.get("type") != "content":
-                        continue
-                    text = event.get("text", "")
-                else:
-                    text = str(event)
-                if not text:
-                    continue
-                chunks.append(text)
-                if bubble is None:
-                    def make_bubble() -> None:
-                        nonlocal bubble
-                        bubble = self.screen.add_streaming_message(markdown=True)
-
-                    self._threadsafe(make_bubble)
-                self._threadsafe(bubble.append_text, text)
-            markdown = "".join(chunks).strip()
-            if bubble is not None:
-                self._threadsafe(bubble.finalize)
-            return markdown
-        except Exception:
-            if bubble is not None:
-                self._threadsafe(self._remove_bubble, bubble)
-            return ""
-
-    @staticmethod
-    def _remove_bubble(bubble: Any) -> None:
-        try:
-            if bubble.is_mounted:
-                bubble.remove()
-        except Exception:
-            pass
 
     def handle_user_input(self, text: str) -> None:
         text_lower = text.strip().lower()
