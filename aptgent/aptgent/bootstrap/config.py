@@ -60,11 +60,36 @@ def _load_toml(path: Path) -> dict[str, Any]:
         return tomli.load(handle)
 
 
+def _apply_local_overrides(raw_llm: dict[str, Any], base_dir: Path) -> dict[str, Any]:
+    """Merge ``aptgent.local.toml`` (project root) into the bundled LLM config.
+
+    The user's local file lives at the project root, three levels above the
+    bundled ``config`` directory. Without this merge the ``api_key`` set in
+    ``aptgent.local.toml`` never reaches the LLM client built via
+    :func:`load_config`, producing an empty ``Bearer`` auth header.
+    """
+    project_root = base_dir.parent.parent.parent
+    local = project_root / "aptgent.local.toml"
+    if not local.is_file():
+        return raw_llm
+    local_data = _load_toml(local)
+    overrides = local_data.get("provider", {}).get("openai", {})
+    if not overrides:
+        return raw_llm
+    merged = dict(raw_llm)
+    provider = dict(merged.get("provider", {}))
+    openai = dict(provider.get("openai", {}))
+    openai.update(overrides)
+    provider["openai"] = openai
+    merged["provider"] = provider
+    return merged
+
+
 def load_config(config_dir: Path | None = None) -> AppConfigBundle:
     base_dir = config_dir or CONFIG_DIR
     raw_workflow = _load_toml(base_dir / "workflow.toml")
     raw_tools = _load_toml(base_dir / "tools.toml")
-    raw_llm = _load_toml(base_dir / "llm.toml")
+    raw_llm = _apply_local_overrides(_load_toml(base_dir / "llm.toml"), base_dir)
     return AppConfigBundle(
         workflow=_expand_config(raw_workflow),
         tools=_expand_config(raw_tools),
