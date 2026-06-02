@@ -134,7 +134,7 @@ class VinaAdapter:
         if proc.returncode != 0:
             raise RuntimeError(f"Vina failed (exit {proc.returncode}): {proc.stderr}")
 
-        return self._parse_output(proc.stdout, ligand_pdbqt)
+        return self._parse_output(proc.stdout)
 
     def run_batch(
         self,
@@ -146,6 +146,7 @@ class VinaAdapter:
         cpu: int | None = None,
         seed: int | None = None,
         per_ligand_timeout: int | None = None,
+        cancel_event: Any = None,
     ) -> list[DockingResult]:
         """Run Vina once per candidate (each candidate has its own receptor).
 
@@ -187,6 +188,8 @@ class VinaAdapter:
 
             results: list[DockingResult] = []
             for i, cand in enumerate(candidates):
+                if cancel_event is not None and cancel_event.is_set():
+                    break
                 cand_id = cand.candidate_id or f"cand_{i}"
                 receptor = receptor_paths.get(cand_id)
                 box = grid_boxes.get(cand_id) or {}
@@ -238,7 +241,7 @@ class VinaAdapter:
 
         return results
 
-    def _parse_output(self, stdout: str, ligand_ref: Any = None) -> DockingResult:
+    def _parse_output(self, stdout: str) -> DockingResult:
         """Parse Vina stdout to extract the best binding affinity."""
         # Match lines like: "   1       -13.23       0.000       0.000"
         pattern = r"^\s*(\d+)\s+(-?\d+\.?\d*)\s+"

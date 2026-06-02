@@ -144,7 +144,6 @@ class ChatScreen(Screen):
             )
             return True
 
-        proposal = state.context.site_proposal
         clear_site_selection_retry_feedback(state)
         state.set_mutation_sites([])
         state.candidates = []

@@ -20,7 +20,7 @@ from typing import Any, Callable
 from aptgent.bootstrap.config import load_config
 from aptgent.jobs.cancel import CancelContext
 from aptgent.jobs.events import EventWriter
-from aptgent.jobs.pid import clear_pid, read_pid, write_pid
+from aptgent.jobs.pid import clear_pid, write_pid
 from aptgent.jobs.resume import (
     iter_result_lines,
     open_artifact,
@@ -28,6 +28,7 @@ from aptgent.jobs.resume import (
     validate_meta,
 )
 from aptgent.workflow.persistence import Persistence
+from aptgent.workflow.engine import WorkflowEngine
 
 _log = logging.getLogger(__name__)
 
@@ -66,16 +67,21 @@ def _run_with_heartbeat(
     except OSError:
         pass
 
-    write_pid(pid_file, os.getpid())
-    atexit.register(clear_pid, pid_file)
-
     try:
-        status_file.write_text("running")
+        status_file.write_text("starting")
         atexit.register(lambda: status_file.unlink(missing_ok=True))
     except OSError:
         pass
 
     writer = EventWriter(events_file)
+
+    if not write_pid(pid_file, os.getpid()):
+        writer.write_error(message="Another job process is already running for this step")
+        writer.close()
+        return 1
+    atexit.register(clear_pid, pid_file)
+
+    status_file.write_text("running")
     writer.write_started(pid=os.getpid())
 
     stop_heartbeat = threading.Event()
@@ -84,6 +90,7 @@ def _run_with_heartbeat(
     )
     heartbeat_thread.start()
 
+    state = None
     try:
         state = persistence.load(run_id)
         if state is None:
@@ -98,6 +105,12 @@ def _run_with_heartbeat(
             writer.write_error(message=str(exc))
         except Exception:
             pass
+        if state is not None:
+            try:
+                engine = WorkflowEngine(persistence)
+                engine.mark_error(state, str(exc))
+            except Exception:
+                _log.warning("Failed to mark_error on state", exc_info=True)
         return 1
     finally:
         stop_heartbeat.set()
@@ -733,6 +746,7 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
                         work_dir=work_dir,
                         seed=seed,
                         per_ligand_timeout=per_ligand_timeout,
+                        cancel_event=cancel_ctx.cancel_event,
                     )
                     existing_results.extend(batch_results)
                     writer.write_progress(

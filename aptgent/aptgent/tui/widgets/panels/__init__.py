@@ -5,7 +5,7 @@ from ._core import (
     ActionMenuPanel,
 )
 from ._intake import MutationSitePanel, PdbSelectionPanel
-from ._specificity import AnalogCheckboxPanel, SpecificityPanel, AnalogCustomPanel
+from ._specificity import AnalogCheckboxPanel, AnalogCustomPanel
 from ._docking import (
     DockingStrategyPanel,
     DockingSourcePanel,
@@ -22,7 +22,6 @@ __all__ = [
     "MutationSitePanel",
     "PdbSelectionPanel",
     "AnalogCheckboxPanel",
-    "SpecificityPanel",
     "AnalogCustomPanel",
     "DockingStrategyPanel",
     "DockingSourcePanel",

@@ -20,9 +20,9 @@ class PdbReviewOutput(BaseModel):
         "other_nucleic_acid",
         "not_nucleic_acid",
         "uncertain",
-    ] | str = "uncertain"
-    target_match: Literal["matches", "mismatches", "unknown"] | str = "unknown"
-    confidence: Literal["high", "medium", "low"] | str = "medium"
+    ] = "uncertain"
+    target_match: Literal["matches", "mismatches", "unknown"] = "unknown"
+    confidence: Literal["high", "medium", "low"] = "medium"
     note: str = ""
 
     @property

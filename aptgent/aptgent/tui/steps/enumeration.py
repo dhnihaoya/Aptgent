@@ -9,7 +9,6 @@ from aptgent.tui.steps.common import next_primary_step
 from aptgent.tui.steps.empty_candidates import prepare_empty_candidate_recovery
 from aptgent.tui.steps.job_mixin import JobAttachMixin
 from aptgent.tui.widgets.chat_widgets import ProgressBubble
-from aptgent.workflow.context import get_sequence
 
 
 class EnumerationHandler(JobAttachMixin, StepHandler):
@@ -35,7 +34,6 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
             self.screen.set_input_enabled(True)
             return
 
-        seq: str = get_sequence(state) or ""
         total_space = 4 ** len(sites)
         enum_cfg = self.screen.app.config.get("enumeration", {})
         top_k_keep = enum_cfg.get("top_k_keep", 500)

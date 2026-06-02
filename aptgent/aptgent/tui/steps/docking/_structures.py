@@ -153,7 +153,6 @@ class _StructuresMixin:
         structures_dir: Path,
     ) -> None:
         state = self.screen.app.current_state
-        recommendation = state.context.docking_recommendation
         receptor_paths: dict[str, str] = {}
         grid_boxes: dict[str, dict[str, list[float]]] = {}
         prep = self._receptor_prep_adapter()

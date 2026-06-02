@@ -63,6 +63,7 @@ class _FakeVinaAdapter:
         work_dir,
         seed,
         per_ligand_timeout,
+        cancel_event=None,
     ):
         return [
             DockingResult(

@@ -280,7 +280,6 @@ class IntakeHandler(StepHandler):
 
         seq = result.get("initial_sequence")
         pdb_id = result.get("pdb_id") or normalize_pdb_id(text)
-        input_mode = result.get("input_mode") or ("pdb" if pdb_id else "direct")
         target_text = result.get("target_molecule")
         mod = result.get("modification_region")
         analogs = result.get("analogs", [])

@@ -8,7 +8,6 @@ def run_llm_interaction(
     *,
     display_stream: Callable[[], Any] | None,
     structured_call: Callable[[], Any],
-    structured_client: Any | None = None,
 ) -> dict[str, Any]:
     from textual.worker import get_current_worker
 

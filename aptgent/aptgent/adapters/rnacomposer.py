@@ -61,6 +61,8 @@ def _default_transport(
     url: str,
     data: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
+    *,
+    timeout: int = 60,
 ) -> HttpResponse:
     """Default urllib-based transport. Replaced in tests."""
     encoded = None
@@ -72,7 +74,7 @@ def _default_transport(
         headers=headers or {"User-Agent": "Aptgent/1.0 (RNAComposer client)"},
         method="POST" if data is not None else "GET",
     )
-    with _OPENER.open(req, timeout=60) as resp:
+    with _OPENER.open(req, timeout=timeout) as resp:
         body = resp.read()
         return HttpResponse(
             status=resp.status,
@@ -100,7 +102,20 @@ class RNAComposerAdapter:
         self.timeout_seconds = timeout_seconds
         self.max_poll_seconds = max_poll_seconds
         self.poll_interval_seconds = poll_interval_seconds
-        self._transport: HttpTransport = transport or _default_transport
+
+        if transport is not None:
+            self._transport: HttpTransport = transport
+        else:
+            _timeout = timeout_seconds
+
+            def _bound_transport(
+                url: str,
+                data: dict[str, Any] | None = None,
+                headers: dict[str, str] | None = None,
+            ) -> HttpResponse:
+                return _default_transport(url, data, headers, timeout=_timeout)
+
+            self._transport = _bound_transport
         # job_id -> raw response info (HTML / PDB) cached after submit so
         # poll() and fetch() don't need to refetch synchronously.
         self._cache: dict[str, dict[str, Any]] = {}

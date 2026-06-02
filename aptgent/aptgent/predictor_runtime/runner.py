@@ -113,8 +113,10 @@ def cmd_mutation_batch(args: argparse.Namespace) -> int:
         sites_path = Path(args.sites_json)
         with sites_path.open("r") as f:
             sites = json.load(f)
-    else:
+    elif args.sites is not None:
         sites = [int(s.strip()) for s in args.sites.split(",")]
+    else:
+        raise SystemExit("Either --sites or --sites-json is required.")
 
     device = get_device()
     model_order = [fname for _, _, fname in predictor.models]

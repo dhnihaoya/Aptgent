@@ -4,8 +4,6 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from aptgent.domain.enums import Step
-
 
 class TargetMolecule(BaseModel):
     input_text: str
@@ -195,9 +193,3 @@ class FinalRecommendation(BaseModel):
     spatial_rank: Optional[int] = None
     final_priority: int
     explanation: str = ""
-
-
-class ArtifactRef(BaseModel):
-    step: Step
-    path: str
-    mime_type: str = "application/json"

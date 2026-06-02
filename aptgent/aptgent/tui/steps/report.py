@@ -6,11 +6,7 @@ from typing import Any
 from aptgent.domain.models import FinalRecommendation
 from aptgent.llm.skills import ReportSkill
 from aptgent.tui.steps.base import StepHandler
-
-
-def _candidate_id(candidate: Any, fallback_index: int) -> str:
-    raw = candidate.candidate_id or f"cand_{fallback_index}"
-    return raw.replace(" ", "_")
+from aptgent.tui.steps.docking._helpers import _candidate_id
 
 
 def _prediction_maps(state: Any) -> tuple[dict[str, Any], list[Any]]:

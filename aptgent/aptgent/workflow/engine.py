@@ -131,6 +131,17 @@ class WorkflowEngine:
         self.persistence.append_log(state.run_id, {"event": "resume"})
         return state
 
+    def mark_error(self, state: RunState, message: str) -> RunState:
+        """Transition to ERROR status and persist error info."""
+        state.status = Status.ERROR
+        state.error_info = {"message": message, "step": state.current_step.value}
+        self.persistence.save(state)
+        self.persistence.append_log(
+            state.run_id,
+            {"event": "error", "message": message, "step": state.current_step.value},
+        )
+        return state
+
     def complete(self, state: RunState) -> RunState:
         state.status = Status.COMPLETED
         state.step_timestamps["_completed"] = datetime.now(timezone.utc).isoformat()

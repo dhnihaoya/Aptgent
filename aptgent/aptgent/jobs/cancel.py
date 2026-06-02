@@ -59,7 +59,3 @@ class CancelContext:
     def cancelled(self) -> bool:
         """``True`` once the cancel command has been received."""
         return self._cancel_event.is_set()
-
-    def check(self) -> bool:
-        """Return ``True`` if cancellation has been requested."""
-        return self._cancel_event.is_set()

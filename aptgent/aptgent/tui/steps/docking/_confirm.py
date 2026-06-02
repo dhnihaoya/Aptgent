@@ -1,8 +1,6 @@
 """Phase 4 mixin: read-only param confirmation + cover-aptamer recompute."""
 from __future__ import annotations
 
-from typing import Any
-
 from aptgent.domain.enums import Step
 from aptgent.domain.models import GridBox
 from aptgent.tui.steps.common import next_primary_step

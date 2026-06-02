@@ -7,7 +7,6 @@ from typing import Any
 from aptgent.adapters.receptor_prep import ReceptorPreparationAdapter
 from aptgent.domain.enums import Step
 from aptgent.tui.steps.base import StepHandler
-from aptgent.tui.steps.common import next_primary_step
 from aptgent.tui.widgets.structured_input import DockingStrategyPanel
 from aptgent.workflow.context import record_tertiary_structure_context
 

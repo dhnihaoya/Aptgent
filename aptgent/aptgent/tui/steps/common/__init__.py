@@ -6,8 +6,6 @@ All public symbols are re-exported here so that existing
 
 from __future__ import annotations
 
-from typing import Any
-
 from aptgent.domain.enums import Step
 from aptgent.domain.text_utils import clean_text
 from aptgent.workflow.engine import TRANSITIONS

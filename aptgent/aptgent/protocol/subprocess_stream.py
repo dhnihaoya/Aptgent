@@ -82,9 +82,9 @@ class SubprocessSession:
                     try:
                         on_line(obj)
                     except Exception as exc:
-                        _log.debug("streaming on_line callback raised: %s", exc)
+                        _log.warning("streaming on_line callback raised: %s", exc)
             except Exception as exc:
-                _log.debug("streaming stdout reader aborted: %s", exc)
+                _log.warning("streaming stdout reader aborted: %s", exc)
 
         def _stderr_pump() -> None:
             try:
@@ -138,7 +138,10 @@ class SubprocessSession:
                     try:
                         proc.wait(timeout=wait_kill)
                     except subprocess.TimeoutExpired:
-                        pass
+                        _log.critical(
+                            "subprocess pid %d survived SIGKILL; possible orphan process",
+                            proc.pid,
+                        )
             reader_thread.join(timeout=5)
             stderr_thread.join(timeout=5)
             try:

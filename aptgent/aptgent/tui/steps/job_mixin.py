@@ -11,9 +11,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import sys
-import threading
 import time
-from pathlib import Path
 from typing import Any, Callable
 
 from aptgent.jobs.events import EventReader, read_last_event
@@ -127,6 +125,19 @@ class JobAttachMixin:
                 pass
 
         pid = spawn_detached_job(app, run_id, step)
+
+        # Double-check: if the PID file was written by a different process
+        # (concurrent spawn race), the child will have exited via O_EXCL.
+        pid_file = persistence.job_pid_file(run_id, step)
+        import time as _time
+        _time.sleep(0.3)
+        written_pid = read_pid(pid_file)
+        if written_pid is not None and written_pid != pid:
+            _log.warning(
+                "PID file race detected: expected %d, found %d. "
+                "Attaching to existing job instead.",
+                pid, written_pid,
+            )
         screen.add_system_message(f"Detached job started (PID {pid})")
 
         self._tail_events(run_id, step, on_event, on_done, on_error)

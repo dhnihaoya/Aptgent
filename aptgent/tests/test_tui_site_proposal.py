@@ -133,7 +133,7 @@ def test_site_proposal_regeneration_replaces_only_third_plan(tmp_path, monkeypat
             propose_from_context_called = True
             raise AssertionError("site proposal should not make a second JSON call")
 
-    def fake_run_llm_interaction(_screen, *, display_stream, structured_call, structured_client=None):
+    def fake_run_llm_interaction(_screen, *, display_stream, structured_call):
         nonlocal captured_display_stream
         captured_display_stream = display_stream
         assert display_stream is not None

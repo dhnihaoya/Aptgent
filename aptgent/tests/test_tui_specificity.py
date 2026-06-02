@@ -12,7 +12,6 @@ from aptgent.tui.widgets.structured_input import (
     ActionMenuPanel,
     AnalogCheckboxPanel,
     AnalogCustomPanel,
-    SpecificityPanel,
 )
 
 from tui_helpers import anyio_backend, make_app
@@ -76,8 +75,6 @@ async def test_specificity_step_shows_recommendations_before_edit_input(tmp_path
         assert type(app.screen).__name__ == "ChatScreen"
         assert FakeAnalogSuggestionSkill.calls == 1
         assert app.screen.query_one(ActionMenuPanel) is not None
-        with pytest.raises(NoMatches):
-            app.screen.query_one(SpecificityPanel)
 
         app.screen.query_one("#action-menu", OptionList).focus()
         await pilot.press("down", "enter")

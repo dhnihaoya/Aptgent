@@ -20,10 +20,37 @@ def read_pid(path: Path) -> int | None:
         return None
 
 
-def write_pid(path: Path, pid: int) -> None:
-    """Write *pid* to *path*, creating parent directories as needed."""
+def write_pid(path: Path, pid: int, *, force: bool = False) -> bool:
+    """Write *pid* to *path* atomically.
+
+    Uses ``O_CREAT | O_EXCL`` so two processes cannot race to create the file.
+    If the file already exists and the existing PID is still alive, returns
+    ``False`` without overwriting (unless *force* is ``True``).
+
+    Returns ``True`` on success.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(str(pid))
+
+    if path.exists() and not force:
+        existing = read_pid(path)
+        if existing is not None and is_pid_alive(existing):
+            return False
+        # Stale — remove so O_EXCL can succeed
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+    try:
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return False
+
+    try:
+        os.write(fd, str(pid).encode())
+    finally:
+        os.close(fd)
+    return True
 
 
 def clear_pid(path: Path) -> None:

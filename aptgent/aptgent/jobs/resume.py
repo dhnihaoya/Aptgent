@@ -70,7 +70,7 @@ def iter_result_lines(
         return
     try:
         with open(path, "r", encoding="utf-8") as f:
-            _header = f.readline()  # skip header
+            f.readline()  # skip header
             for line in f:
                 line = line.strip()
                 if not line:
