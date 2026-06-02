@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from aptgent.adapters.rnacomposer import HttpResponse, RNAComposerAdapter
@@ -170,6 +172,9 @@ def test_predict_to_path_convenience_writes_pdb(tmp_path):
     adapter = RNAComposerAdapter(transport=transport)
     path = adapter.predict_to_path("ACGU", "....", tmp_path, candidate_id="cand_0")
     assert "ATOM" in open(path, encoding="utf-8").read()
+    # The output file must be named after the candidate_id so downstream
+    # post-processing (which reads ``<candidate_id>.pdb``) can find it.
+    assert Path(path).name == "cand_0.pdb"
 
 
 def test_poll_returns_unknown_for_unknown_job():

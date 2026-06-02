@@ -324,10 +324,15 @@ class RNAComposerAdapter:
 
         out_dir = Path(output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-        safe_id = Path(job_id).name
-        if not safe_id or safe_id != job_id:
+        # Prefer the caller-supplied candidate_id for the filename so the
+        # downstream post-processing (which looks for ``<candidate_id>.pdb``)
+        # can find the file. Fall back to the RNAComposer job id.
+        name_source = entry.get("candidate_id") or job_id
+        safe_id = Path(name_source).name
+        if not safe_id or safe_id != name_source:
             raise ValueError(
-                f"Invalid job_id '{job_id}': must not contain path separators or '..'"
+                f"Invalid output name '{name_source}': must not contain "
+                "path separators or '..'"
             )
         out_path = out_dir / f"{safe_id}.pdb"
         out_path.write_text(pdb_text, encoding="utf-8")
