@@ -14,24 +14,24 @@ class TestProbHistogramRanker:
         ranker.finalize()
         assert ranker.rank_sum([0.5]) == 1
 
-    def test_two_candidates_competition_rank(self):
+    def test_two_candidates_dense_rank(self):
         ranker = ProbHistogramRanker(num_models=1)
         ranker.add([0.9])
         ranker.add([0.5])
         ranker.finalize()
-        assert ranker.competition_rank([0.9]) == [1]
-        assert ranker.competition_rank([0.5]) == [2]
+        assert ranker.dense_rank([0.9]) == [1]
+        assert ranker.dense_rank([0.5]) == [2]
 
     def test_tied_probabilities_get_same_min_rank(self):
-        """Standard competition ranking (min/tie method).
-        [0.9, 0.9, 0.8] → ranks [1, 1, 3]."""
+        """Dense ranking.
+        [0.9, 0.9, 0.8] → ranks [1, 1, 2]."""
         ranker = ProbHistogramRanker(num_models=1)
         ranker.add([0.9])
         ranker.add([0.9])
         ranker.add([0.8])
         ranker.finalize()
-        assert ranker.competition_rank([0.9]) == [1]
-        assert ranker.competition_rank([0.8]) == [3]
+        assert ranker.dense_rank([0.9]) == [1]
+        assert ranker.dense_rank([0.8]) == [2]
 
     def test_rank_sum_across_models(self):
         """3 models, 3 candidates. Verify rank_sum aggregation."""
@@ -48,17 +48,17 @@ class TestProbHistogramRanker:
         # Wait, actually: A=0.9 is highest, so rank 1. C=0.7, one greater (A=0.9), rank 2. B=0.5, two greater, rank 3.
         # Model 1: B(0.9) > A(0.8) > C(0.7) → ranks 1, 2, 3
         # Model 2: C(0.9) > B(0.8) > A(0.7) → ranks 1, 2, 3
-        assert ranker.competition_rank([0.9, 0.8, 0.7]) == [1, 2, 3]
+        assert ranker.dense_rank([0.9, 0.8, 0.7]) == [1, 2, 3]
         assert ranker.rank_sum([0.9, 0.8, 0.7]) == 6
 
-        assert ranker.competition_rank([0.5, 0.9, 0.8]) == [3, 1, 2]
+        assert ranker.dense_rank([0.5, 0.9, 0.8]) == [3, 1, 2]
         assert ranker.rank_sum([0.5, 0.9, 0.8]) == 6
 
-        assert ranker.competition_rank([0.7, 0.7, 0.9]) == [2, 3, 1]
+        assert ranker.dense_rank([0.7, 0.7, 0.9]) == [2, 3, 1]
         assert ranker.rank_sum([0.7, 0.7, 0.9]) == 6
 
     def test_rank_sum_matches_brute_force(self):
-        """Verify histogram ranks match brute-force argsort-based competition ranks."""
+        """Verify histogram ranks match brute-force argsort-based dense ranks."""
         rng = np.random.RandomState(42)
         n_candidates = 500
         num_models = 9
@@ -70,7 +70,7 @@ class TestProbHistogramRanker:
             ranker.add(probs[i].tolist())
         ranker.finalize()
 
-        # Brute-force competition ranks per model.
+        # Brute-force dense ranks per model.
         for m in range(num_models):
             col = probs[:, m]
             order = np.argsort(-col)  # descending
@@ -84,11 +84,11 @@ class TestProbHistogramRanker:
                     j += 1
                 for k in range(i, j):
                     ranks[order[k]] = current_rank
-                current_rank = j + 1
+                current_rank += 1
                 i = j
 
             for c in range(n_candidates):
-                hist_rank = ranker.competition_rank(probs[c].tolist())[m]
+                hist_rank = ranker.dense_rank(probs[c].tolist())[m]
                 assert hist_rank == ranks[c], (
                     f"Model {m}, candidate {c}: hist_rank={hist_rank}, brute_force={ranks[c]}"
                 )
@@ -129,7 +129,7 @@ class TestProbHistogramRanker:
         ranker = ProbHistogramRanker(num_models=1)
         ranker.add([0.5])
         with pytest.raises(RuntimeError, match="finalize"):
-            ranker.competition_rank([0.5])
+            ranker.dense_rank([0.5])
 
     def test_wrong_number_of_probabilities_raises(self):
         ranker = ProbHistogramRanker(num_models=3)
@@ -142,8 +142,8 @@ class TestProbHistogramRanker:
         ranker.add([0.123456])
         ranker.add([0.123457])  # adjacent bin
         ranker.finalize()
-        assert ranker.competition_rank([0.123457]) == [1]
-        assert ranker.competition_rank([0.123456]) == [2]
+        assert ranker.dense_rank([0.123457]) == [1]
+        assert ranker.dense_rank([0.123456]) == [2]
 
     def test_zero_probabilities(self):
         ranker = ProbHistogramRanker(num_models=2)
@@ -181,8 +181,8 @@ class TestRankSumsFromModelProbs:
     def test_tied_probabilities_share_min_rank(self):
         probs = [[0.9], [0.9], [0.5]]
         result = rank_sums_from_model_probs(probs)
-        # Both 0.9 tie at rank 1; 0.5 gets rank 3
-        assert result == [1, 1, 3]
+        # Both 0.9 tie at rank 1; 0.5 gets rank 2 (dense ranking, no gap)
+        assert result == [1, 1, 2]
 
     def test_matches_brute_force_histogram(self):
         """rank_sums_from_model_probs should match ProbHistogramRanker results."""

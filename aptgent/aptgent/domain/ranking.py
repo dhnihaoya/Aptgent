@@ -2,7 +2,7 @@
 
 Each ensemble model produces probabilities quantized to 6 decimal places
 (`round(p, 6)`).  A 10^6-bucket histogram per model captures the full
-distribution with zero loss, enabling exact competition ranks without
+distribution with zero loss, enabling exact dense ranks without
 storing the full N×9 matrix in memory.
 
 Memory: ``num_models × 10^6 × 8 B`` (~72 MB for 9 models), independent of
@@ -32,7 +32,8 @@ class ProbHistogramRanker:
         self._histograms = np.zeros((num_models, bins), dtype=np.int64)
         self._finalized = False
         # greater_counts[m][b] = number of candidates with prob > b/bins in model m.
-        self._greater_counts: np.ndarray | None = None
+        # distinct_greater[m][b] = number of distinct probability values strictly > b/bins in model m.
+        self._distinct_greater: np.ndarray | None = None
 
     @property
     def num_models(self) -> int:
@@ -51,23 +52,23 @@ class ProbHistogramRanker:
             self._histograms[m, idx] += 1
 
     def finalize(self) -> None:
-        """Compute suffix sums (greater-than counts) for all models."""
+        """Compute suffix sums of distinct occupied bins for all models."""
         if self._finalized:
             return
-        # Reverse cumulative sum: greater_counts[m][b] = sum of histogram[m][b+1:]
-        # Equivalent to: cumulative sum of the reversed histogram, reversed back.
-        self._greater_counts = np.cumsum(self._histograms[:, ::-1], axis=1)[:, ::-1]
-        # Shift: greater_counts[m][b] should exclude the bucket itself.
-        # After reversal cumsum, position b holds sum from b to end (inclusive).
-        # We need strictly greater, so subtract self.
-        self._greater_counts -= self._histograms
+        # Mark bins that have at least one candidate (distinct probability values).
+        distinct_mask = (self._histograms > 0).astype(np.int64)
+        # Reverse cumulative sum of distinct bins.
+        self._distinct_greater = np.cumsum(distinct_mask[:, ::-1], axis=1)[:, ::-1]
+        # Exclude the bin itself (strictly greater).
+        self._distinct_greater -= distinct_mask
         self._finalized = True
 
-    def competition_rank(self, model_probs: list[float] | tuple[float, ...]) -> list[int]:
-        """Return per-model competition ranks (1-based, min/tie method).
+    def dense_rank(self, model_probs: list[float] | tuple[float, ...]) -> list[int]:
+        """Return per-model dense ranks (1-based).
 
-        Rank = (number of candidates with strictly greater probability) + 1.
-        Ties get the same rank (min convention): e.g. [0.9, 0.9, 0.8] → [1, 1, 3].
+        Rank = (number of distinct probability values strictly greater) + 1.
+        Ties get the same rank and subsequent ranks are consecutive:
+        e.g. [0.9, 0.9, 0.8] → [1, 1, 2].
         """
         if not self._finalized:
             raise RuntimeError("Must call finalize() before querying ranks")
@@ -78,21 +79,21 @@ class ProbHistogramRanker:
         ranks = []
         for m, p in enumerate(model_probs):
             idx = min(int(round(p, 6) * self._bins), self._bins - 1)
-            greater = int(self._greater_counts[m, idx])
-            ranks.append(greater + 1)
+            distinct_greater = int(self._distinct_greater[m, idx])
+            ranks.append(distinct_greater + 1)
         return ranks
 
     def rank_sum(self, model_probs: list[float] | tuple[float, ...]) -> int:
-        """Return the sum of per-model competition ranks (lower is better)."""
-        return sum(self.competition_rank(model_probs))
+        """Return the sum of per-model dense ranks (lower is better)."""
+        return sum(self.dense_rank(model_probs))
 
 
 def rank_sums_from_model_probs(per_candidate_probs: list[list[float]]) -> list[int]:
     """Compute rank_sum for each candidate from per-model probabilities.
 
     Each inner list holds one candidate's probabilities across models
-    (all lists must be the same length).  Uses argsort-based competition
-    ranking (min/tie convention) per model, then sums across models.
+    (all lists must be the same length).  Uses argsort-based dense
+    ranking per model, then sums across models.
 
     Returns a list of rank_sums in the same order as the input candidates.
     """
@@ -117,7 +118,7 @@ def rank_sums_from_model_probs(per_candidate_probs: list[list[float]]) -> list[i
                 j += 1
             for k in range(i, j):
                 ranks[order[k], m] = current_rank
-            current_rank = j + 1
+            current_rank += 1
             i = j
 
     return ranks.sum(axis=1).tolist()
