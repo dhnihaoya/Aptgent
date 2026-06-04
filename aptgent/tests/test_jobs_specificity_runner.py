@@ -107,7 +107,7 @@ def test_specificity_runner_writes_artifact_and_summary(tmp_path, monkeypatch):
     ]
     fake_adapter = _FakeSpecificityAdapter(rows)
 
-    monkeypatch.setattr("aptgent.jobs.runner.load_config", lambda: _fake_config(tmp_path))
+    monkeypatch.setattr("aptgent.jobs.runner.specificity.load_config", lambda: _fake_config(tmp_path))
     monkeypatch.setattr(
         "aptgent.bootstrap.container.create_prediction_adapter",
         lambda _tools_config: fake_adapter,
@@ -162,7 +162,7 @@ def test_specificity_runner_cross_predicts_only_against_analogs(tmp_path, monkey
     ]
     fake_adapter = _FakeSpecificityAdapter(rows)
 
-    monkeypatch.setattr("aptgent.jobs.runner.load_config", lambda: _fake_config(tmp_path))
+    monkeypatch.setattr("aptgent.jobs.runner.specificity.load_config", lambda: _fake_config(tmp_path))
     monkeypatch.setattr(
         "aptgent.bootstrap.container.create_prediction_adapter",
         lambda _tools_config: fake_adapter,
@@ -214,7 +214,7 @@ def test_specificity_runner_resumes_from_existing_artifact(tmp_path, monkeypatch
     ]
     fake_adapter = _FakeSpecificityAdapter(rows)
 
-    monkeypatch.setattr("aptgent.jobs.runner.load_config", lambda: _fake_config(tmp_path))
+    monkeypatch.setattr("aptgent.jobs.runner.specificity.load_config", lambda: _fake_config(tmp_path))
     monkeypatch.setattr(
         "aptgent.bootstrap.container.create_prediction_adapter",
         lambda _tools_config: fake_adapter,
@@ -261,7 +261,7 @@ def test_specificity_runner_handles_no_analogs(tmp_path, monkeypatch):
     ]
     persistence.save(state)
 
-    monkeypatch.setattr("aptgent.jobs.runner.load_config", lambda: _fake_config(tmp_path))
+    monkeypatch.setattr("aptgent.jobs.runner.specificity.load_config", lambda: _fake_config(tmp_path))
     called: dict[str, int] = {"adapter_count": 0}
 
     class _ShouldNotRun:

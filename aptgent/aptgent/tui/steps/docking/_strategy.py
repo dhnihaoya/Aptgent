@@ -15,6 +15,7 @@ from aptgent.tui.steps.common import (
     validate_docking_param_overrides,
     validate_docking_recommendation_result,
 )
+from aptgent.tui.steps.common.llm_ui import capture_streaming_result
 from aptgent.tui.widgets.structured_input import DockingStrategyPanel
 from aptgent.workflow.context import record_docking_recommendation_context
 
@@ -278,22 +279,15 @@ class _StrategyMixin:
             if user_guidance:
                 payload["user_guidance"] = user_guidance
 
-            streamed_result: dict[str, object] = {}
-
-            def display_stream():
-                for event in skill.invoke_json_events(payload):
-                    if isinstance(event, dict) and event.get("type") == "result":
-                        value = event.get("value")
-                        if isinstance(value, dict):
-                            streamed_result.clear()
-                            streamed_result.update(value)
-                        continue
-                    yield event
+            display_stream, get_captured = capture_streaming_result(
+                lambda: skill.invoke_json_events(payload)
+            )
 
             def structured_result() -> dict:
-                if streamed_result:
+                captured = get_captured()
+                if captured:
                     return validate_docking_recommendation_result(
-                        streamed_result,
+                        captured,
                         candidate_count=candidate_count,
                         machine_profile=machine_profile,
                         time_budget_hours=time_budget,

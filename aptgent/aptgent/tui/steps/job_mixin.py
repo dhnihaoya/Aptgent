@@ -1,4 +1,4 @@
-# aptgent/aptgen/tui/steps/job_mixin.py
+# aptgent/aptgent/tui/steps/job_mixin.py
 """Mixin for TUI step handlers that need detachable worker support.
 
 Provides attach_or_spawn_job() which either:
@@ -129,8 +129,7 @@ class JobAttachMixin:
         # Double-check: if the PID file was written by a different process
         # (concurrent spawn race), the child will have exited via O_EXCL.
         pid_file = persistence.job_pid_file(run_id, step)
-        import time as _time
-        _time.sleep(0.3)
+        time.sleep(0.3)
         written_pid = read_pid(pid_file)
         if written_pid is not None and written_pid != pid:
             _log.warning(
@@ -154,6 +153,31 @@ class JobAttachMixin:
         screen = self.screen  # type: ignore[attr-defined]
         persistence: Persistence = screen.app.persistence
 
+        def _drain_events(reader, offset):
+            """Read events from *offset* and dispatch them.
+
+            Returns ``(seen_done, new_offset)``.
+            """
+            seen_done = False
+            current_size = reader.file_size()
+            if current_size > offset:
+                for evt in reader.iter_events_from(offset):
+                    etype = evt.get("type", "")
+
+                    if etype == "done":
+                        seen_done = True
+                        screen.app.call_from_thread(on_done, evt.get("summary", {}))
+                        break
+                    elif etype == "error":
+                        seen_done = True
+                        screen.app.call_from_thread(on_error, evt.get("message", "Unknown error"))
+                        break
+                    elif etype in ("progress", "hit"):
+                        screen.app.call_from_thread(on_event, evt)
+
+                offset = current_size
+            return seen_done, offset
+
         def _tail_worker() -> None:
             events_file = persistence.job_events_file(run_id, step)
             reader = EventReader(events_file)
@@ -172,42 +196,14 @@ class JobAttachMixin:
             seen_done = False
 
             while not seen_done:
-                current_size = reader.file_size()
-                if current_size > offset:
-                    for evt in reader.iter_events_from(offset):
-                        etype = evt.get("type", "")
-
-                        if etype == "done":
-                            seen_done = True
-                            screen.app.call_from_thread(on_done, evt.get("summary", {}))
-                            break
-                        elif etype == "error":
-                            seen_done = True
-                            screen.app.call_from_thread(on_error, evt.get("message", "Unknown error"))
-                            break
-                        elif etype in ("progress", "hit"):
-                            screen.app.call_from_thread(on_event, evt)
-
-                    offset = current_size
+                seen_done, offset = _drain_events(reader, offset)
 
                 if not seen_done:
                     pid_file = persistence.job_pid_file(run_id, step)
                     pid = read_pid(pid_file)
                     if pid is not None and not is_pid_alive(pid):
                         time.sleep(1)
-                        current_size = reader.file_size()
-                        if current_size > offset:
-                            for evt in reader.iter_events_from(offset):
-                                etype = evt.get("type", "")
-                                if etype == "done":
-                                    seen_done = True
-                                    screen.app.call_from_thread(on_done, evt.get("summary", {}))
-                                    break
-                                elif etype == "error":
-                                    seen_done = True
-                                    screen.app.call_from_thread(on_error, evt.get("message", "Unknown error"))
-                                    break
-                            offset = current_size
+                        seen_done, offset = _drain_events(reader, offset)
                         if not seen_done:
                             screen.app.call_from_thread(on_error, "Job process exited unexpectedly")
                             return

@@ -20,6 +20,7 @@ workflow layer can call. The LLM is treated as an advisor only — the
 from __future__ import annotations
 
 import inspect
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, Generator, Iterable, Mapping
@@ -185,8 +186,6 @@ class BaseSkill:
         mappings get JSON-serialised with indentation. Subclasses may
         override to add headers or schema reminders.
         """
-        import json
-
         if payload is None:
             return ""
         if isinstance(payload, str):

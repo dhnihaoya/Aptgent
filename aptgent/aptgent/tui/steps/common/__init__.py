@@ -61,9 +61,6 @@ def next_primary_step(step: Step) -> Step | None:
     return targets[0]
 
 
-next_step = next_primary_step
-
-
 __all__ = [
     "DEFAULT_ENERGY_RANGE",
     "DEFAULT_GRID_PADDING_ANGSTROM",
@@ -82,7 +79,6 @@ __all__ = [
     "format_initial_intake_prompt",
     "format_intake_confirmation",
     "format_specificity_recommendation_markdown",
-    "next_step",
     "next_primary_step",
     "normalize_sequence",
     "run_llm_interaction",

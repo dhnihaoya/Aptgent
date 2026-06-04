@@ -6,6 +6,7 @@ from typing import Any
 from aptgent.domain.enums import Step
 from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.steps.common import next_primary_step
+from aptgent.tui.steps.common.formatting import format_enumeration_preview
 from aptgent.tui.steps.empty_candidates import prepare_empty_candidate_recovery
 from aptgent.tui.steps.job_mixin import JobAttachMixin
 from aptgent.tui.widgets.chat_widgets import ProgressBubble
@@ -96,10 +97,7 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
         return None
 
     def _on_job_done(self, summary: dict, progress: ProgressBubble) -> None:
-        # Reload state (the job runner saves it)
-        state = self.screen.app.current_state
-        self.screen.app.reload_current_state(state.run_id)
-        state = self.screen.app.current_state
+        state = self.reload_run_state()
 
         total = summary.get("total", 0)
         hits = summary.get("hits", 0)
@@ -134,8 +132,7 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
             self.screen.advance_to_step(ns)
 
     def _on_job_error(self, msg: str) -> None:
-        self.screen.add_system_message(f"Enumeration failed: {msg}", "error-text")
-        self.screen.set_input_enabled(True)
+        self._report_error(f"Enumeration failed: {msg}")
 
     def _create_progress_bubble(self, total_space: int) -> ProgressBubble:
         progress = ProgressBubble(total_space, label="Enumerating & Scoring")
@@ -143,20 +140,9 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
         return progress
 
     def _show_preview(self, candidates, predictions) -> None:
-        preview = []
-        for candidate, pred in zip(candidates[:10], predictions[:10]):
-            label_str = "Bind" if pred.label == 1 else "Non-bind"
-            mut_str = ", ".join(
-                f"{m.position}:{m.original}>{m.mutated}"
-                for m in candidate.mutations
-            )
-            preview.append(
-                f"  {candidate.candidate_id}: {label_str} P={pred.probability:.4f} | {mut_str}"
-            )
-        if len(candidates) > 10:
-            preview.append(f"  ... and {len(candidates) - 10} more")
+        preview = format_enumeration_preview(candidates, predictions)
         if preview:
-            self.screen.add_system_message("\n".join(preview))
+            self.screen.add_system_message(preview)
 
     def _rewind_after_empty_result(
         self,

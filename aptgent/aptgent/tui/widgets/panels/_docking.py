@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, HorizontalGroup, VerticalGroup
@@ -12,6 +13,23 @@ from aptgent.domain.enums import Step
 from ._core import StructuredActionRequested, StructuredInputSubmitted, _BaseStructuredPanel
 
 _log = logging.getLogger(__name__)
+
+
+def _machine_info(machine_profile: dict | None) -> str:
+    if machine_profile:
+        cpu_count = machine_profile.get("cpu_count", "?")
+        memory_gb = machine_profile.get("memory_gb")
+        if memory_gb is not None:
+            return f"CPUs: {cpu_count}  |  Memory: {memory_gb} GB"
+        return f"CPUs: {cpu_count}"
+
+    try:
+        import psutil
+
+        mem = round(psutil.virtual_memory().total / (1024 ** 3), 2)
+        return f"CPUs: {os.cpu_count() or '?'}  |  Memory: {mem} GB"
+    except Exception:
+        return f"CPUs: {os.cpu_count() or '?'}"
 
 
 class DockingStrategyPanel(_BaseStructuredPanel):
@@ -248,13 +266,7 @@ class DockingStrategyPanel(_BaseStructuredPanel):
         return applied
 
     def _machine_info(self) -> str:
-        if self.machine_profile:
-            cpu_count = self.machine_profile.get("cpu_count", "?")
-            memory_gb = self.machine_profile.get("memory_gb")
-            if memory_gb is not None:
-                return f"CPUs: {cpu_count}  |  Memory: {memory_gb} GB"
-            return f"CPUs: {cpu_count}"
-        return "Machine profile unavailable"
+        return _machine_info(self.machine_profile)
 
     def on_mount(self) -> None:
         try:
@@ -722,22 +734,7 @@ class DockingParamPanel(_BaseStructuredPanel):
         return "\n".join(rows)
 
     def _machine_info(self) -> str:
-        import os
-
-        if self.machine_profile:
-            cpu_count = self.machine_profile.get("cpu_count", "?")
-            memory_gb = self.machine_profile.get("memory_gb")
-            if memory_gb is not None:
-                return f"CPUs: {cpu_count}  |  Memory: {memory_gb} GB"
-            return f"CPUs: {cpu_count}"
-
-        try:
-            import psutil
-
-            mem = round(psutil.virtual_memory().total / (1024 ** 3), 2)
-            return f"CPUs: {os.cpu_count() or '?'}  |  Memory: {mem} GB"
-        except Exception:
-            return f"CPUs: {os.cpu_count() or '?'}"
+        return _machine_info(self.machine_profile)
 
     def on_mount(self) -> None:
         try:

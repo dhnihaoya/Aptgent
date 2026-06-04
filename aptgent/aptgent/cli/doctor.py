@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -111,7 +112,6 @@ def _check_feature_dimensions(model_dir: str | None) -> dict[str, Any]:
     bundled models. Do not point this at an untrusted/user-writable directory.
     """
     import pickle
-    import re
 
     if not model_dir:
         return {"status": "skipped", "reason": "no model_dir configured"}

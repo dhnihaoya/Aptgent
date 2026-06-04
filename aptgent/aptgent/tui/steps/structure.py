@@ -16,8 +16,7 @@ class StructureHandler(StepHandler):
         state = self.screen.app.current_state
         seq = get_sequence(state) or ""
         if not seq:
-            self.screen.add_system_message("Error: no sequence available.", "error-text")
-            self.screen.set_input_enabled(True)
+            self._report_error("Error: no sequence available.")
             return
 
         if self._has_pdb_context():

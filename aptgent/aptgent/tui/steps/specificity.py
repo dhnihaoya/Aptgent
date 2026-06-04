@@ -13,6 +13,7 @@ from aptgent.tui.steps.common import (
     run_llm_interaction,
     validate_analog_suggestion_result,
 )
+from aptgent.tui.steps.common.llm_ui import capture_streaming_result
 from aptgent.tui.steps.job_mixin import JobAttachMixin
 from aptgent.tui.widgets.chat_widgets import ProgressBubble
 from aptgent.tui.widgets.structured_input import (
@@ -166,21 +167,14 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
 
         try:
             skill = self.screen.app.runtime.create_skill(AnalogSuggestionSkill)
-            streamed_result: dict[str, object] = {}
-
-            def display_stream():
-                for event in skill.suggest_events(target):
-                    if isinstance(event, dict) and event.get("type") == "result":
-                        value = event.get("value")
-                        if isinstance(value, dict):
-                            streamed_result.clear()
-                            streamed_result.update(value)
-                        continue
-                    yield event
+            display_stream, get_captured = capture_streaming_result(
+                lambda: skill.suggest_events(target)
+            )
 
             def structured_result() -> dict:
-                if streamed_result:
-                    return validate_analog_suggestion_result(streamed_result)
+                captured = get_captured()
+                if captured:
+                    return validate_analog_suggestion_result(captured)
                 raise RuntimeError("LLM structured result unavailable.")
 
             result = run_llm_interaction(
@@ -313,27 +307,20 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
     def _parse_custom_worker(self, text: str) -> None:
         try:
             skill = self.screen.app.runtime.create_skill(AnalogParseSkill)
-            streamed_result: dict[str, object] = {}
-
-            def capture_stream():
-                for event in skill.parse_events(text):
-                    if isinstance(event, dict) and event.get("type") == "result":
-                        value = event.get("value")
-                        if isinstance(value, dict):
-                            streamed_result.clear()
-                            streamed_result.update(value)
-                        continue
-                    yield event
+            display_stream, get_captured = capture_streaming_result(
+                lambda: skill.parse_events(text)
+            )
 
             def structured_result() -> dict:
-                if streamed_result:
-                    return streamed_result
+                captured = get_captured()
+                if captured:
+                    return captured
                 result = skill.invoke(text)
                 return result.raw if hasattr(result, "raw") else result
 
             result = run_llm_interaction(
                 self.screen,
-                display_stream=capture_stream,
+                display_stream=display_stream,
                 structured_call=structured_result,
             )
 
@@ -493,10 +480,7 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
         return " | ".join(parts)
 
     def _on_job_done(self, summary: dict, progress: ProgressBubble) -> None:
-        # Reload state because the runner saves it from the detached process.
-        state = self.screen.app.current_state
-        self.screen.app.reload_current_state(state.run_id)
-        state = self.screen.app.current_state
+        state = self.reload_run_state()
 
         kept = int(summary.get("kept", self._kept_count))
         removed = int(summary.get("removed", self._removed_count))
@@ -538,10 +522,7 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
             self.screen.advance_to_step(ns)
 
     def _on_job_error(self, msg: str) -> None:
-        self.screen.add_system_message(
-            f"Specificity filter failed: {msg}", "error-text"
-        )
-        self.screen.set_input_enabled(True)
+        self._report_error(f"Specificity filter failed: {msg}")
 
     def _skip(self) -> None:
         state = self.screen.app.current_state

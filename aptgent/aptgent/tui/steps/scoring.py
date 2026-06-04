@@ -6,6 +6,7 @@ from aptgent.domain.enums import Step
 from aptgent.domain.ranking import rank_sums_from_model_probs
 from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.steps.common import next_primary_step
+from aptgent.tui.steps.common.formatting import format_ranked_candidates
 from aptgent.tui.steps.empty_candidates import (
     is_empty_enumeration_result,
     prepare_empty_candidate_recovery,
@@ -29,8 +30,7 @@ class ScoringHandler(StepHandler):
         if not candidates:
             if self._handle_empty_candidates(state):
                 return
-            self.screen.add_system_message("No candidates available.", "error-text")
-            self.screen.set_input_enabled(True)
+            self._report_error("No candidates available.")
             return
 
         if state.predictions:
@@ -38,10 +38,7 @@ class ScoringHandler(StepHandler):
             return
 
         if not target or not target.smiles:
-            self.screen.add_system_message(
-                "Target molecule missing. Cannot score.", "error-text"
-            )
-            self.screen.set_input_enabled(True)
+            self._report_error("Target molecule missing. Cannot score.")
             return
 
         self.screen.add_system_message(
@@ -59,18 +56,7 @@ class ScoringHandler(StepHandler):
             f"Scoring already completed during enumeration "
             f"({len(sorted_preds)} candidates):"
         ]
-        for rank_idx, pred in enumerate(sorted_preds[:10], start=1):
-            label_str = "Binding" if pred.label == 1 else "Non-binding"
-            rs = pred.raw_outputs.get("rank_sum")
-            rs_str = f"rank_sum={rs}" if rs is not None else ""
-            prob_str = f"P={pred.probability:.4f}" if pred.probability is not None else ""
-            parts = [rs_str, prob_str]
-            detail = ", ".join(p for p in parts if p)
-            lines.append(
-                f"  #{rank_idx} {pred.candidate_id}: {detail} ({label_str})"
-            )
-        if len(sorted_preds) > 10:
-            lines.append(f"  ... and {len(sorted_preds) - 10} more")
+        lines.append(format_ranked_candidates(sorted_preds))
         self.screen.add_system_message("\n".join(lines))
         ns = next_primary_step(Step.PRIMARY_SCORING)
         if ns:
@@ -119,18 +105,7 @@ class ScoringHandler(StepHandler):
             self.screen.app.save_state()
 
             lines = [f"Scored {len(sorted_preds)} candidates (ensemble):"]
-            for rank_idx, pred in enumerate(sorted_preds[:10], start=1):
-                label_str = "Binding" if pred.label == 1 else "Non-binding"
-                rs = pred.raw_outputs.get("rank_sum")
-                rs_str = f"rank_sum={rs}" if rs is not None else ""
-                prob_str = f"P={pred.probability:.4f}" if pred.probability is not None else ""
-                parts = [rs_str, prob_str]
-                detail = ", ".join(p for p in parts if p)
-                lines.append(
-                    f"  #{rank_idx} {pred.candidate_id}: {detail} ({label_str})"
-                )
-            if len(sorted_preds) > 10:
-                lines.append(f"  ... and {len(sorted_preds) - 10} more")
+            lines.append(format_ranked_candidates(sorted_preds))
 
             self._threadsafe(
                 self.screen.add_system_message, "\n".join(lines)

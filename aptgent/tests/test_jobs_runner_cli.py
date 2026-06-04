@@ -130,7 +130,7 @@ def test_enumeration_runner_normal_completion_finalizes_hits(tmp_path, monkeypat
     state.confirmed_mutation_sites = [1]
     persistence.save(state)
 
-    monkeypatch.setattr("aptgent.jobs.runner.load_config", lambda: _fake_config(tmp_path))
+    monkeypatch.setattr("aptgent.jobs.runner.enumeration.load_config", lambda: _fake_config(tmp_path))
     monkeypatch.setattr(
         "aptgent.bootstrap.container.create_prediction_adapter",
         lambda _tools_config: _FakeMutationBatchAdapter(),
@@ -169,7 +169,7 @@ def test_enumeration_runner_cancelled_completion_does_not_finalize(tmp_path, mon
     state.confirmed_mutation_sites = [1]
     persistence.save(state)
 
-    monkeypatch.setattr("aptgent.jobs.runner.load_config", lambda: _fake_config(tmp_path))
+    monkeypatch.setattr("aptgent.jobs.runner.enumeration.load_config", lambda: _fake_config(tmp_path))
     monkeypatch.setattr(
         "aptgent.bootstrap.container.create_prediction_adapter",
         lambda _tools_config: _FakeMutationBatchAdapter(cancel=True),
@@ -225,7 +225,7 @@ def test_docking_runner_normal_completion_is_not_cancelled(tmp_path, monkeypatch
     )
     persistence.save(state)
 
-    monkeypatch.setattr("aptgent.jobs.runner.load_config", lambda: _fake_config(tmp_path))
+    monkeypatch.setattr("aptgent.jobs.runner.docking.load_config", lambda: _fake_config(tmp_path))
     monkeypatch.setattr(
         "aptgent.bootstrap.container.create_vina_adapter",
         lambda _tools_config: _FakeVinaAdapter(),
@@ -318,7 +318,7 @@ def test_enumeration_finalize_rank_sum_ordering_differs_from_mean_prob(tmp_path,
     state.confirmed_mutation_sites = [1]
     persistence.save(state)
 
-    monkeypatch.setattr("aptgent.jobs.runner.load_config", lambda: _multi_model_config(tmp_path))
+    monkeypatch.setattr("aptgent.jobs.runner.enumeration.load_config", lambda: _multi_model_config(tmp_path))
     monkeypatch.setattr(
         "aptgent.bootstrap.container.create_prediction_adapter",
         lambda _tools_config: adapter,
@@ -362,7 +362,7 @@ def test_enumeration_finalize_skips_mismatched_model_count(tmp_path, monkeypatch
     state.confirmed_mutation_sites = [1]
     persistence.save(state)
 
-    monkeypatch.setattr("aptgent.jobs.runner.load_config", lambda: _multi_model_config(tmp_path))
+    monkeypatch.setattr("aptgent.jobs.runner.enumeration.load_config", lambda: _multi_model_config(tmp_path))
     monkeypatch.setattr(
         "aptgent.bootstrap.container.create_prediction_adapter",
         lambda _tools_config: adapter,

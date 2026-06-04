@@ -8,6 +8,7 @@ from aptgent.tui.steps.common import (
     run_llm_interaction,
     validate_site_proposal_result,
 )
+from aptgent.tui.steps.common.llm_ui import capture_streaming_result
 from aptgent.tui.steps.empty_candidates import clear_site_selection_retry_feedback
 from aptgent.tui.steps.state_reset import reset_after_site_selection
 from aptgent.tui.widgets.structured_input import ActionMenuPanel, MutationSitePanel
@@ -139,24 +140,20 @@ class SiteProposalHandler(StepHandler):
                 "Preparing site-proposal context...",
             )
             llm_context = build_site_proposal_llm_context(state)
-            streamed_result: dict[str, object] = {}
             supports_structured_events = hasattr(skill, "propose_events_from_context")
 
-            def display_stream():
-                if not supports_structured_events:
-                    return
-                for event in skill.propose_events_from_context(llm_context):
-                    if isinstance(event, dict) and event.get("type") == "result":
-                        value = event.get("value")
-                        if isinstance(value, dict):
-                            streamed_result.clear()
-                            streamed_result.update(value)
-                        continue
-                    yield event
+            if supports_structured_events:
+                display_stream, get_captured = capture_streaming_result(
+                    lambda: skill.propose_events_from_context(llm_context)
+                )
+            else:
+                display_stream = None
+                get_captured = lambda: {}
 
             def structured_result() -> dict:
-                if streamed_result:
-                    return validate_site_proposal_result(streamed_result, len(seq))
+                captured = get_captured()
+                if captured:
+                    return validate_site_proposal_result(captured, len(seq))
                 if supports_structured_events:
                     raise RuntimeError("LLM structured result unavailable.")
                 return validate_site_proposal_result(

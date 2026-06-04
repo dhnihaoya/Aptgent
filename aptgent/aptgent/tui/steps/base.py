@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from typing import Any, Callable
 
 
@@ -55,9 +56,18 @@ class StepHandler:
     def _report_error(self, message: str, *, style: str = "error-text") -> None:
         """Show a failure message and re-enable input.
 
-        Combines the ``add_system_message`` + ``_enable_input`` pair that
-        otherwise recurs in worker error handlers, so a forgotten
-        ``_enable_input`` can no longer leave the input bar disabled.
+        Works from any thread: on the main thread it calls directly,
+        from a worker thread it schedules via ``call_from_thread``.
         """
-        self._threadsafe(self.screen.add_system_message, message, style)
-        self._enable_input()
+        if threading.current_thread() is threading.main_thread():
+            self.screen.add_system_message(message, style)
+            self.screen.set_input_enabled(True)
+        else:
+            self._threadsafe(self.screen.add_system_message, message, style)
+            self._enable_input()
+
+    def reload_run_state(self) -> Any:
+        """Reload the current run state from persistence and return it."""
+        state = self.screen.app.current_state
+        self.screen.app.reload_current_state(state.run_id)
+        return self.screen.app.current_state

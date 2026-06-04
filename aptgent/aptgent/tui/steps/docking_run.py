@@ -110,10 +110,7 @@ class DockingRunHandler(JobAttachMixin, StepHandler):
             self.screen.add_system_message(f"  {cand_id}: {score_str}")
 
     def _on_job_done(self, summary: dict) -> None:
-        # Reload state (the job runner saves it)
-        state = self.screen.app.current_state
-        self.screen.app.reload_current_state(state.run_id)
-        state = self.screen.app.current_state
+        state = self.reload_run_state()
 
         if summary.get("cancelled"):
             self.screen.add_system_message("Docking was cancelled.", "warning-text")
@@ -139,5 +136,4 @@ class DockingRunHandler(JobAttachMixin, StepHandler):
             self.screen.advance_to_step(ns)
 
     def _on_job_error(self, msg: str) -> None:
-        self.screen.add_system_message(f"Docking failed: {msg}", "error-text")
-        self.screen.set_input_enabled(True)
+        self._report_error(f"Docking failed: {msg}")

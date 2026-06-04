@@ -65,9 +65,9 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme`、`/
 
 - `aptgent/aptgent/tui/screens/`：chat、welcome、quit_confirm、resume、theme_picker。
 - `aptgent/aptgent/tui/steps/`：每个 workflow step 一个模块（`intake.py`、`pdb_intake.py`、`structure.py`、`site_proposal.py`、`enumeration.py`、`scoring.py`、`specificity.py`、`docking_selection.py`（re-export shim，实现在 `docking/` 子包）、`docking_run.py`、`spatial_rank.py`、`report.py`），由 `factory.py` 分发。辅助模块：`intake_heuristics.py`（intake 输入启发式规则）、`intake_resolver.py`（intake 输入解析）、`state_reset.py`（状态重置辅助）。
-- `aptgent/aptgent/tui/steps/common/`：跨 step 共用工具（`__init__.py` 重新导出所有公共符号，保持 `from aptgent.tui.steps.common import X` 兼容）。子模块：`coercion.py`（类型转换）、`docking_plan.py`（对接参数校验）、`intake_format.py`（intake 输出格式化）、`llm_ui.py`（LLM UI 辅助）、`site_proposal_validate.py`（位点方案校验）、`specificity_format.py`（特异性结果格式化）。
+- `aptgent/aptgent/tui/steps/common/`：跨 step 共用工具（`__init__.py` 重新导出所有公共符号，保持 `from aptgent.tui.steps.common import X` 兼容）。子模块：`coercion.py`（类型转换）、`docking_plan.py`（对接参数校验）、`formatting.py`（候选排名展示格式化）、`intake_format.py`（intake 输出格式化）、`llm_ui.py`（LLM UI 辅助 + `capture_streaming_result` 流式结果捕获）、`site_proposal_validate.py`（位点方案校验）、`specificity_format.py`（特异性结果格式化）。
 - `aptgent/aptgent/tui/steps/empty_candidates.py`：空候选统一处理（`is_empty_enumeration_result`、`prepare_empty_candidate_recovery`、`clear_site_selection_retry_feedback`），被 enumeration、scoring、chat back-handler 共用。
-- `aptgent/aptgent/tui/steps/base.py`：`StepHandler` 基类（含 `allow_empty_input` 属性控制是否接受空输入提交、`_report_error()` 统一错误报告，合并 `add_system_message` + `_enable_input`，防止错误处理遗漏导致输入栏卡死）。
+- `aptgent/aptgent/tui/steps/base.py`：`StepHandler` 基类（含 `allow_empty_input` 属性控制是否接受空输入提交、`_report_error()` 统一错误报告（线程安全：主线程直调，worker 线程走 `call_from_thread`）、`reload_run_state()` 从持久化重载并返回最新状态）。
 - `aptgent/aptgent/tui/steps/job_mixin.py`：可分离后台任务 mixin（attach/spawn detached subprocess）。
 - `aptgent/aptgent/tui/widgets/`：通用 widget（`StatusPanel`、`StepProgressBar`、`StructuredInput`、chat bubble 系列）。子包 `panels/`（`_core.py`、`_intake.py`、`_specificity.py`、`_docking.py`）和 `common.py` 提供步骤专用面板组件。
 - `aptgent/aptgent/tui/commands.py`：斜杠命令注册、主题预设。
@@ -159,7 +159,7 @@ LLM 调用日志记录到 `<run_dir>/logs/llm_calls.jsonl`，默认对用户输�
 
 长时间运行的步骤（如 docking）可以作为独立子进程执行，TUI 不需要保持运行：
 
-- `aptgent/aptgent/jobs/runner.py`：`aptgent run-job <run_id> <step>` 入口，在隔离进程中加载 RunState 并执行 step 逻辑。当前注册的 step：`candidate_enumeration`、`specificity_filter`、`docking_run`。
+- `aptgent/aptgent/jobs/runner/`：`aptgent run-job <run_id> <step>` 入口，在隔离进程中加载 RunState 并执行 step 逻辑。包结构：`__init__.py`（注册表 + CLI 入口）、`_shared.py`（心跳 + 持久化）、`enumeration.py`（`_run_enumeration`）、`specificity.py`（`_run_specificity`）、`docking.py`（`_run_docking`）。当前注册的 step：`candidate_enumeration`、`specificity_filter`、`docking_run`。
 - `aptgent/aptgent/jobs/events.py`：事件写入/读取（`runs/<id>/jobs/<step>/events.jsonl`）。
 - `aptgent/aptgent/jobs/pid.py`：PID 文件管理，用于检测子进程存活状态。
 - `aptgent/aptgent/jobs/cancel.py`：`CancelContext` 取消上下文，用于管理 job 取消信号。
@@ -255,7 +255,7 @@ TUI 层（`enumeration.py`）在检测到取消时，显示警告信息并回退
 - `done` / `error`：终止事件。
 - stdin 接受 `cancel\n` 软取消信号。
 
-`SpecificityHandler`（`tui/steps/specificity.py`）继承 `JobAttachMixin`，`JOB_STEP="specificity_filter"`；analog 选择完成后通过 `attach_or_spawn_job()` 启动 detached job runner（`_run_specificity` in `jobs/runner.py`）。runner 持续维护 `runs/<id>/artifacts/specificity_results.jsonl`（首行为 meta，其余按 candidate 写入 kept/removed/failed_analogs），断点续跑时通过 meta 匹配 + `skip_pairs` 把已完成的 `(target_idx, candidate_id)` 让子进程跳过。
+`SpecificityHandler`（`tui/steps/specificity.py`）继承 `JobAttachMixin`，`JOB_STEP="specificity_filter"`；analog 选择完成后通过 `attach_or_spawn_job()` 启动 detached job runner（`_run_specificity` in `jobs/runner/specificity.py`）。runner 持续维护 `runs/<id>/artifacts/specificity_results.jsonl`（首行为 meta，其余按 candidate 写入 kept/removed/failed_analogs），断点续跑时通过 meta 匹配 + `skip_pairs` 把已完成的 `(target_idx, candidate_id)` 让子进程跳过。
 
 UI 上 `ProgressBubble` 与 candidate enumeration 完全一致，信息行格式为 `Progress: X/Y | Kept: K | Removed: R | Target: <name>`。
 

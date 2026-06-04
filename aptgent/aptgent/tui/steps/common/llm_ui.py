@@ -1,6 +1,39 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Generator
+
+
+def capture_streaming_result(
+    events_factory: Callable[[], Generator[dict[str, Any], None, None]],
+) -> tuple[Callable[[], Generator[dict[str, Any], None, None]], Callable[[], dict[str, Any]]]:
+    """Capture the ``result`` event from an LLM streaming event iterator.
+
+    *events_factory* is a zero-arg callable that returns an event generator.
+    The factory is called lazily inside ``display_stream()``, so any
+    ``AttributeError`` from a missing skill method is caught by the
+    ``run_llm_interaction`` error handler.
+
+    Returns ``(display_stream, get_captured)`` where:
+
+    * ``display_stream()`` yields all non-result events.
+    * ``get_captured()`` returns the captured result dict (empty until a
+      ``{"type": "result", "value": {...}}`` event is seen).
+
+    Validation and fallback logic remain at the call site.
+    """
+    captured: dict[str, Any] = {}
+
+    def display_stream():
+        for event in events_factory():
+            if isinstance(event, dict) and event.get("type") == "result":
+                value = event.get("value")
+                if isinstance(value, dict):
+                    captured.clear()
+                    captured.update(value)
+                continue
+            yield event
+
+    return display_stream, lambda: captured
 
 
 def run_llm_interaction(
