@@ -164,9 +164,11 @@ def cmd_mutation_batch(args: argparse.Namespace) -> int:
             skip_first=skip_first,
         )
 
+        emitter.emit({"type": "progress", "done": total, "total": total})
         emitter.emit({"type": "done", "total": total, "hits": hits})
 
     except PredictionCancelled:
+        emitter.emit({"type": "progress", "done": total, "total": total})
         emitter.emit({"type": "done", "total": total, "hits": hits, "cancelled": True})
         return 1
     except Exception as exc:

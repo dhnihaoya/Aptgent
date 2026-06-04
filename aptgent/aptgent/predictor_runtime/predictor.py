@@ -412,6 +412,9 @@ class EnsemblePredictor:
                 mutant_bytes[:, sites_arr] = base_bytes[digits]
                 _flush_chunk(mutant_bytes)
 
+        if progress_callback:
+            progress_callback(total, total, {})
+
         if positives is None:
             return None
 
