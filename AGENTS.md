@@ -315,6 +315,7 @@ aptgent run-job <run_id> <step>
 - `test_bootstrap_container.py`：依赖装配（`AppRuntime` + `build_runtime()`）测试
 - `test_cli_doctor.py`：环境诊断命令测试
 - `test_domain_models.py`：domain 层数据模型测试
+- `test_domain_ranking.py`：dense ranking 与 rank_sum 计算测试
 - `test_skill_base.py`：skill 基类与注册表测试
 - `test_workflow_state.py`：workflow 状态模型测试
 - `test_workflow_engine.py`：workflow 状态机流转测试
@@ -351,7 +352,7 @@ aptgent run-job <run_id> <step>
 - 配置加载 / 环境变量展开 → `test_bootstrap_config.py`
 - 依赖装配 / AppRuntime → `test_bootstrap_container.py`
 - 环境诊断命令 → `test_cli_doctor.py`
-- domain 数据模型 → `test_domain_models.py`
+- domain 数据模型 → `test_domain_models.py`、`test_domain_ranking.py`
 - skill 基类 / 注册表 → `test_skill_base.py`
 - workflow 状态模型 → `test_workflow_state.py`
 - workflow step / 状态流转 → `test_workflow_engine.py`、`test_persistence.py`
@@ -416,7 +417,7 @@ aptgent run-job <run_id> <step>
 
 ## 12. 已知高风险点
 
-- `llm.toml` 中当前存有一个真实 API key（`sk-3Pfd...`），这是安全风险。配置治理时应优先保持 env-only 用法，长期目标是清除该明文密钥。
+- `llm.toml` 中已不含明文 API key。密钥通过 `aptgent.local.toml`（项目根目录，gitignored）或 `GLM_API_KEY` 环境变量提供。不要在 bundled 配置中重新引入明文密钥。
 - `runs_dir` 默认是相对路径（`${APTGENT_RUNS_DIR:-./runs}`），调试时容易因为工作目录不同而把运行数据写到不同位置。
 - detached job 子进程在 TUI 退出后继续运行；如果 events.jsonl 或 PID 文件损坏，TUI 重启后可能无法正确 attach。
 

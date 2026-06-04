@@ -18,47 +18,14 @@ The active workflow is defined in `aptgent/aptgent/workflow/engine.py`.
 3. site_proposal
 4. candidate_enumeration
 5. primary_scoring
-6. specificity_filter
-7. docking_selection
-8. docking_run
+6. docking_selection
+7. docking_run
+8. specificity_filter
 9. spatial_rank
 10. final_report
 ```
 
-State transition diagram:
-
-```mermaid
-stateDiagram-v2
-    [*] --> PENDING: create_run
-
-    state "RUNNING workflow steps" as RUNNING {
-        [*] --> intake
-        intake --> intake: refine intake
-        intake --> secondary_structure
-        secondary_structure --> site_proposal
-        site_proposal --> candidate_enumeration
-        candidate_enumeration --> primary_scoring
-        primary_scoring --> specificity_filter
-        specificity_filter --> docking_selection
-        docking_selection --> docking_run
-        docking_run --> spatial_rank
-        spatial_rank --> final_report
-
-        candidate_enumeration --> site_proposal: no positive candidates
-        primary_scoring --> site_proposal: no positive candidates or /back
-    }
-
-    PENDING --> RUNNING: transition_to
-    RUNNING --> PAUSED: pause
-    PAUSED --> RUNNING: resume
-    RUNNING --> ERROR: fail
-    final_report --> COMPLETED: complete
-    COMPLETED --> [*]
-
-    note right of PAUSED
-      Resume keeps the current workflow step and clears pending input.
-    end note
-```
+When docking is unavailable (Vina not installed or disabled in config), `docking_selection` skips directly to `specificity_filter` (step 6 → step 8).
 
 The TUI uses a chat-first interface. `AptgentApp` registers the `welcome` and `chat` screens, and `ChatScreen` drives all workflow steps through handlers in `aptgent/aptgent/tui/steps/`.
 
@@ -155,9 +122,9 @@ Supported detached job steps are:
 5. The LLM proposes 3 alternative mutation-site plans (conservative → aggressive → LLM-selected direction) based on structural context. The user picks one, or enters custom sites.
 6. Candidate enumeration scores the mutation space. The accelerated path uses `predict_mutation_batch()` when available and writes positives-only hits to `scored_candidates.jsonl`.
 7. Primary scoring ranks enumerated candidates by prediction probability and applies the top-k cutoff.
-8. Specificity filtering checks candidates against target analogs.
-9. Docking selection proposes docking parameters. Values are clamped before use.
-10. Docking runs through AutoDock Vina when configured and accepted.
+8. Docking selection proposes docking parameters. Values are clamped before use.
+9. Docking runs through AutoDock Vina when configured and accepted.
+10. Specificity filtering checks affinity top-y candidates against target analogs.
 11. Spatial ranking reorders candidates using `spatial_interaction_matrix.csv`.
 12. Final report can be exported to Markdown and the run can be completed.
 
@@ -227,6 +194,7 @@ fast_model = "glm-5.1"
 api_key_env = "GLM_API_KEY"
 temperature = 1
 max_tokens = 65536
+max_reasoning_tokens = 16384
 ```
 
 `LLMClient` uses `glm-5.1` for both text output and structured JSON calls.
