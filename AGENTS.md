@@ -67,7 +67,7 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme`、`/
 - `aptgent/aptgent/tui/steps/`：每个 workflow step 一个模块（`intake.py`、`pdb_intake.py`、`structure.py`、`site_proposal.py`、`enumeration.py`、`scoring.py`、`specificity.py`、`docking_selection.py`（re-export shim，实现在 `docking/` 子包）、`docking_run.py`、`spatial_rank.py`、`report.py`），由 `factory.py` 分发。辅助模块：`intake_heuristics.py`（intake 输入启发式规则）、`intake_resolver.py`（intake 输入解析）、`state_reset.py`（状态重置辅助）。
 - `aptgent/aptgent/tui/steps/common/`：跨 step 共用工具（`__init__.py` 重新导出所有公共符号，保持 `from aptgent.tui.steps.common import X` 兼容）。子模块：`coercion.py`（类型转换）、`docking_plan.py`（对接参数校验）、`intake_format.py`（intake 输出格式化）、`llm_ui.py`（LLM UI 辅助）、`site_proposal_validate.py`（位点方案校验）、`specificity_format.py`（特异性结果格式化）。
 - `aptgent/aptgent/tui/steps/empty_candidates.py`：空候选统一处理（`is_empty_enumeration_result`、`prepare_empty_candidate_recovery`、`clear_site_selection_retry_feedback`），被 enumeration、scoring、chat back-handler 共用。
-- `aptgent/aptgent/tui/steps/base.py`：`StepHandler` 基类（含 `_report_error()` 统一错误报告，合并 `add_system_message` + `_enable_input`，防止错误处理遗漏导致输入栏卡死）。
+- `aptgent/aptgent/tui/steps/base.py`：`StepHandler` 基类（含 `allow_empty_input` 属性控制是否接受空输入提交、`_report_error()` 统一错误报告，合并 `add_system_message` + `_enable_input`，防止错误处理遗漏导致输入栏卡死）。
 - `aptgent/aptgent/tui/steps/job_mixin.py`：可分离后台任务 mixin（attach/spawn detached subprocess）。
 - `aptgent/aptgent/tui/widgets/`：通用 widget（`StatusPanel`、`StepProgressBar`、`StructuredInput`、chat bubble 系列）。子包 `panels/`（`_core.py`、`_intake.py`、`_specificity.py`、`_docking.py`）和 `common.py` 提供步骤专用面板组件。
 - `aptgent/aptgent/tui/commands.py`：斜杠命令注册、主题预设。
@@ -144,7 +144,7 @@ LLM 输出是辅助信息，不应覆盖确定性计算结果。涉及评分、�
 
 - `intake`：自然语言输入解析，提取序列、靶标分子、修饰区域、类似物列表和时间预算等字段。
 - `pdb_review`：PDB 结构语义审查，7 类分类 + 靶标匹配 + 置信度。输出用于 review gate 机制（不合适的 PDB 会暂停流程等待用户确认）。
-- `site_proposal`：突变位点提议。先产出区域级风险评估（`region_assessment`），将序列区域分为 `safer_scaffold`、`suspected_binding_core` 或 `uncertain`，解释每个区域的分类依据；再给出恰好 3 个备选 mutation 方案，按保守 → 激进（含保守位点）→ LLM 自选方向排序；每个方案包含独立的位点、推理和置信度，若使用了 suspected binding/core 风险位点需显式说明理由；首选方案会镜像到 legacy 字段保持兼容。UI 层以 `expanded` 模式展示全部选项。支持 retry feedback：当枚举或打分步骤未找到阳性候选时，通过 `extra_context.site_selection_feedback` 回传失败原因、上下文引导（`guidance`）、需保留的方案索引（`preserve_proposal_indexes`）和前一轮方案（`previous_proposals`），LLM 据此只替换失败的方案槽位。
+- `site_proposal`：突变位点提议。进入此步骤后，TUI 先展示 intake 阶段提取的已有突变要求（`modification_region`、`proposed_sites`），并邀请用户输入额外偏好（`site_preference`，存入 `SiteProposalContext`）；用户可直接按 Enter 跳过。偏好通过 `build_site_proposal_llm_context()` 的 `user_request.site_preference` 传入 LLM。LLM 先产出区域级风险评估（`region_assessment`），将序列区域分为 `safer_scaffold`、`suspected_binding_core` 或 `uncertain`，解释每个区域的分类依据；再给出恰好 3 个备选 mutation 方案，按保守 → 激进（含保守位点）→ LLM 自选方向排序；每个方案包含独立的位点、推理和置信度，若使用了 suspected binding/core 风险位点需显式说明理由；首选方案会镜像到 legacy 字段保持兼容。UI 层以 `expanded` 模式展示全部选项。支持 retry feedback：当枚举或打分步骤未找到阳性候选时，通过 `extra_context.site_selection_feedback` 回传失败原因、上下文引导（`guidance`）、需保留的方案索引（`preserve_proposal_indexes`）和前一轮方案（`previous_proposals`），LLM 据此只替换失败的方案槽位。
 - `analog_suggestion`：结构类似物建议，用于特异性过滤步骤，LLM 推荐靶标的类似物供交叉预测。
 - `analog_parse`：类似物自然语言解析，将用户输入的类似物描述（如"用咖啡因做特异性筛选"）解析为结构化的靶标名称列表。特异性步骤使用。
 - `docking_planner`：对接参数建议（advisory 级别），LLM 可建议 `top_k`、`exhaustiveness`，但所有数值经 `validate_docking_recommendation_result()` 钳位后才生效。

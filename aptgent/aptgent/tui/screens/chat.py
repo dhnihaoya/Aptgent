@@ -282,7 +282,10 @@ class ChatScreen(Screen):
 
     def set_input_enabled(self, enabled: bool) -> None:
         try:
-            self.query_one("#input-bar", InputBar).set_enabled(enabled)
+            bar = self.query_one("#input-bar", InputBar)
+            bar.set_enabled(enabled)
+            if self._handler:
+                bar._allow_empty = self._handler.allow_empty_input
         except NoMatches:
             _log.debug("input-bar not mounted", exc_info=True)
         if enabled:
@@ -399,7 +402,9 @@ class ChatScreen(Screen):
         follow_output = self._should_follow_output(chat_log)
         chat_log.mount(StepDivider(step))
         self._follow_output_if_needed(chat_log, follow_output)
-        self.query_one("#input-bar", InputBar).set_commands(commands_for_step(step))
+        input_bar = self.query_one("#input-bar", InputBar)
+        input_bar.set_commands(commands_for_step(step))
+        input_bar._allow_empty = False
         self._handler = create_handler(step, self)
         self._handler.enter()
 
@@ -511,6 +516,8 @@ class ChatScreen(Screen):
             return
         text = event.value.strip()
         if not text:
+            if self._handler.allow_empty_input:
+                self._handler.handle_user_input("")
             return
         dispatch_result = self._slash_commands.dispatch(self, text)
         if dispatch_result is True:

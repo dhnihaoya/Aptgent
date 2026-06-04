@@ -483,6 +483,7 @@ class InputBar(Vertical):
     ) -> None:
         super().__init__(**kwargs)
         self._enabled = True
+        self._allow_empty = False
         self._commands = commands
         self._filtered_commands: tuple[SlashCommand, ...] = ()
         self._input_height = self.MIN_INPUT_HEIGHT
@@ -552,6 +553,9 @@ class InputBar(Vertical):
             return
         text = inp.value.strip()
         if not text:
+            if self._allow_empty:
+                self.post_message(self.Submitted(""))
+                self.clear_input()
             return
         if self.command_palette_open() and text.startswith("/") and self._filtered_commands:
             self._submit_command(self._filtered_commands[0].name)

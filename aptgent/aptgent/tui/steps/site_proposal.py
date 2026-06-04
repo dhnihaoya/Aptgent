@@ -19,12 +19,23 @@ from aptgent.workflow.context import (
 
 
 class SiteProposalHandler(StepHandler):
+    def __init__(self, screen) -> None:
+        super().__init__(screen)
+        self._phase: str = "proposing"
+        self._site_proposals: list[dict] = []
+        self._proposed_sites: list[int] = []
+
+    @property
+    def allow_empty_input(self) -> bool:
+        return self._phase == "awaiting_preference"
+
     def enter(self) -> None:
         state = self.screen.app.current_state
         proposal_context = state.context.site_proposal
         self._site_proposals = [dict(proposal) for proposal in proposal_context.proposals]
         self._proposed_sites = list(proposal_context.proposed_sites)
         struct = state.secondary_structure
+        self._phase = "proposing"
 
         if struct is None:
             self.screen.add_system_message(
@@ -46,6 +57,53 @@ class SiteProposalHandler(StepHandler):
             self._show_existing_choices()
             return
 
+        self._show_preference_prompt()
+
+    def _show_preference_prompt(self) -> None:
+        state = self.screen.app.current_state
+        intake = state.context.intake
+        self._phase = "awaiting_preference"
+
+        existing_lines: list[str] = []
+        if intake.modification_region:
+            existing_lines.append(f"- **Modification region**: {intake.modification_region}")
+        if intake.proposed_sites:
+            existing_lines.append(
+                f"- **Suggested sites from prompt**: {self._format_site_display(intake.proposed_sites)}"
+            )
+
+        lines: list[str] = []
+        if existing_lines:
+            lines.append("**Existing mutation requirements from your prompt:**")
+            lines.append("")
+            lines.extend(existing_lines)
+            lines.append("")
+            lines.append(
+                "Type additional preferences below (regions, positions, constraints), "
+                "or press Enter to proceed with these defaults."
+            )
+        else:
+            lines.append(
+                "Type mutation site preferences below (regions, positions, constraints), "
+                "or press Enter to let the LLM recommend sites automatically."
+            )
+
+        self.screen.add_system_message("\n".join(lines), markdown=True)
+        self.screen.set_input_placeholder(
+            "Type mutation preference, or press Enter to skip."
+        )
+        self.screen.set_input_enabled(True)
+
+    def _submit_preference(self, text: str) -> None:
+        if not text.strip():
+            self._phase = "proposing"
+            self.run_worker(self._propose, activity="Analyzing mutation-tolerant sites...")
+            return
+        state = self.screen.app.current_state
+        record_site_proposal_context(state, site_preference=text)
+        self.screen.app.save_state()
+        self.screen.add_system_message(f"Preference saved: {text}")
+        self._phase = "proposing"
         self.run_worker(self._propose, activity="Analyzing mutation-tolerant sites...")
 
     def _propose(self) -> None:
@@ -172,6 +230,10 @@ class SiteProposalHandler(StepHandler):
         self._enable_input()
 
     def handle_user_input(self, text: str) -> None:
+        if self._phase == "awaiting_preference":
+            self._submit_preference(text)
+            return
+
         state = self.screen.app.current_state
         seq = get_sequence(state) or ""
         text_lower = text.strip().lower()

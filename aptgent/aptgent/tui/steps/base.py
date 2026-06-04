@@ -6,6 +6,8 @@ from typing import Any, Callable
 class StepHandler:
     """Base class for per-step handlers."""
 
+    allow_empty_input: bool = False
+
     def __init__(self, screen: Any) -> None:
         self.screen = screen
 

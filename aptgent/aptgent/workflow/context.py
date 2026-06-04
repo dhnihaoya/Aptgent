@@ -149,7 +149,7 @@ def record_site_proposal_context(
     patch_context(
         context,
         fields,
-        str_keys={"reasoning", "confidence", "selection_source", "regeneration_reason"},
+        str_keys={"reasoning", "confidence", "selection_source", "regeneration_reason", "site_preference"},
         list_keys={"proposed_sites", "confirmed_sites", "preserve_proposal_indexes"},
     )
 
@@ -216,6 +216,7 @@ def build_site_proposal_llm_context(state: RunState) -> dict[str, Any]:
             "modification_region": intake.modification_region,
             "analogs": list(intake.analogs),
             "time_budget_hours": intake.time_budget_hours or state.time_budget,
+            "site_preference": proposal.site_preference,
         },
         "workflow_context": {
             "current_step": state.current_step.value,

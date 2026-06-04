@@ -399,8 +399,16 @@ async def test_site_proposal_uses_choice_panel_before_custom_selector(tmp_path, 
         await pilot.pause()
 
         assert type(app.screen).__name__ == "ChatScreen"
+
+        # Skip the preference prompt (empty Enter → proceed with defaults)
+        app.screen.query_one("#chat-input").focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
         assert seen_context["secondary_structure"]["dot_bracket"] == "......"
         assert seen_context["sequence"] == "ACGTAC"
+
         panel = app.screen.query_one(ActionMenuPanel)
         assert panel is not None
         assert panel.has_class("expanded-menu")
@@ -462,6 +470,12 @@ async def test_site_proposal_can_confirm_second_recommended_plan(tmp_path, monke
         await pilot.pause()
         app.set_run_id("site_second_plan_case")
         app.push_screen("chat")
+        await pilot.pause()
+        await pilot.pause()
+
+        # Skip the preference prompt (empty Enter → proceed with defaults)
+        app.screen.query_one("#chat-input").focus()
+        await pilot.press("enter")
         await pilot.pause()
         await pilot.pause()
 
@@ -530,6 +544,12 @@ async def test_site_proposal_can_confirm_llm_alternative_plan(tmp_path, monkeypa
         await pilot.pause()
         await pilot.pause()
 
+        # Skip the preference prompt (empty Enter → proceed with defaults)
+        app.screen.query_one("#chat-input").focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
         menu = app.screen.query_one("#action-menu", OptionList)
         menu.focus()
 
@@ -538,3 +558,36 @@ async def test_site_proposal_can_confirm_llm_alternative_plan(tmp_path, monkeypa
 
         assert app.current_state.confirmed_mutation_sites == [2, 5]
         assert app.current_state.context.site_proposal.confirmed_sites == [2, 5]
+
+
+def test_site_preference_saved_and_injected_into_llm_context():
+    from aptgent.workflow.context import (
+        build_site_proposal_llm_context,
+        record_site_proposal_context,
+    )
+    from aptgent.workflow.state import RunState
+
+    state = RunState(run_id="test_pref")
+    state.input_payload["initial_sequence"] = "ACGTACGT"
+    state.input_payload["target_molecule"] = "theophylline"
+    state.context.intake.sequence = "ACGTACGT"
+    state.context.intake.target_input = "theophylline"
+    state.context.intake.target_label = "theophylline"
+    state.secondary_structure = SecondaryStructure(
+        sequence="ACGTACGT",
+        dot_bracket="((((....",
+        mfe=-3.5,
+    )
+
+    record_site_proposal_context(
+        state,
+        site_preference="avoid positions 0-2 and focus on loop regions",
+    )
+    assert state.context.site_proposal.site_preference == (
+        "avoid positions 0-2 and focus on loop regions"
+    )
+
+    ctx = build_site_proposal_llm_context(state)
+    assert ctx["user_request"]["site_preference"] == (
+        "avoid positions 0-2 and focus on loop regions"
+    )

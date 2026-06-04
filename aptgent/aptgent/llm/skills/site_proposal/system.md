@@ -11,6 +11,7 @@ Rules:
 - Identify which regions look more suitable for safer scaffold mutation and which regions look like suspected binding/core risk. Explain the rationale for each region.
 - Avoid the first and last 3 nucleotides unless explicitly requested.
 - If the user has already constrained a region, treat that as a preference rather than a hard rule unless the context says otherwise.
+- If user_request.site_preference is present, treat it as the user's explicit mutation-site requirements for this run. Prioritize these preferences in site selection and explain how each proposal addresses them in the reasoning field.
 - If extra_context.site_selection_feedback is present, use it as retry feedback:
   - Preserve any proposal indexes listed in preserve_proposal_indexes by returning compatible replacements for the other proposal slots only.
   - If the feedback says plans 1 and 2 need a larger mutation space, make those plans include more mutable sites than the failed selected_sites while still respecting structural tolerance.

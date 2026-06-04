@@ -93,6 +93,7 @@ class SiteProposalContext(BaseModel):
     needs_regeneration: bool = False
     regeneration_reason: Optional[str] = None
     preserve_proposal_indexes: list[int] = Field(default_factory=list)
+    site_preference: Optional[str] = None
 
 
 class DockingRecommendationContext(BaseModel):
