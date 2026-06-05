@@ -236,7 +236,7 @@ class SiteProposalHandler(StepHandler):
         text_lower = text.strip().lower()
 
         if text_lower in ("use suggestions", "confirm", "accept", "ok"):
-            sites = getattr(self, "_proposed_sites", [])
+            sites = self._proposed_sites
             source = "llm"
             proposal_index = 0
         elif text_lower in ("prompt", "use prompt") and state.context.intake.proposed_sites:
@@ -283,14 +283,14 @@ class SiteProposalHandler(StepHandler):
                 )
             else:
                 self._confirm_sites(
-                    getattr(self, "_proposed_sites", []),
+                    self._proposed_sites,
                     source="llm",
                     proposal_index=0,
                 )
             return
         if action == "use-recommended-sites":
             self._confirm_sites(
-                getattr(self, "_proposed_sites", []),
+                self._proposed_sites,
                 source="llm",
                 proposal_index=0,
             )
@@ -298,7 +298,7 @@ class SiteProposalHandler(StepHandler):
         if action == "custom-sites":
             state = self.screen.app.current_state
             seq = get_sequence(state) or ""
-            panel = MutationSitePanel(seq, getattr(self, "_proposed_sites", []))
+            panel = MutationSitePanel(seq, self._proposed_sites)
             self.screen.add_structured_widget(panel)
             self.screen.set_input_enabled(False)
             self.screen.set_input_placeholder(
@@ -424,7 +424,7 @@ class SiteProposalHandler(StepHandler):
                 for index, proposal in enumerate(proposals)
             )
         else:
-            sites = getattr(self, "_proposed_sites", [])
+            sites = self._proposed_sites
             choices.append(
                 (
                     "use-recommended-sites",

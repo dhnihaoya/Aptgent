@@ -62,10 +62,19 @@ class WelcomeScreen(Screen):
         height: auto;
     }
     #welcome-status {
-        color: $text-muted;
+        height: auto;
         margin-bottom: 1;
         padding-bottom: 1;
         border-bottom: tall $secondary;
+    }
+    #welcome-status-label {
+        width: 1fr;
+        color: $text-muted;
+    }
+    #welcome-status-state {
+        width: auto;
+        color: $success;
+        text-style: bold;
     }
     #welcome-brand {
         height: auto;
@@ -106,7 +115,9 @@ class WelcomeScreen(Screen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="welcome-hero"):
-            yield Static("Workflow Console                                    Ready", id="welcome-status")
+            with Horizontal(id="welcome-status"):
+                yield Static("Workflow Console", id="welcome-status-label")
+                yield Static("\u25cf Ready", id="welcome-status-state")
             with Horizontal(id="welcome-brand"):
                 yield Static(self.LOGO, id="welcome-logo")
                 with Vertical(id="welcome-copy"):

@@ -119,29 +119,11 @@ class ChatScreen(Screen):
             return True
 
         from aptgent.tui.steps.empty_candidates import (
+            apply_empty_candidate_recovery_ui,
             clear_site_selection_retry_feedback,
-            is_empty_enumeration_result,
-            prepare_empty_candidate_recovery,
         )
 
-        if is_empty_enumeration_result(state):
-            recovery = prepare_empty_candidate_recovery(state)
-            self.app.save_state()
-            if recovery.needs_regeneration:
-                self.add_system_message(
-                    "No predicted binding mutations were found for the selected LLM plan. "
-                    "Returning to site proposal so the LLM can revise the recommendation.",
-                    "warning-text",
-                )
-            else:
-                self.add_system_message(
-                    "No predicted binding mutations were found for the selected custom sites. "
-                    "Returning to site proposal so you can choose a different set."
-                )
-            self.rewind_to_step(
-                Step.SITE_PROPOSAL,
-                metadata={"reason": "no_positive_candidates"},
-            )
+        if apply_empty_candidate_recovery_ui(self, state, rewind=True):
             return True
 
         clear_site_selection_retry_feedback(state)
@@ -285,7 +267,7 @@ class ChatScreen(Screen):
             bar = self.query_one("#input-bar", InputBar)
             bar.set_enabled(enabled)
             if self._handler:
-                bar._allow_empty = self._handler.allow_empty_input
+                bar.set_allow_empty(self._handler.allow_empty_input)
         except NoMatches:
             _log.debug("input-bar not mounted", exc_info=True)
         if enabled:
@@ -402,9 +384,10 @@ class ChatScreen(Screen):
         follow_output = self._should_follow_output(chat_log)
         chat_log.mount(StepDivider(step))
         self._follow_output_if_needed(chat_log, follow_output)
+        self.set_input_enabled(True)
         input_bar = self.query_one("#input-bar", InputBar)
         input_bar.set_commands(commands_for_step(step))
-        input_bar._allow_empty = False
+        input_bar.set_allow_empty(False)
         self._handler = create_handler(step, self)
         self._handler.enter()
 

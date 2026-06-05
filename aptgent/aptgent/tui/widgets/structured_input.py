@@ -1,4 +1,8 @@
-"""Re-export shim -- all panel classes now live in :mod:`aptgent.tui.widgets.panels`."""
+"""Re-export shim -- all panel classes now live in :mod:`aptgent.tui.widgets.panels`.
+
+.. deprecated::
+    Import from ``aptgent.tui.widgets.panels`` directly instead.
+"""
 
 from aptgent.tui.widgets.panels import (  # noqa: F401
     StructuredInputSubmitted,

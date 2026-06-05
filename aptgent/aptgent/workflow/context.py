@@ -255,7 +255,6 @@ def record_docking_recommendation_context(
         {**fields, **dirs},
         str_keys={"receptor_path_note", "grid_center_note"},
     )
-    context.recommended_grid_size = []
 
 
 def record_tertiary_structure_context(

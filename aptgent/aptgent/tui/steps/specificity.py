@@ -22,6 +22,7 @@ from aptgent.tui.widgets.structured_input import (
     AnalogCustomPanel,
 )
 from aptgent.workflow.context import record_specificity_recommendation_context
+from aptgent.workflow.engine import step_display_number
 
 
 class SpecificityHandler(JobAttachMixin, StepHandler):
@@ -49,7 +50,7 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
         self._compute_affinity_selection(state)
         recommendation = state.context.specificity_recommendation
         self.screen.add_system_message(
-            "Step 7: Specificity Filter\n"
+            f"Step {step_display_number(Step.SPECIFICITY_FILTER)}: Specificity Filter\n"
             "The LLM will first suggest important analog molecules, then you can accept, edit, or replace them before filtering."
         )
         if recommendation.display_markdown and recommendation.phase in {

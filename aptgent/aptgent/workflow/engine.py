@@ -28,6 +28,14 @@ _STEP_ORDER: list[Step] = [
 ]
 
 
+def step_display_number(step: Step) -> int:
+    """Return 1-based display number for *step*."""
+    try:
+        return _STEP_ORDER.index(step) + 1
+    except ValueError:
+        return 0
+
+
 class WorkflowEngine:
     def __init__(
         self,

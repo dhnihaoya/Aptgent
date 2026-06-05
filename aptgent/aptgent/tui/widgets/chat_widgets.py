@@ -16,23 +16,14 @@ from textual.widgets.option_list import Option
 
 from aptgent.domain.enums import Step
 from aptgent.tui.commands import DEFAULT_SLASH_COMMANDS, SlashCommand
+from aptgent.tui.theme_variables import THEME_VARIABLE_DEFAULTS as _DEFAULT_THEME_VARIABLES
 
 _log = logging.getLogger(__name__)
 
 _BREATH_INTERVAL_SECONDS = 0.42
-_DEFAULT_THEME_VARIABLES = {
-    "chat-thinking-label": "#a9bad1",
-    "chat-thinking-frame-muted": "#718198",
-    "chat-thinking-frame-soft": "#9baabd",
-    "chat-thinking-frame-bright": "#d7e2ee",
-    "chat-thinking-frame-hot": "#f1c15b",
-    "chat-activity-label": "#a9bad1",
-    "chat-activity-frame-muted": "#5f6b7a",
-    "chat-activity-frame-soft": "#8795a7",
-    "chat-activity-frame-bright": "#d7deea",
-    "chat-activity-frame-hot": "#f1c15b",
-    "chat-activity-final-icon": "#f1c15b",
-}
+
+# Sub-character block glyphs for smooth progress-bar edges (1/8 steps).
+_PROGRESS_BLOCKS = " ▏▎▍▌▋▊▉█"
 
 
 def _theme_variable(widget: Static, name: str) -> str:
@@ -43,6 +34,34 @@ def _theme_variable(widget: Static, name: str) -> str:
         )
     except Exception:
         return _DEFAULT_THEME_VARIABLES[name]
+
+
+def _resolve_color(widget: Static, attr: str, fallback: str) -> str:
+    """Resolve a theme color *attribute* (e.g. ``success``) to a hex value.
+
+    Inserting the resolved hex into Rich markup keeps it valid; ``$var`` tokens
+    are CSS-only and would raise a markup error inside bubble content.
+    """
+    try:
+        return getattr(widget.app.current_theme, attr, fallback) or fallback
+    except Exception:
+        return fallback
+
+
+def _render_progress_bar(current: int, total: int, width: int = 30) -> str:
+    """Render a filled bar with sub-character precision on the leading edge."""
+    ratio = max(0.0, min(1.0, current / total)) if total else 0.0
+    filled_exact = width * ratio
+    full = int(filled_exact)
+    partial = ""
+    if full < width:
+        frac_idx = int(round((filled_exact - full) * 8))
+        if frac_idx >= 8:
+            full += 1
+        elif frac_idx > 0:
+            partial = _PROGRESS_BLOCKS[frac_idx]
+    empty = max(0, width - full - (1 if partial else 0))
+    return "█" * full + partial + "░" * empty
 
 
 def _breathing_frames(
@@ -305,19 +324,19 @@ class ProgressBubble(Static):
         self._update_display()
 
     def finish(self, message: str) -> None:
-        self.update(f"[bold green]✓[/bold green] {message}")
+        success = _resolve_color(self, "success", "#6DB28C")
+        self.update(f"[bold {success}]✓[/bold {success}] {message}")
 
     def _update_display(self) -> None:
         if self._total <= 0:
             self.update(f"{self._label}…")
             return
         pct = self._current / self._total * 100
-        bar_width = 30
-        filled = int(bar_width * self._current / self._total)
-        bar = "█" * filled + "░" * (bar_width - filled)
+        bar = _render_progress_bar(self._current, self._total)
+        accent = _theme_variable(self, "chat-stream-accent")
         text = (
             f"{self._label}\n"
-            f"[bold cyan]{bar}[/bold cyan] {pct:.1f}%  ({self._current:,}/{self._total:,})"
+            f"[bold {accent}]{bar}[/bold {accent}] {pct:.1f}%  ({self._current:,}/{self._total:,})"
         )
         if self._info:
             text += f"\n{self._info}"
@@ -487,6 +506,10 @@ class InputBar(Vertical):
         self._commands = commands
         self._filtered_commands: tuple[SlashCommand, ...] = ()
         self._input_height = self.MIN_INPUT_HEIGHT
+
+    def set_allow_empty(self, allow: bool) -> None:
+        """Set whether empty input submissions are allowed."""
+        self._allow_empty = allow
 
     @property
     def input_height(self) -> int:

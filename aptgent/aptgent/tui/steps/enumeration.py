@@ -7,7 +7,7 @@ from aptgent.domain.enums import Step
 from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.steps.common import next_primary_step
 from aptgent.tui.steps.common.formatting import format_enumeration_preview
-from aptgent.tui.steps.empty_candidates import prepare_empty_candidate_recovery
+from aptgent.tui.steps.empty_candidates import apply_empty_candidate_recovery_ui
 from aptgent.tui.steps.job_mixin import JobAttachMixin
 from aptgent.tui.widgets.chat_widgets import ProgressBubble
 
@@ -151,27 +151,6 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
         hits: int,
         kept: int,
     ) -> None:
-        recovery = prepare_empty_candidate_recovery(
-            state,
-            total=total,
-            hits=hits,
-            kept=kept,
-        )
-        self.screen.app.save_state()
-
-        if recovery.needs_regeneration:
-            self.screen.add_system_message(
-                "No binding candidates were found for the selected LLM plan. "
-                "Returning to site proposal with this feedback so the LLM can revise the sites.",
-                "warning-text",
-            )
-        else:
-            self.screen.add_system_message(
-                "No binding candidates were found for the selected sites. "
-                "Returning to site proposal so you can choose a different set. "
-                "You can also use /resume to open another saved run or /quit to exit.",
-            )
-        self.screen.rewind_to_step(
-            Step.SITE_PROPOSAL,
-            metadata={"reason": "no_positive_candidates"},
+        apply_empty_candidate_recovery_ui(
+            self.screen, state, total=total, hits=hits, kept=kept, rewind=True,
         )

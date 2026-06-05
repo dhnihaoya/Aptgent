@@ -9,6 +9,7 @@ from aptgent.domain.enums import Step
 from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.widgets.structured_input import DockingStrategyPanel
 from aptgent.workflow.context import record_tertiary_structure_context
+from aptgent.workflow.engine import step_display_number
 
 from ._confirm import _ConfirmMixin
 from ._source import _SourceMixin
@@ -45,7 +46,7 @@ class DockingSelectionHandler(
         phase = recommendation.phase or "initial"
 
         self.screen.add_system_message(
-            f"Step 6: Docking Selection\n"
+            f"Step {step_display_number(Step.DOCKING_SELECTION)}: Docking Selection\n"
             f"{len(state.candidates)} candidates available for docking."
         )
 

@@ -7,10 +7,7 @@ from aptgent.domain.ranking import rank_sums_from_model_probs
 from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.steps.common import next_primary_step
 from aptgent.tui.steps.common.formatting import format_ranked_candidates
-from aptgent.tui.steps.empty_candidates import (
-    is_empty_enumeration_result,
-    prepare_empty_candidate_recovery,
-)
+from aptgent.tui.steps.empty_candidates import apply_empty_candidate_recovery_ui
 
 
 class ScoringHandler(StepHandler):
@@ -117,27 +114,4 @@ class ScoringHandler(StepHandler):
             self._report_error(f"Scoring failed: {exc}")
 
     def _handle_empty_candidates(self, state: Any) -> bool:
-        if not is_empty_enumeration_result(state):
-            return False
-
-        recovery = prepare_empty_candidate_recovery(state)
-        if recovery.needs_regeneration:
-            self.screen.app.save_state()
-            self.screen.add_system_message(
-                "No predicted binding mutations were found for the selected LLM plan. "
-                "Returning to site proposal so the LLM can revise the recommendation.",
-                "warning-text",
-            )
-            self.screen.rewind_to_step(
-                Step.SITE_PROPOSAL,
-                metadata={"reason": "no_positive_candidates"},
-            )
-            return True
-
-        self.screen.add_system_message(
-            "No predicted binding mutations were found for the selected custom sites. "
-            "Choose a different set of mutation sites, use /resume to open another saved run, "
-            "or use /quit to exit."
-        )
-        self.screen.set_input_enabled(True)
-        return True
+        return apply_empty_candidate_recovery_ui(self.screen, state)

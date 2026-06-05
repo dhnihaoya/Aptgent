@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aptgent.tui.screens.chat import ChatScreen
 
 
 @dataclass(frozen=True)
@@ -139,3 +142,66 @@ def empty_result_guidance(
         "The selected LLM plan produced no predicted binding mutations. Regenerate "
         "recommendations using the failed sites and previous proposals as feedback."
     )
+
+
+def apply_empty_candidate_recovery_ui(
+    screen: ChatScreen,
+    state: Any,
+    *,
+    total: int | None = None,
+    hits: int = 0,
+    kept: int = 0,
+    rewind: bool | None = None,
+) -> bool:
+    """Check for empty candidates and apply the standard UI recovery flow.
+
+    Returns True if recovery was applied.
+    Returns False if candidates are not empty (caller should continue normally).
+
+    When *rewind* is True, the screen is always rewound to SITE_PROPOSAL.
+    When False, the screen stays put and input is re-enabled.
+    When None (default), rewinds only for LLM-sourced selections
+    (``recovery.needs_regeneration`` is True); custom selections stay put.
+    """
+    from aptgent.domain.enums import Step
+
+    if state.candidates:
+        return False
+
+    if not is_empty_enumeration_result(state):
+        return False
+
+    recovery = prepare_empty_candidate_recovery(
+        state, total=total, hits=hits, kept=kept,
+    )
+    screen.app.save_state()
+
+    should_rewind = rewind if rewind is not None else recovery.needs_regeneration
+
+    if recovery.needs_regeneration:
+        screen.add_system_message(
+            "No predicted binding mutations were found for the selected LLM plan. "
+            "Returning to site proposal so the LLM can revise the recommendation.",
+            "warning-text",
+        )
+    elif should_rewind:
+        screen.add_system_message(
+            "No predicted binding mutations were found for the selected custom sites. "
+            "Returning to site proposal so you can choose a different set. "
+            "You can also use /resume to open another saved run or /quit to exit.",
+        )
+    else:
+        screen.add_system_message(
+            "No predicted binding mutations were found for the selected custom sites. "
+            "Choose a different set of mutation sites, use /resume to open another saved run, "
+            "or use /quit to exit."
+        )
+
+    if should_rewind:
+        screen.rewind_to_step(
+            Step.SITE_PROPOSAL,
+            metadata={"reason": "no_positive_candidates"},
+        )
+    else:
+        screen.set_input_enabled(True)
+    return True
