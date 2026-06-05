@@ -10,9 +10,7 @@ from rdkit import Chem
 from rdkit.Chem import Descriptors
 
 
-def rna_to_dna(sequence: str) -> str:
-    """Convert RNA sequence to DNA form by replacing U with T."""
-    return sequence.replace("U", "T").replace("u", "t")
+from aptgent.domain.sequence import rna_to_dna  # noqa: F401 — re-export for backward compat
 
 
 @lru_cache(maxsize=4)

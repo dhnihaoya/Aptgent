@@ -18,32 +18,18 @@ from aptgent.domain.models import (
     SpatialRankResult,
     TargetMolecule,
 )
+from aptgent.domain.ranking import competition_ranks, dense_ranks
+from aptgent.domain.sequence import NUCLEOTIDE_TO_BASE
 
 # Default contact cutoff in Angstroms. Paper Table 3 reports interaction
 # distances in the 2.0-3.96 A range; 4.0 A is the conservative gate.
 _DEFAULT_CONTACT_CUTOFF = 4.0
 
 # PDB/PDBQT residue name -> matrix base type mapping.
-_RESIDUE_BASE_MAP = {
-    "DA": "A",
-    "A": "A",
-    "RA": "A",
-    "ADE": "A",
-    "DT": "T/U",
-    "T": "T/U",
-    "THY": "T/U",
-    "DU": "T/U",
-    "U": "T/U",
-    "RU": "T/U",
-    "URA": "T/U",
-    "DC": "C",
-    "C": "C",
-    "RC": "C",
-    "CYT": "C",
-    "DG": "G",
-    "G": "G",
-    "RG": "G",
-    "GUA": "G",
+# For spatial ranking, T and U are equivalent (both map to "T/U").
+_RESIDUE_BASE_MAP: dict[str, str] = {
+    k: ("T/U" if v in ("T", "U") else v)
+    for k, v in NUCLEOTIDE_TO_BASE.items()
 }
 
 _DEFAULT_MATRIX_PATH = os.path.join(
@@ -374,33 +360,11 @@ class SpatialRankAdapter:
 
     @staticmethod
     def _competition_ranks(values: list[float], reverse: bool) -> list[int]:
-        """Standard competition ranking ("1224"). Ties share the smallest rank."""
-        order = sorted(range(len(values)), key=lambda i: values[i], reverse=reverse)
-        ranks = [0] * len(values)
-        last_val: float | None = None
-        last_rank = 0
-        for pos, idx in enumerate(order):
-            v = values[idx]
-            if last_val is None or v != last_val:
-                last_rank = pos + 1
-                last_val = v
-            ranks[idx] = last_rank
-        return ranks
+        return competition_ranks(values, reverse=reverse)
 
     @staticmethod
     def _dense_ranks(values: list[float], reverse: bool) -> list[int]:
-        """Dense ranking ("1223"). Ties share a rank, no gaps follow."""
-        order = sorted(range(len(values)), key=lambda i: values[i], reverse=reverse)
-        ranks = [0] * len(values)
-        last_val: float | None = None
-        cur = 0
-        for idx in order:
-            v = values[idx]
-            if last_val is None or v != last_val:
-                cur += 1
-                last_val = v
-            ranks[idx] = cur
-        return ranks
+        return dense_ranks(values, reverse=reverse)
 
     def _can_use_pose_mode(self, docking_results: list[DockingResult]) -> bool:
         if not _RDKIT_AVAILABLE or not docking_results:

@@ -15,32 +15,10 @@ from aptgent.domain.models import (
     PdbLigandCandidate,
     SecondaryStructure,
 )
+from aptgent.domain.sequence import NUCLEOTIDE_TO_BASE
 
 _PDB_ID = re.compile(r"\b([0-9][A-Za-z0-9]{3})\b")
-_NUCLEOTIDE_CODES = {
-    "A": "A",
-    "C": "C",
-    "G": "G",
-    "U": "U",
-    "T": "T",
-    "DA": "A",
-    "DC": "C",
-    "DG": "G",
-    "DT": "T",
-    "DU": "U",
-    "ADE": "A",
-    "CYT": "C",
-    "GUA": "G",
-    "URI": "U",
-    "THY": "T",
-    "PSU": "U",
-    "H2U": "U",
-    "5MU": "U",
-    "OMG": "G",
-    "7MG": "G",
-    "1MA": "A",
-    "M2G": "G",
-}
+_NUCLEOTIDE_CODES = NUCLEOTIDE_TO_BASE
 _EXCLUDED_LIGANDS = {
     "HOH",
     "WAT",

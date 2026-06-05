@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from aptgent.domain.sequence import dna_to_rna, rna_to_dna
+
 
 # Standard RNA residue names that may appear in a RNAComposer PDB.
 _RNA_RESIDUES = {"A", "U", "G", "C"}
@@ -39,16 +41,6 @@ class BoundingBox:
             "center": list(self.center),
             "size": list(self.size),
         }
-
-
-def dna_to_rna(sequence: str) -> str:
-    """Convert DNA letters to RNA (T -> U). Preserves case and other chars."""
-    return sequence.replace("T", "U").replace("t", "u")
-
-
-def rna_to_dna(sequence: str) -> str:
-    """Convert RNA letters to DNA (U -> T). Preserves case and other chars."""
-    return sequence.replace("U", "T").replace("u", "t")
 
 
 def revert_ribose_to_deoxyribose(pdb_text: str) -> str:

@@ -162,3 +162,33 @@ def select_top_y_by_affinity(
         selected.append(cid)
 
     return selected
+
+
+def competition_ranks(values: list[float], reverse: bool = False) -> list[int]:
+    """Standard competition ranking ("1224"). Ties share the smallest rank."""
+    order = sorted(range(len(values)), key=lambda i: values[i], reverse=reverse)
+    ranks = [0] * len(values)
+    last_val: float | None = None
+    last_rank = 0
+    for pos, idx in enumerate(order):
+        v = values[idx]
+        if last_val is None or v != last_val:
+            last_rank = pos + 1
+            last_val = v
+        ranks[idx] = last_rank
+    return ranks
+
+
+def dense_ranks(values: list[float], reverse: bool = False) -> list[int]:
+    """Dense ranking ("1223"). Ties share a rank, no gaps follow."""
+    order = sorted(range(len(values)), key=lambda i: values[i], reverse=reverse)
+    ranks = [0] * len(values)
+    last_val: float | None = None
+    cur = 0
+    for idx in order:
+        v = values[idx]
+        if last_val is None or v != last_val:
+            cur += 1
+            last_val = v
+        ranks[idx] = cur
+    return ranks
