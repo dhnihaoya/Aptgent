@@ -209,3 +209,29 @@ class TestResumeAfterTuiRestart:
 
         assert is_job_alive(p, "r1", "docking_run") is True
         assert is_job_done(p, "r1", "docking_run") is False
+
+
+class TestCancelledJobRestart:
+    """Verify cancelled done events are treated as 'not done' so the job restarts."""
+
+    def test_is_job_done_returns_false_for_cancelled_done(self, tmp_path):
+        p = Persistence(runs_dir=tmp_path)
+        p.init_run("r1")
+        p.ensure_job_dir("r1", "docking_run")
+        events = p.job_events_file("r1", "docking_run")
+        events.write_text(
+            '{"type":"started","ts":"t1","pid":1}\n'
+            '{"type":"done","ts":"t2","summary":{"cancelled":true,"total":10}}\n'
+        )
+        assert is_job_done(p, "r1", "docking_run") is False
+
+    def test_is_job_done_returns_true_for_normal_done(self, tmp_path):
+        p = Persistence(runs_dir=tmp_path)
+        p.init_run("r1")
+        p.ensure_job_dir("r1", "docking_run")
+        events = p.job_events_file("r1", "docking_run")
+        events.write_text(
+            '{"type":"started","ts":"t1","pid":1}\n'
+            '{"type":"done","ts":"t2","summary":{"total":10,"completed":10}}\n'
+        )
+        assert is_job_done(p, "r1", "docking_run") is True

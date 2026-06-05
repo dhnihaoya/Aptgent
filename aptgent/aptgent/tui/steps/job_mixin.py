@@ -15,7 +15,7 @@ import time
 from typing import Any, Callable
 
 from aptgent.jobs.events import EventReader, read_last_event
-from aptgent.jobs.pid import is_pid_alive, read_pid
+from aptgent.jobs.pid import is_pid_alive, kill_pid, read_pid
 from aptgent.workflow.persistence import Persistence
 
 _log = logging.getLogger(__name__)
@@ -31,10 +31,14 @@ def is_job_alive(persistence: Persistence, run_id: str, step: str) -> bool:
 
 
 def is_job_done(persistence: Persistence, run_id: str, step: str) -> bool:
-    """Check whether a detached job has completed (has a done event)."""
+    """Check whether a detached job has completed (has a non-cancelled done event)."""
     events_file = persistence.job_events_file(run_id, step)
     last = read_last_event(events_file)
-    return last is not None and last.get("type") == "done"
+    return (
+        last is not None
+        and last.get("type") == "done"
+        and not last.get("summary", {}).get("cancelled", False)
+    )
 
 
 def spawn_detached_job(app: Any, run_id: str, step: str) -> int:
@@ -100,9 +104,20 @@ class JobAttachMixin:
 
         # Case 2: Job is alive
         if is_job_alive(persistence, run_id, step):
-            _log.info("Attaching to running job for %s/%s", run_id, step)
-            self._tail_events(run_id, step, on_event, on_done, on_error)
-            return
+            cmd_file = persistence.job_cmd_file(run_id, step)
+            if cmd_file.exists() and cmd_file.read_text().strip() == "cancel":
+                # Zombie: cancelled but hasn't died yet. Kill and fall through to Case 3.
+                stale_pid = read_pid(persistence.job_pid_file(run_id, step))
+                if stale_pid is not None:
+                    _log.warning(
+                        "Killing zombie cancelled job pid=%d for %s/%s",
+                        stale_pid, run_id, step,
+                    )
+                    kill_pid(stale_pid)
+            else:
+                _log.info("Attaching to running job for %s/%s", run_id, step)
+                self._tail_events(run_id, step, on_event, on_done, on_error)
+                return
 
         # Case 3: Spawn new or restart (clean stale state first)
         events_file = persistence.job_events_file(run_id, step)
