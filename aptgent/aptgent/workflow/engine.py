@@ -20,7 +20,7 @@ TRANSITIONS: dict[Step, list[Step]] = {
     Step.FINAL_REPORT: [],
 }
 
-_STEP_ORDER: list[Step] = [
+STEP_ORDER: list[Step] = [
     Step.INTAKE, Step.SECONDARY_STRUCTURE, Step.SITE_PROPOSAL,
     Step.CANDIDATE_ENUMERATION, Step.PRIMARY_SCORING,
     Step.DOCKING_SELECTION, Step.DOCKING_RUN,
@@ -31,7 +31,7 @@ _STEP_ORDER: list[Step] = [
 def step_display_number(step: Step) -> int:
     """Return 1-based display number for *step*."""
     try:
-        return _STEP_ORDER.index(step) + 1
+        return STEP_ORDER.index(step) + 1
     except ValueError:
         return 0
 
@@ -94,8 +94,8 @@ class WorkflowEngine:
         step: Step,
         metadata: Optional[dict[str, Any]] = None,
     ) -> RunState:
-        current_idx = _STEP_ORDER.index(state.current_step)
-        target_idx = _STEP_ORDER.index(step)
+        current_idx = STEP_ORDER.index(state.current_step)
+        target_idx = STEP_ORDER.index(step)
         if target_idx > current_idx:
             raise ValueError(
                 f"Cannot rewind forward from {state.current_step.value} to {step.value}"
