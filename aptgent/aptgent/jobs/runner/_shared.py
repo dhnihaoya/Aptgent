@@ -62,7 +62,7 @@ def _run_with_heartbeat(
         writer.write_error(message="Another job process is already running for this step")
         writer.close()
         return 1
-    atexit.register(clear_pid, pid_file)
+    atexit.register(clear_pid, pid_file, os.getpid())
 
     status_file.write_text("running")
     writer.write_started(pid=os.getpid())
