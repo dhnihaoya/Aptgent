@@ -6,6 +6,7 @@ from pathlib import Path
 from aptgent.domain.enums import Step
 from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.steps.common import next_primary_step
+from aptgent.tui.steps.job_progress import JobDoneSummary, JobEvent, JobProgressTracker, _event_extra
 from aptgent.tui.steps.job_mixin import JobAttachMixin
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,10 @@ class DockingRunHandler(JobAttachMixin, StepHandler):
     """Vina docking, runs as a detached job."""
 
     JOB_STEP = "docking_run"
+
+    def __init__(self, screen) -> None:
+        super().__init__(screen)
+        self._progress = JobProgressTracker()
 
     def enter(self) -> None:
         state = self.screen.app.current_state
@@ -90,12 +95,13 @@ class DockingRunHandler(JobAttachMixin, StepHandler):
             activity="Running docking jobs...",
         )
 
-    def _on_job_event(self, evt: dict) -> None:
+    def _on_job_event(self, evt: JobEvent) -> None:
         etype = evt.get("type", "")
         if etype == "progress":
-            done = evt.get("done", 0)
-            total = evt.get("total", 0)
-            extra = evt.get("extra", {})
+            self._progress.apply_progress(evt)
+            done = self._progress.done
+            total = self._progress.total
+            extra = _event_extra(evt)
             resumed = extra.get("resumed", 0)
             if resumed:
                 self.screen.add_system_message(
@@ -105,11 +111,12 @@ class DockingRunHandler(JobAttachMixin, StepHandler):
             self.screen.update_activity(f"Docking: {done}/{total} completed")
         elif etype == "hit":
             cand_id = evt.get("candidate_id", "?")
-            score = evt.get("extra", {}).get("docking_score")
+            extra = _event_extra(evt)
+            score = extra.get("docking_score")
             score_str = f"{score:.3f}" if score is not None else "N/A"
             self.screen.add_system_message(f"  {cand_id}: {score_str}")
 
-    def _on_job_done(self, summary: dict) -> None:
+    def _on_job_done(self, summary: JobDoneSummary) -> None:
         state = self.reload_run_state()
 
         if summary.get("cancelled"):

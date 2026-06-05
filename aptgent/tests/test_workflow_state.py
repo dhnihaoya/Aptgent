@@ -1,6 +1,9 @@
 """Tests for RunState schema versioning and migration."""
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from aptgent.domain.enums import Step, Status
 from aptgent.workflow.state import RunState
 
@@ -40,11 +43,21 @@ def test_set_mutation_sites_writes_both():
 
 def test_validate_assignment_rejects_bad_step():
     state = RunState(run_id="test")
-    try:
+    with pytest.raises(ValidationError):
         state.current_step = "not_a_step"
-        assert False, "Should have raised ValidationError"
-    except Exception:
-        pass
+
+
+def test_context_phase_assignment_rejects_unknown_values():
+    state = RunState(run_id="test")
+
+    with pytest.raises(ValidationError):
+        state.context.intake.phase = "awaitng_decision"
+
+    with pytest.raises(ValidationError):
+        state.context.docking_recommendation.phase = "accepted_typo"
+
+    with pytest.raises(ValidationError):
+        state.context.specificity_recommendation.phase = "almost_complete"
 
 
 def test_json_roundtrip_preserves_version():

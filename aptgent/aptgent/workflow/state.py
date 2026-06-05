@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -20,8 +20,37 @@ from aptgent.domain.models import (
     TargetMolecule,
 )
 
+IntakePhase = Literal[
+    "initial",
+    "awaiting_target_retry",
+    "awaiting_missing_target",
+    "awaiting_general_retry",
+    "awaiting_pdb_selection",
+    "awaiting_pdb_review_gate",
+]
+DockingPhase = Literal[
+    "initial",
+    "awaiting_decision",
+    "topk_selected",
+    "awaiting_structures",
+    "structures_ready",
+    "editing_form",
+    "preparing",
+    "skipped",
+    "accepted",
+]
+SpecificityPhase = Literal[
+    "initial",
+    "awaiting_decision",
+    "editing_recommended",
+    "editing_custom",
+    "complete",
+]
+
 
 class IntakeContext(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     user_brief: Optional[str] = None
     sequence: Optional[str] = None
     target_input: Optional[str] = None
@@ -30,7 +59,7 @@ class IntakeContext(BaseModel):
     analogs: list[str] = Field(default_factory=list)
     proposed_sites: list[int] = Field(default_factory=list)
     time_budget_hours: Optional[int] = None
-    phase: str = "initial"
+    phase: IntakePhase = "initial"
     retry_count: int = 0
     last_resolution_error: Optional[str] = None
     resolved_once: bool = False
@@ -97,6 +126,8 @@ class SiteProposalContext(BaseModel):
 
 
 class DockingRecommendationContext(BaseModel):
+    model_config = ConfigDict(validate_assignment=True, extra="ignore")
+
     candidate_count: int = 0
     machine_profile: dict[str, Any] = Field(default_factory=dict)
     time_budget_hours: Optional[int] = None
@@ -114,9 +145,9 @@ class DockingRecommendationContext(BaseModel):
     reason: str = ""
     display_markdown: str = ""
     strategy: str = ""
-    # phase progression: initial -> topk_selected -> awaiting_structures
-    # -> structures_ready -> editing_form -> skipped
-    phase: str = "initial"
+    # Phase progression spans recommendation, source selection, preparation,
+    # and legacy accepted/skipped persisted states.
+    phase: DockingPhase = "initial"
     accepted: bool = False
     # Paths kept for UX (e.g. show user where exports went)
     sequences_export_dir: str = ""
@@ -124,14 +155,14 @@ class DockingRecommendationContext(BaseModel):
     # Backward-compatible: still accept this field from old persisted runs.
     recommended_grid_size: list[float] = Field(default_factory=list)
 
-    model_config = {"extra": "ignore"}
-
 
 class SpecificityRecommendationContext(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     analog_names: list[str] = Field(default_factory=list)
     display_markdown: str = ""
     note: str = ""
-    phase: str = "initial"
+    phase: SpecificityPhase = "initial"
     accepted: bool = False
 
 

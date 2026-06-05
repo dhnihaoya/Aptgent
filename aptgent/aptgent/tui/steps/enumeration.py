@@ -8,6 +8,7 @@ from aptgent.tui.steps.base import StepHandler
 from aptgent.tui.steps.common import next_primary_step
 from aptgent.tui.steps.common.formatting import format_enumeration_preview
 from aptgent.tui.steps.empty_candidates import apply_empty_candidate_recovery_ui
+from aptgent.tui.steps.job_progress import JobDoneSummary, JobEvent, JobProgressTracker
 from aptgent.tui.steps.job_mixin import JobAttachMixin
 from aptgent.tui.widgets.chat_widgets import ProgressBubble
 
@@ -19,10 +20,7 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
 
     def __init__(self, screen: Any) -> None:
         super().__init__(screen)
-        self._progress_done = 0
-        self._progress_total = 0
-        self._hit_count = 0
-        self._best_probability: float | None = None
+        self._progress = JobProgressTracker()
 
     def enter(self) -> None:
         state = self.screen.app.current_state
@@ -56,47 +54,37 @@ class EnumerationHandler(JobAttachMixin, StepHandler):
             activity="Enumerating and scoring candidates...",
         )
 
-    def _on_job_event(self, evt: dict, progress: ProgressBubble) -> None:
+    def _on_job_event(self, evt: JobEvent, progress: ProgressBubble) -> None:
         etype = evt.get("type", "")
         if etype == "progress":
-            done = evt.get("done", 0)
-            total = evt.get("total", 0)
-            self._progress_done = done
-            self._progress_total = total
-            extra = evt.get("extra", {})
-            binding = extra.get("binding")
-            if binding is not None:
-                self._hit_count = max(self._hit_count, int(binding))
-            progress.set_progress(done, self._progress_info())
+            self._progress.apply_progress(evt, counter_fields=("binding",))
+            progress.set_progress(self._progress.done, self._progress_info())
         elif etype == "hit":
-            prob = evt.get("probability", 0.0)
-            self._best_probability = (
-                prob
-                if self._best_probability is None
-                else max(self._best_probability, prob)
-            )
+            self._progress.apply_probability_hit(evt)
             hit_index = self._hit_index(evt)
             if hit_index is None:
-                self._hit_count += 1
+                self._progress.increment("binding")
             else:
-                self._hit_count = max(self._hit_count, hit_index)
-            progress.set_progress(self._progress_done, self._progress_info())
+                self._progress.set_counter(
+                    "binding",
+                    max(self._progress.counter("binding"), hit_index),
+                )
+            progress.set_progress(self._progress.done, self._progress_info())
 
     def _progress_info(self) -> str:
-        parts = [f"Progress: {self._progress_done:,}/{self._progress_total:,}"]
-        parts.append(f"Hits: {self._hit_count:,}")
-        if self._best_probability is not None:
-            parts.append(f"Best P: {self._best_probability:.4f}")
-        return " | ".join(parts)
+        return self._progress.format_info(
+            counter_labels={"binding": "Hits"},
+            include_best_probability=True,
+        )
 
-    def _hit_index(self, evt: dict) -> int | None:
+    def _hit_index(self, evt: JobEvent) -> int | None:
         candidate_id = str(evt.get("candidate_id", ""))
         match = re.fullmatch(r"hit_(\d+)", candidate_id)
         if match:
             return int(match.group(1))
         return None
 
-    def _on_job_done(self, summary: dict, progress: ProgressBubble) -> None:
+    def _on_job_done(self, summary: JobDoneSummary, progress: ProgressBubble) -> None:
         state = self.reload_run_state()
 
         total = summary.get("total", 0)

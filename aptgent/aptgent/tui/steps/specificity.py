@@ -7,25 +7,23 @@ from aptgent.domain.models import SpecificityResult, TargetMolecule
 from aptgent.domain.ranking import select_top_y_by_affinity
 from aptgent.llm.skills import AnalogParseSkill, AnalogSuggestionSkill
 from aptgent.tui.steps.base import StepHandler
-from aptgent.tui.steps.common import (
-    format_specificity_recommendation_markdown,
-    next_primary_step,
-    run_llm_interaction,
-    validate_analog_suggestion_result,
-)
-from aptgent.tui.steps.common.llm_ui import capture_streaming_result
+from aptgent.tui.steps.common import next_primary_step
+from aptgent.tui.steps.job_progress import JobProgressTracker
 from aptgent.tui.steps.job_mixin import JobAttachMixin
-from aptgent.tui.widgets.chat_widgets import ProgressBubble
-from aptgent.tui.widgets.structured_input import (
-    ActionMenuPanel,
-    AnalogCheckboxPanel,
-    AnalogCustomPanel,
-)
-from aptgent.workflow.context import record_specificity_recommendation_context
+from aptgent.tui.steps.specificity_analogs import SpecificityAnalogMixin
+from aptgent.tui.steps.specificity_panels import SpecificityPanelMixin
+from aptgent.tui.steps.specificity_progress import SpecificityProgressMixin
+from aptgent.tui.widgets.structured_input import AnalogCheckboxPanel
 from aptgent.workflow.engine import step_display_number
 
 
-class SpecificityHandler(JobAttachMixin, StepHandler):
+class SpecificityHandler(
+    SpecificityAnalogMixin,
+    SpecificityPanelMixin,
+    SpecificityProgressMixin,
+    JobAttachMixin,
+    StepHandler,
+):
     """Specificity filter with detached cross-prediction job.
 
     The recommendation/edit phases stay in-process; once analogs are
@@ -38,12 +36,14 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
 
     def __init__(self, screen: Any) -> None:
         super().__init__(screen)
-        self._progress_done = 0
-        self._progress_total = 0
-        self._kept_count = 0
-        self._removed_count = 0
-        self._current_target = ""
+        self._progress = JobProgressTracker()
         self._parse_in_flight = False
+
+    def _analog_suggestion_skill(self):
+        return AnalogSuggestionSkill
+
+    def _analog_parse_skill(self):
+        return AnalogParseSkill
 
     def enter(self) -> None:
         state = self.screen.app.current_state
@@ -160,234 +160,6 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
             candidates = [c for c in candidates if c.candidate_id in selected_ids]
         return candidates
 
-    def _suggest(self) -> None:
-        self.run_worker(self._suggest_worker, activity="Suggesting analog molecules...")
-
-    def _suggest_worker(self) -> None:
-        target = self.screen.app.current_state.target_molecule
-
-        try:
-            skill = self.screen.app.runtime.create_skill(AnalogSuggestionSkill)
-            display_stream, get_captured = capture_streaming_result(
-                lambda: skill.suggest_events(target)
-            )
-
-            def structured_result() -> dict:
-                captured = get_captured()
-                if captured:
-                    return validate_analog_suggestion_result(captured)
-                raise RuntimeError("LLM structured result unavailable.")
-
-            result = run_llm_interaction(
-                self.screen,
-                display_stream=display_stream,
-                structured_call=structured_result,
-            )
-            analogs = result.get("analogs", [])
-            note = result.get("note", "")
-            analog_names = [a.get("name", "") for a in analogs if a.get("name")]
-            markdown = format_specificity_recommendation_markdown(
-                target_name=(target.resolved_name or target.input_text) if target else "",
-                analogs=analogs,
-                note=note,
-            )
-            state = self.screen.app.current_state
-            record_specificity_recommendation_context(
-                state,
-                analog_names=analog_names,
-                display_markdown=markdown,
-                note=note,
-                phase="awaiting_decision" if analog_names else "editing_custom",
-                accepted=False,
-            )
-            self.screen.app.save_state()
-            if markdown:
-                self._threadsafe(
-                    lambda md=markdown: self.screen.add_system_message(md, markdown=True)
-                )
-            if analog_names:
-                self._threadsafe(self._show_recommendation_choice_panel)
-            else:
-                self._threadsafe(
-                    self.screen.add_system_message,
-                    "No analog suggestions were returned. Enter your own analogs or skip this step.",
-                )
-                self._threadsafe(self._customize)
-            self._enable_input()
-            self._threadsafe(self._refresh_input_placeholder)
-        except Exception as exc:
-            self._threadsafe(
-                self.screen.add_system_message, f"Suggestion failed: {exc}", "error-text"
-            )
-            state = self.screen.app.current_state
-            record_specificity_recommendation_context(
-                state,
-                analog_names=[],
-                display_markdown="",
-                note="",
-                phase="editing_custom",
-                accepted=False,
-            )
-            self.screen.app.save_state()
-            self._threadsafe(self._customize)
-            self._enable_input()
-            self._threadsafe(self._refresh_input_placeholder)
-
-    def _recommended_analogs_text(self) -> str:
-        analog_names = self.screen.app.current_state.context.specificity_recommendation.analog_names
-        return ", ".join(analog_names)
-
-    def _accept_recommended(self) -> None:
-        analogs_text = self._recommended_analogs_text()
-        if not analogs_text:
-            self.screen.add_system_message(
-                "No recommended analogs are available to accept. Enter your own analogs instead.",
-                "warning-text",
-            )
-            self._customize()
-            return
-        recommendation = self.screen.app.current_state.context.specificity_recommendation
-        recommendation.accepted = True
-        self.screen.app.save_state()
-        self._run_filter(analogs_text, echo_user=False)
-
-    def _use_intake_analogs(self) -> None:
-        intake_analogs = self.screen.app.current_state.context.intake.analogs
-        if not intake_analogs:
-            self.screen.add_system_message(
-                "No analogs were provided in the initial prompt.",
-                "warning-text",
-            )
-            return
-        analogs_text = ", ".join(intake_analogs)
-        self.screen.add_user_message(f"Use initial prompt analogs: {analogs_text}")
-        recommendation = self.screen.app.current_state.context.specificity_recommendation
-        recommendation.accepted = True
-        self.screen.app.save_state()
-        self._run_filter(analogs_text, echo_user=False)
-
-    def _edit_recommended(self) -> None:
-        recommendation = self.screen.app.current_state.context.specificity_recommendation
-        if not recommendation.analog_names:
-            self.screen.add_system_message(
-                "No recommended analogs to edit. Switching to custom entry.",
-                "warning-text",
-            )
-            self._customize()
-            return
-        recommendation.phase = "editing_recommended"
-        recommendation.accepted = False
-        self.screen.app.save_state()
-        target = self.screen.app.current_state.target_molecule
-        panel = AnalogCheckboxPanel(
-            analog_names=recommendation.analog_names,
-            target_name=target.input_text if target else "",
-        )
-        self.screen.add_structured_widget(panel)
-        self.screen.set_input_enabled(True)
-        self._refresh_input_placeholder()
-
-    def _customize(self) -> None:
-        recommendation = self.screen.app.current_state.context.specificity_recommendation
-        recommendation.phase = "editing_custom"
-        recommendation.accepted = False
-        self.screen.app.save_state()
-        self.screen.clear_structured_widget()
-        self.screen.set_input_enabled(True)
-        self._refresh_input_placeholder()
-
-    def _parse_custom_analogs(self, text: str) -> None:
-        if self._parse_in_flight:
-            return
-        self._parse_in_flight = True
-        self.run_worker(
-            lambda: self._parse_custom_worker(text),
-            activity="Parsing analog request...",
-        )
-
-    def _parse_custom_worker(self, text: str) -> None:
-        try:
-            skill = self.screen.app.runtime.create_skill(AnalogParseSkill)
-            display_stream, get_captured = capture_streaming_result(
-                lambda: skill.parse_events(text)
-            )
-
-            def structured_result() -> dict:
-                captured = get_captured()
-                if captured:
-                    return captured
-                result = skill.invoke(text)
-                return result.raw if hasattr(result, "raw") else result
-
-            result = run_llm_interaction(
-                self.screen,
-                display_stream=display_stream,
-                structured_call=structured_result,
-            )
-
-            molecule_names = list(dict.fromkeys(
-                n for n in (m.strip() for m in result.get("molecule_names", [])) if n
-            ))
-            if not molecule_names:
-                self._threadsafe(
-                    self.screen.add_system_message,
-                    "Could not identify any molecule names from your request. "
-                    "Please try again with specific molecule names (e.g. 'caffeine and theobromine').",
-                    "warning-text",
-                )
-                self._threadsafe(self._return_to_custom_input)
-                return
-
-            resolved_pairs: list[tuple[str, bool]] = []
-            resolved_names: list[str] = []
-            for name in molecule_names:
-                resolved = self.screen.app.molecule_resolver.resolve(name)
-                if resolved.resolution_status == "resolved":
-                    resolved_pairs.append((name, True))
-                    resolved_names.append(name)
-                else:
-                    resolved_pairs.append((name, False))
-
-            if not resolved_names:
-                self._threadsafe(
-                    self.screen.add_system_message,
-                    f"None of the identified molecules could be resolved: "
-                    f"{', '.join(name for name, _ in resolved_pairs)}. "
-                    "Please check the names and try again.",
-                    "error-text",
-                )
-                self._threadsafe(self._return_to_custom_input)
-                return
-
-            def _confirm():
-                self._parse_in_flight = False
-                target = self.screen.app.current_state.target_molecule
-                panel = AnalogCustomPanel(
-                    target_name=target.input_text if target else "",
-                    resolved_pairs=resolved_pairs,
-                )
-                self.screen.add_structured_widget(panel)
-
-            self._threadsafe(_confirm)
-
-        except Exception as exc:
-            self._threadsafe(
-                self.screen.add_system_message,
-                f"Failed to parse request: {exc}",
-                "error-text",
-            )
-            self._threadsafe(self._return_to_custom_input)
-
-    def _return_to_custom_input(
-        self,
-        message: str = "Please try again with specific molecule names (e.g. 'caffeine and theobromine').",
-    ) -> None:
-        self._parse_in_flight = False
-        self.screen.clear_structured_widget()
-        self.screen.add_system_message(message, "warning-text")
-        self.screen.set_input_enabled(True)
-        self._refresh_input_placeholder()
-
     def _run_filter(self, analogs_text: str, *, echo_user: bool) -> None:
         if echo_user:
             self.screen.add_user_message(f"Filter with: {analogs_text}")
@@ -425,11 +197,7 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
             f"{all_targets_count} target(s) ({len(valid_analogs)} analog(s) + 1 primary)."
         )
 
-        self._progress_done = 0
-        self._progress_total = total_pairs
-        self._kept_count = 0
-        self._removed_count = 0
-        self._current_target = ""
+        self._progress.reset(total=total_pairs)
 
         progress = self._create_progress_bubble(total_pairs)
 
@@ -439,91 +207,6 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
             on_error=lambda msg: self._on_job_error(msg),
             activity="Running specificity cross-prediction...",
         )
-
-    def _create_progress_bubble(self, total: int) -> ProgressBubble:
-        progress = ProgressBubble(total, label="Specificity Cross-Prediction")
-        self.screen.add_structured_widget(progress)
-        return progress
-
-    def _on_job_event(self, evt: dict, progress: ProgressBubble) -> None:
-        etype = evt.get("type", "")
-        if etype == "progress":
-            done = int(evt.get("done", 0))
-            total = int(evt.get("total", self._progress_total))
-            self._progress_done = done
-            self._progress_total = total
-            extra = evt.get("extra", {}) or {}
-            kept = extra.get("kept")
-            removed = extra.get("removed")
-            current_target = extra.get("current_target")
-            if isinstance(kept, int):
-                self._kept_count = kept
-            if isinstance(removed, int):
-                self._removed_count = removed
-            if isinstance(current_target, str) and current_target:
-                self._current_target = current_target
-            progress.set_progress(done, self._progress_info())
-        elif etype == "hit":
-            extra = evt.get("extra", {}) or {}
-            status = extra.get("status")
-            if status == "kept":
-                self._kept_count += 1
-            elif status == "removed":
-                self._removed_count += 1
-            progress.set_progress(self._progress_done, self._progress_info())
-
-    def _progress_info(self) -> str:
-        parts = [f"Progress: {self._progress_done:,}/{self._progress_total:,}"]
-        parts.append(f"Kept: {self._kept_count:,}")
-        parts.append(f"Removed: {self._removed_count:,}")
-        if self._current_target:
-            parts.append(f"Target: {self._current_target}")
-        return " | ".join(parts)
-
-    def _on_job_done(self, summary: dict, progress: ProgressBubble) -> None:
-        state = self.reload_run_state()
-
-        kept = int(summary.get("kept", self._kept_count))
-        removed = int(summary.get("removed", self._removed_count))
-        total_candidates = int(
-            summary.get("candidates", len(self._affinity_filtered_candidates(state)))
-        )
-        cancelled = bool(summary.get("cancelled"))
-
-        finish_msg = f"{kept}/{total_candidates} kept ({removed} removed)"
-        if cancelled:
-            finish_msg += " — cancelled"
-        results_path = summary.get("results_path")
-        if results_path:
-            finish_msg += f"\nResults: {results_path}"
-        progress.finish(finish_msg)
-
-        if cancelled:
-            self.screen.add_system_message(
-                "Specificity filter was cancelled. You can re-enter the step "
-                "to resume from where it left off.",
-                "warning-text",
-            )
-            self.screen.set_input_enabled(True)
-            return
-
-        msg = f"Filter complete. {kept}/{total_candidates} candidates kept."
-        if removed > 0:
-            removed_ids = [
-                result.candidate_id
-                for result in state.specificity_results
-                if result.status == "removed"
-            ]
-            if removed_ids:
-                msg += f"\nRemoved: {', '.join(removed_ids[:10])}"
-        self.screen.add_system_message(msg)
-
-        ns = next_primary_step(Step.SPECIFICITY_FILTER)
-        if ns:
-            self.screen.advance_to_step(ns)
-
-    def _on_job_error(self, msg: str) -> None:
-        self._report_error(f"Specificity filter failed: {msg}")
 
     def _skip(self) -> None:
         state = self.screen.app.current_state
@@ -536,72 +219,3 @@ class SpecificityHandler(JobAttachMixin, StepHandler):
         ns = next_primary_step(Step.SPECIFICITY_FILTER)
         if ns:
             self.screen.advance_to_step(ns)
-
-    def _build_recommendation_choice_panel(self) -> ActionMenuPanel:
-        choices: list[tuple[str, str, str]] = []
-        intake_analogs = self.screen.app.current_state.context.intake.analogs
-        if intake_analogs:
-            choices.append(
-                (
-                    "use-intake-analogs",
-                    "Use Initial Prompt Analogs",
-                    f"Use the analogs you specified in your initial prompt: {', '.join(intake_analogs)}",
-                )
-            )
-        choices.extend(
-            [
-                (
-                    "accept-recommended-analogs",
-                    "Accept Recommendations",
-                    "Run specificity filtering immediately with the LLM-recommended analogs.",
-                ),
-                (
-                    "edit-recommended-analogs",
-                    "Partially Accept And Edit",
-                    "Open an input box prefilled with the recommended analogs so you can adjust them.",
-                ),
-                (
-                    "custom-analogs",
-                    "Reject And Customize",
-                    "Ignore the recommendations and enter your own analogs from scratch.",
-                ),
-                (
-                    "skip-specificity",
-                    "Skip This Step",
-                    "Continue without specificity filtering.",
-                ),
-            ]
-        )
-        return ActionMenuPanel(
-            Step.SPECIFICITY_FILTER,
-            "Review the recommended analogs",
-            choices,
-        )
-
-    def _show_recommendation_choice_panel(self) -> None:
-        self.screen.add_structured_widget(self._build_recommendation_choice_panel())
-
-    def _back_to_choices(self) -> None:
-        recommendation = self.screen.app.current_state.context.specificity_recommendation
-        recommendation.phase = "awaiting_decision"
-        recommendation.accepted = False
-        self.screen.app.save_state()
-        self.screen.clear_structured_widget()
-        self._show_recommendation_choice_panel()
-        self.screen.set_input_enabled(True)
-        self._refresh_input_placeholder()
-
-    def _refresh_input_placeholder(self) -> None:
-        phase = self.screen.app.current_state.context.specificity_recommendation.phase
-        if phase == "awaiting_decision":
-            self.screen.set_input_placeholder("Type 'accept', 'edit', 'custom', or 'skip'.")
-        elif phase == "editing_custom":
-            self.screen.set_input_placeholder(
-                "Describe the analogs you want (e.g. 'just caffeine'), or type 'skip'."
-            )
-        elif phase == "editing_recommended":
-            self.screen.set_input_placeholder(
-                "Use the analog input box below, or type 'skip' to skip this step."
-            )
-        else:
-            self.screen.set_input_placeholder("Preparing analog recommendations...")

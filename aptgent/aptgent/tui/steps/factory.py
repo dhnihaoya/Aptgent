@@ -35,3 +35,12 @@ def create_handler(step: Step, screen: Any) -> StepHandler:
     if cls is None:
         raise ValueError(f"No handler registered for step: {step}")
     return cls(screen)
+
+
+def detached_job_step_name(step: Step) -> str | None:
+    """Return the detached job runner step owned by a workflow step, if any."""
+    cls = _HANDLER_MAP.get(step)
+    if cls is None:
+        return None
+    job_step = getattr(cls, "JOB_STEP", "")
+    return job_step or None

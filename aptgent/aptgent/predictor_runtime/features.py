@@ -9,7 +9,6 @@ import numpy as np
 from rdkit import Chem
 from rdkit.Chem import Descriptors
 
-
 from aptgent.domain.sequence import rna_to_dna  # noqa: F401 — re-export for backward compat
 
 

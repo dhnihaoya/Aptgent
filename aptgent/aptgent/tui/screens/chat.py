@@ -10,7 +10,9 @@ from textual.screen import Screen
 from textual.widget import Widget
 
 from aptgent.domain.enums import Step
-from aptgent.tui.commands import SlashCommandRegistry, commands_for_step
+from aptgent.tui.commands import commands_for_step
+from aptgent.tui.screens.chat_commands import ChatCommandController
+from aptgent.tui.screens.chat_resume import detect_resume_target
 from aptgent.tui.screens.resume import ResumePickerScreen
 from aptgent.tui.screens.theme_picker import ThemePickerScreen
 from aptgent.tui.steps import StepHandler, create_handler
@@ -50,106 +52,8 @@ class ChatScreen(Screen):
         self._handler: StepHandler | None = None
         self._activity_bubble: ActivityBubble | None = None
         self._active_structured_widget: Widget | None = None
-        self._slash_commands = self._build_slash_commands()
-
-    def _build_slash_commands(self) -> SlashCommandRegistry:
-        registry = SlashCommandRegistry()
-        registry.register("/theme", lambda screen, _arg: screen._cmd_theme())
-        registry.register("/resume", lambda screen, arg: screen._cmd_resume(arg))
-        registry.register("/quit", lambda screen, _arg: screen._cmd_quit())
-        registry.register("/cancel", lambda screen, _arg: screen._cmd_cancel())
-        registry.register("/back", lambda screen, _arg: screen._cmd_back())
-        registry.register("/export", lambda screen, _arg: screen._cmd_final_report("export"))
-        registry.register("/finish", lambda screen, _arg: screen._cmd_final_report("finish"))
-        return registry
-
-    def _cmd_theme(self) -> bool:
-        self._open_theme_picker()
-        return True
-
-    def _cmd_resume(self, arg: str) -> bool:
-        arg = arg.strip()
-        if arg:
-            state = self.app.engine.load_run(arg)
-            if state is None:
-                self.add_system_message(f"Saved run not found: {arg}")
-                return True
-            self.resume_run(state.run_id)
-            return True
-        self._open_resume_picker()
-        return True
-
-    def _cmd_quit(self) -> bool:
-        self.app.open_quit_dialog()
-        return True
-
-    def _cmd_cancel(self) -> bool:
-        state = self.app.current_state
-        step_name = None
-        if state.current_step == Step.CANDIDATE_ENUMERATION:
-            step_name = "candidate_enumeration"
-        elif state.current_step == Step.DOCKING_RUN:
-            step_name = "docking_run"
-        elif state.current_step == Step.SPECIFICITY_FILTER:
-            step_name = "specificity_filter"
-
-        if step_name is None:
-            self.add_system_message("No detachable job is running on this step.")
-            return True
-
-        persistence = self.app.persistence
-        cmd_file = persistence.job_cmd_file(state.run_id, step_name)
-
-        try:
-            cmd_file.parent.mkdir(parents=True, exist_ok=True)
-            cmd_file.write_text("cancel")
-            self.add_system_message(
-                f"Cancel signal sent to {step_name} job. "
-                "It will stop after the current batch completes.",
-                "warning-text",
-            )
-        except OSError as exc:
-            self.add_system_message(f"Failed to send cancel: {exc}", "error-text")
-        return True
-
-    def _cmd_back(self) -> bool:
-        state = self.app.current_state
-        if state.current_step != Step.PRIMARY_SCORING:
-            self.add_system_message("Back is only available from primary scoring.")
-            return True
-
-        from aptgent.tui.steps.empty_candidates import (
-            apply_empty_candidate_recovery_ui,
-            clear_site_selection_retry_feedback,
-        )
-
-        if apply_empty_candidate_recovery_ui(self, state, rewind=True):
-            return True
-
-        clear_site_selection_retry_feedback(state)
-        state.set_mutation_sites([])
-        state.candidates = []
-        state.predictions = []
-        self.app.save_state()
-        self.add_system_message(
-            "Returning to site proposal. Existing recommendations will be reused.",
-            "warning-text",
-        )
-        self.rewind_to_step(
-            Step.SITE_PROPOSAL,
-            metadata={"reason": "user_back_from_primary_scoring"},
-        )
-        return True
-
-    def _cmd_final_report(self, action: str) -> bool:
-        if self.app.current_state.current_step != Step.FINAL_REPORT:
-            return False
-        command = f"/{action}"
-        self.add_user_message(command)
-        self.app.current_state.input_payload["user_text"] = command
-        if self._handler:
-            self._handler.handle_user_input(action)
-        return True
+        self._command_controller = ChatCommandController(self)
+        self._slash_commands = self._command_controller.build_registry()
 
     def compose(self) -> ComposeResult:
         yield self.app.progress_bar
@@ -334,7 +238,7 @@ class ChatScreen(Screen):
         self.set_input_enabled(True)
 
         state = self.app.current_state
-        target_step = self._detect_resume_target(state)
+        target_step = detect_resume_target(self, state)
         resume_step = target_step if target_step is not None else state.current_step
         if target_step is not None:
             self.add_system_message(
@@ -344,37 +248,6 @@ class ChatScreen(Screen):
         self._start_step(resume_step)
 
         self._focus_input()
-
-    def _detect_resume_target(self, state) -> Step | None:
-        """Detect which step to resume at, considering detached jobs."""
-        from aptgent.tui.steps.job_mixin import is_job_alive
-
-        persistence = self.app.persistence
-        run_id = state.run_id
-        current = state.current_step
-
-        # Check enumeration job status
-        if current in (Step.CANDIDATE_ENUMERATION, Step.PRIMARY_SCORING,
-                       Step.DOCKING_SELECTION, Step.DOCKING_RUN,
-                       Step.SPECIFICITY_FILTER, Step.SPATIAL_RANK, Step.FINAL_REPORT):
-            if is_job_alive(persistence, run_id, "candidate_enumeration"):
-                self.add_system_message("Enumeration job is still running, attaching...")
-                return Step.CANDIDATE_ENUMERATION
-
-        # Check docking job status (docking now runs before specificity)
-        if current in (Step.DOCKING_RUN, Step.SPECIFICITY_FILTER,
-                       Step.SPATIAL_RANK, Step.FINAL_REPORT):
-            if is_job_alive(persistence, run_id, "docking_run"):
-                self.add_system_message("Docking job is still running, attaching...")
-                return Step.DOCKING_RUN
-
-        # Check specificity job status
-        if current in (Step.SPECIFICITY_FILTER, Step.SPATIAL_RANK, Step.FINAL_REPORT):
-            if is_job_alive(persistence, run_id, "specificity_filter"):
-                self.add_system_message("Specificity job is still running, attaching...")
-                return Step.SPECIFICITY_FILTER
-
-        return None
 
     # -- Internal --
 
