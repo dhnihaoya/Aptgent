@@ -183,18 +183,9 @@ def validate_docking_recommendation_result(
 
     seed = _clamp_seed(llm_obj.get("recommended_seed"))
 
-    receptor_path_note = clean_text(llm_obj.get("receptor_path_note")) or (
-        "Choose how each candidate's receptor PDBQT will be prepared: "
-        "manual upload or RNAComposer auto-generation."
-    )
-    grid_center_note = clean_text(llm_obj.get("grid_center_note")) or (
-        "The docking search box auto-covers each aptamer (bbox + 4 Å padding); "
-        "no manual grid center is required."
-    )
-    reason = clean_text(llm_obj.get("reason")) or (
-        "Using Vina defaults (num_modes=9, energy_range=3.0) on a "
-        "conservative docking batch."
-    )
+    receptor_path_note = clean_text(llm_obj.get("receptor_path_note")) or ""
+    grid_center_note = clean_text(llm_obj.get("grid_center_note")) or ""
+    reason = clean_text(llm_obj.get("reason")) or ""
     return {
         "recommended_time_budget_hours": plan["recommended_time_budget_hours"],
         "recommended_top_k": top_k,
@@ -401,20 +392,24 @@ def format_docking_recommendation_markdown(
     seed_text = (
         f"{recommended_seed}" if recommended_seed is not None else "unset (Vina random)"
     )
-    return (
-        f"{section_heading('Recommended Docking Setup')}\n\n"
-        f"- Candidates available: **{candidate_count}**\n"
-        f"- Time budget: **{budget_text}**\n"
-        f"- Candidates to dock: **{recommended_top_k}**\n"
-        f"- Exhaustiveness: **{exh_text}**\n"
-        f"- Num modes: **{num_modes_text}**\n"
-        f"- Energy range: **{energy_text}**\n"
-        f"- Grid padding: **{padding_text}**\n"
-        f"- Per-ligand timeout: **{timeout_text}**\n"
-        f"- Seed: **{seed_text}**\n"
-        f"- Search box: covers the entire aptamer (bbox + padding)\n"
-        f"- Receptor prep: {receptor_path_note}\n"
-        f"- Grid center: {grid_center_note}\n"
-        f"- Machine profile: **{cpu_count} CPU(s)**, **{memory_text}** memory\n\n"
-        f"- Rationale: {reason}"
-    )
+    lines = [
+        f"{section_heading('Recommended Docking Setup')}\n\n",
+        f"- Candidates available: **{candidate_count}**\n",
+        f"- Time budget: **{budget_text}**\n",
+        f"- Candidates to dock: **{recommended_top_k}**\n",
+        f"- Exhaustiveness: **{exh_text}**\n",
+        f"- Num modes: **{num_modes_text}**\n",
+        f"- Energy range: **{energy_text}**\n",
+        f"- Grid padding: **{padding_text}**\n",
+        f"- Per-ligand timeout: **{timeout_text}**\n",
+        f"- Seed: **{seed_text}**\n",
+        f"- Search box: covers the entire aptamer (bbox + padding)\n",
+    ]
+    if receptor_path_note:
+        lines.append(f"- Receptor prep: {receptor_path_note}\n")
+    if grid_center_note:
+        lines.append(f"- Grid center: {grid_center_note}\n")
+    lines.append(f"- Machine profile: **{cpu_count} CPU(s)**, **{memory_text}** memory\n\n")
+    if reason:
+        lines.append(f"- Rationale: {reason}")
+    return "".join(lines)
