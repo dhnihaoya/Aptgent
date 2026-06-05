@@ -92,9 +92,11 @@ class DockingSelectionHandler(
             or 100
         )
 
+        current_seed = self._current_form_seed()
         self.run_worker(
             lambda: self._llm_hint_worker(
-                top_k_default, state.time_budget, user_guidance=cleaned,
+                top_k_default, state.time_budget,
+                user_guidance=cleaned, current_seed=current_seed,
             ),
             activity="Preparing an LLM docking hint...",
         )

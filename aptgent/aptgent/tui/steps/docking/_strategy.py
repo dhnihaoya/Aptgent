@@ -229,6 +229,13 @@ class _StrategyMixin:
         self.screen.app.save_state()
         self._show_source_panel()
 
+    def _current_form_seed(self) -> int | None:
+        """Snapshot the seed from the active DockingStrategyPanel, if any."""
+        widget = getattr(self.screen, "_active_structured_widget", None)
+        if isinstance(widget, DockingStrategyPanel):
+            return widget.live_params().get("seed")
+        return None
+
     def _on_llm_hint(self) -> None:
         state = self.screen.app.current_state
         time_budget = state.time_budget
@@ -238,8 +245,11 @@ class _StrategyMixin:
             or state.context.docking_recommendation.recommended_top_k
             or 100
         )
+        current_seed = self._current_form_seed()
         self.run_worker(
-            lambda: self._llm_hint_worker(top_k_default, time_budget),
+            lambda: self._llm_hint_worker(
+                top_k_default, time_budget, current_seed=current_seed,
+            ),
             activity="Preparing an LLM docking hint...",
         )
 
@@ -249,6 +259,7 @@ class _StrategyMixin:
         time_budget: int | None,
         *,
         user_guidance: str | None = None,
+        current_seed: int | None = None,
     ) -> None:
         state = self.screen.app.current_state
         candidate_count = len(state.candidates)
@@ -319,7 +330,7 @@ class _StrategyMixin:
                 "recommended_per_ligand_timeout_seconds",
                 config_timeout,
             )
-            seed = result.get("recommended_seed")
+            seed = result.get("recommended_seed") or current_seed
             recommended_time = result.get("recommended_time_budget_hours")
             reason = result.get("reason", "")
 
