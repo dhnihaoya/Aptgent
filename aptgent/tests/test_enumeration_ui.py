@@ -128,7 +128,7 @@ def test_enumeration_done_with_no_hits_after_llm_choice_sets_regeneration_feedba
     feedback = context.extra_context["site_selection_feedback"]
     assert feedback["selected_proposal_index"] == selected_index
     assert expected_guidance in feedback["guidance"]
-    assert "No binding candidates" in screen.messages[-1][0]
+    assert "No predicted binding mutations" in screen.messages[-1][0]
     assert screen.messages[-1][1] != "error-text"
 
 

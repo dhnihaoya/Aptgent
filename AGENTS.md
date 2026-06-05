@@ -66,7 +66,7 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme`、`/
 - `aptgent/aptgent/tui/screens/`：chat、welcome、quit_confirm、resume、theme_picker。
 - `aptgent/aptgent/tui/steps/`：每个 workflow step 一个模块（`intake.py`、`pdb_intake.py`、`structure.py`、`site_proposal.py`、`enumeration.py`、`scoring.py`、`specificity.py`、`docking_selection.py`（re-export shim，实现在 `docking/` 子包）、`docking_run.py`、`spatial_rank.py`、`report.py`），由 `factory.py` 分发。辅助模块：`intake_heuristics.py`（intake 输入启发式规则）、`intake_resolver.py`（intake 输入解析）、`state_reset.py`（状态重置辅助）。
 - `aptgent/aptgent/tui/steps/common/`：跨 step 共用工具（`__init__.py` 重新导出所有公共符号，保持 `from aptgent.tui.steps.common import X` 兼容）。子模块：`coercion.py`（类型转换）、`docking_plan.py`（对接参数校验）、`formatting.py`（候选排名展示格式化）、`intake_format.py`（intake 输出格式化）、`llm_ui.py`（LLM UI 辅助 + `capture_streaming_result` 流式结果捕获）、`site_proposal_validate.py`（位点方案校验）、`specificity_format.py`（特异性结果格式化）。
-- `aptgent/aptgent/tui/steps/empty_candidates.py`：空候选统一处理（`is_empty_enumeration_result`、`prepare_empty_candidate_recovery`、`clear_site_selection_retry_feedback`），被 enumeration、scoring、chat back-handler 共用。
+- `aptgent/aptgent/tui/steps/empty_candidates.py`：空候选统一处理（`is_empty_enumeration_result`、`prepare_empty_candidate_recovery`、`clear_site_selection_retry_feedback`、`apply_empty_candidate_recovery_ui`），被 enumeration、scoring、chat back-handler 共用。
 - `aptgent/aptgent/tui/steps/base.py`：`StepHandler` 基类（含 `allow_empty_input` 属性控制是否接受空输入提交、`_report_error()` 统一错误报告（线程安全：主线程直调，worker 线程走 `call_from_thread`）、`reload_run_state()` 从持久化重载并返回最新状态）。
 - `aptgent/aptgent/tui/steps/job_mixin.py`：可分离后台任务 mixin（attach/spawn detached subprocess）。
 - `aptgent/aptgent/tui/widgets/`：通用 widget（`StatusPanel`、`StepProgressBar`、`StructuredInput`、chat bubble 系列）。子包 `panels/`（`_core.py`、`_intake.py`、`_specificity.py`、`_docking.py`）和 `common.py` 提供步骤专用面板组件。
@@ -93,6 +93,8 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme`、`/
 - `aptgent/aptgent/domain/models.py`
 - `aptgent/aptgent/domain/enums.py`
 - `aptgent/aptgent/domain/text_utils.py`：文本规范化（`clean_text`：strip + 折叠内部空白）。
+- `aptgent/aptgent/domain/ranking.py`：概率直方图排名（`ProbHistogramRanker`）、通用 `competition_ranks` / `dense_ranks` 函数、`select_top_y_by_affinity`。
+- `aptgent/aptgent/domain/sequence.py`：标准序列转换（`rna_to_dna`、`dna_to_rna`）和残基→碱基映射（`NUCLEOTIDE_TO_BASE`）。adapter 层和 predictor_runtime 均从此导入，避免各处重复定义。
 
 涉及跨层数据传递时，优先复用这里的模型，不要在 UI 或 adapter 层重新发明结构。
 
@@ -153,7 +155,7 @@ LLM 输出是辅助信息，不应覆盖确定性计算结果。涉及评分、�
 
 LLM 调用日志记录到 `<run_dir>/logs/llm_calls.jsonl`，默认对用户输入做 SHA-256 脱敏（`APTGENT_LLM_REDACT=0` 关闭）。
 
-`LLMClient` 支持四种调用模式：`chat_json`（同步 JSON 请求）、`chat_json_events`（流式 SSE，逐步 yield reasoning/content 事件，最终 yield `{"type": "result", "value": parsed_json}`）、`chat_json_stream`（流式 JSON 文本）、`chat_text_stream`（纯文本流式）。流式模式内建重复循环检测（`_detect_repetition`）：当 reasoning 或 content 尾部出现重复模式时自动截断并标记，避免 LLM 退化输出无限延续。site proposal skill 已通过 `propose_events_from_context` 接入 `chat_json_events`，在生成方案时实时展示 LLM reasoning。analog_suggestion skill 已迁移到统一的 `suggest_events` 流式接口（`specificity.py:140`）。
+`LLMClient` 支持四种调用模式：`chat_json`（同步 JSON 请求）、`chat_json_events`（流式 SSE，逐步 yield reasoning/content 事件，最终 yield `{"type": "result", "value": parsed_json}`）、`chat_json_stream`（流式 JSON 文本）、`chat_text_stream`（纯文本流式）。site proposal skill 已通过 `propose_events_from_context` 接入 `chat_json_events`，在生成方案时实时展示 LLM reasoning。analog_suggestion skill 已迁移到统一的 `suggest_events` 流式接口（`specificity.py:140`）。
 
 ### Jobs 层（可分离后台任务）
 
@@ -237,7 +239,7 @@ intake step 内部包含 PDB 输入子流程（`tui/steps/pdb_intake.py`），�
 
 `EnumerationHandler`（`tui/steps/enumeration.py`）自动检测 adapter 是否有 `predict_mutation_batch` 方法来决定走加速路径还是慢速回退路径。只保留阳性命中（positives-only）写入 `scored_candidates.jsonl`。配置见 `workflow.toml` 的 `[enumeration]` 下 `sub_batch_size` 和 `progress_every`。
 
-`predict_mutation_batch()` 支持 `skip_first` 参数，用于在部分运行中断后从上次进度恢复。
+`predict_mutation_batch()` 支持 `skip_first` 参数，用于在部分运行中断后从上次进度恢复。实际的枚举进度（`done_count`）被持久化到 `scored_candidates.jsonl` 的头部元数据中；恢复时 `skip_first` 会从此元数据读取，而非从 JSONL 行数推断（因为 JSONL 只包含阳性命中，数量远少于总枚举空间）。取消或超时时，`_update_meta_done_count()` 会用最新进度更新头部。
 
 ### Enumeration 取消处理
 

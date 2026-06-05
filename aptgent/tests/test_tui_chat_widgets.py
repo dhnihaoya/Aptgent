@@ -89,9 +89,9 @@ def test_activity_bubble_animates_text_and_icon_together():
     bubble._update_render()
     bubble.finalize()
 
-    assert seen[0] == "[bold #a9bad1]run[/] [#5f6b7a]· Testing activity[/]"
-    assert seen[1] == "[bold #a9bad1]run[/] [bold #f1c15b]✦ Testing activity[/]"
-    assert seen[2] == "[bold #a9bad1]run[/] [bold #f1c15b]•[/] Testing activity"
+    assert seen[0] == "[bold #A9BAD1]run[/] [#5F6B7A]· Testing activity[/]"
+    assert seen[1] == "[bold #A9BAD1]run[/] [bold #F1C15B]✦ Testing activity[/]"
+    assert seen[2] == "[bold #A9BAD1]run[/] [bold #F1C15B]•[/] Testing activity"
 @pytest.mark.anyio
 async def test_chat_screen_tool_messages_use_distinct_bubble_class(tmp_path):
     app = make_app(tmp_path)

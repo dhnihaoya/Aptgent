@@ -23,6 +23,9 @@ class _FakeLLMClient:
     def invoke_stream(self, *args, **kwargs):
         return iter([])
 
+    def set_log_dir(self, *args, **kwargs):
+        return None
+
 
 class FakeRNAFoldAdapter:
     def fold(self, sequence: str) -> SecondaryStructure:
