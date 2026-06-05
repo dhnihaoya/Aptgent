@@ -9,6 +9,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Input, Static
 
 from aptgent.domain.enums import Step
+from aptgent.tui.widgets.chat_widgets import _render_progress_bar
 
 from ._core import StructuredActionRequested, StructuredInputSubmitted, _BaseStructuredPanel
 
@@ -495,6 +496,14 @@ class DockingManualUploadPanel(_BaseStructuredPanel):
             )
 
 
+def _bar_markup(current: int, total: int) -> str:
+    if total <= 0:
+        return ""
+    bar = _render_progress_bar(current, total)
+    pct = current / total * 100
+    return f"[bold]{bar}[/bold] {pct:.0f}%  ({current}/{total})"
+
+
 class DockingRNAComposerProgressPanel(_BaseStructuredPanel):
     """Phase 3 (auto): show RNAComposer scraping progress + cancel button."""
 
@@ -504,6 +513,10 @@ class DockingRNAComposerProgressPanel(_BaseStructuredPanel):
     }
     DockingRNAComposerProgressPanel > .panel-note {
         color: $text-muted;
+        margin-bottom: 0;
+    }
+    DockingRNAComposerProgressPanel > .progress-bar {
+        color: $primary;
         margin-bottom: 1;
     }
     DockingRNAComposerProgressPanel Horizontal {
@@ -543,9 +556,19 @@ class DockingRNAComposerProgressPanel(_BaseStructuredPanel):
             id="dock-rnacomposer-fetch-progress",
         )
         yield Static(
+            _bar_markup(self.fetched, self.total),
+            classes="progress-bar",
+            id="dock-rnacomposer-fetch-bar",
+        )
+        yield Static(
             f"Post-processing: {self.postprocessed} / {self.total} converted and minimized",
             classes="panel-note",
             id="dock-rnacomposer-post-progress",
+        )
+        yield Static(
+            _bar_markup(self.postprocessed, self.total),
+            classes="progress-bar",
+            id="dock-rnacomposer-post-bar",
         )
         with Horizontal():
             yield Button("Cancel", id="btn-rnacomposer-cancel", variant="warning")
@@ -570,11 +593,17 @@ class DockingRNAComposerProgressPanel(_BaseStructuredPanel):
             if fetching_elapsed is not None:
                 fetch_line += f" (waiting {fetching_elapsed:.0f}s)"
             self.query_one("#dock-rnacomposer-fetch-progress", Static).update(fetch_line)
+            self.query_one("#dock-rnacomposer-fetch-bar", Static).update(
+                _bar_markup(fetched, total)
+            )
 
             post_line = f"Post-processing: {postprocessed} / {total} converted and minimized"
             if postprocessing_candidate:
                 post_line += f" \u2014 current: {postprocessing_candidate}"
             self.query_one("#dock-rnacomposer-post-progress", Static).update(post_line)
+            self.query_one("#dock-rnacomposer-post-bar", Static).update(
+                _bar_markup(postprocessed, total)
+            )
         except NoMatches:
             _log.debug("Progress label missing during update", exc_info=True)
 
