@@ -73,6 +73,21 @@ THEME_PRESETS = (
         theme_name="warm-industrial",
         description="Warm instrument-like dark theme with amber and teal accents.",
     ),
+    ThemePreset(
+        label="QTY",
+        theme_name="qty",
+        description="Jurassic jungle dark theme with teal-green, fern, and volcano-red accents.",
+    ),
+    ThemePreset(
+        label="ZYX",
+        theme_name="zyx",
+        description="Cool gravel light theme with slate grays and warm wood-brown accents.",
+    ),
+    ThemePreset(
+        label="QJX",
+        theme_name="qjx",
+        description="Sunset shore dark theme with amber-orange sky and sea-teal accents.",
+    ),
 )
 
 DEFAULT_SLASH_COMMANDS = (

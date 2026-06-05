@@ -52,6 +52,9 @@ def test_theme_presets_only_expose_refresh_options():
         ("Clear Lanes", "clear-lanes"),
         ("Clean Minimal Light", "clean-minimal-light"),
         ("Warm Industrial", "warm-industrial"),
+        ("QTY", "qty"),
+        ("ZYX", "zyx"),
+        ("QJX", "qjx"),
     ]
 def test_welcome_hero_css_uses_theme_tokens():
     assert "#welcome-hero {\n        background: $panel;" in WelcomeScreen.CSS
@@ -288,4 +291,7 @@ async def test_theme_command_opens_picker_from_welcome(tmp_path):
             "clear-lanes",
             "clean-minimal-light",
             "warm-industrial",
+            "qty",
+            "zyx",
+            "qjx",
         ]
