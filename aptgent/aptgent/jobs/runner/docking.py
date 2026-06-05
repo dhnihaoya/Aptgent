@@ -169,7 +169,7 @@ def _parse_existing_output(
                     if best_affinity is None or affinity < best_affinity:
                         best_affinity = affinity
     except Exception:
-        pass
+        _log.warning("Failed to parse PDBQT output: %s", pdbqt_path, exc_info=True)
     raw_outputs: dict[str, Any] = {
         "resumed_from": str(pdbqt_path),
         "output_pdbqt": str(pdbqt_path),

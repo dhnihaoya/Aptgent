@@ -1,4 +1,4 @@
-# aptgent/aptgen/jobs/pid.py
+# aptgent/aptgent/jobs/pid.py
 """PID file management and liveness checks for detached workers.
 
 Linux-only: uses ``os.kill(pid, 0)`` for liveness check.

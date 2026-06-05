@@ -175,7 +175,10 @@ class EnsemblePredictor:
                 probs = booster.predict(dm)
                 return (probs >= 0.5).astype(int), probs
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).warning(
+                    "CUDA XGBoost prediction failed, falling back to CPU", exc_info=True,
+                )
 
         preds = model.predict(X)
         probs = model.predict_proba(X)[:, 1]

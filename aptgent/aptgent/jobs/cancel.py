@@ -10,12 +10,8 @@ from __future__ import annotations
 import logging
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from aptgent.protocol.cancel import CmdFileCancelPoller
-
-if TYPE_CHECKING:
-    pass
 
 _log = logging.getLogger(__name__)
 

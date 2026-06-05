@@ -59,8 +59,10 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
     header = read_jsonl_header(results_path)
     stored_meta = header.get("meta") if header else None
     if stored_meta and stored_meta.get("base_sequence") == seq and stored_meta.get("sites") == sites:
+        # Read actual enumeration progress from meta checkpoint.
+        skip_first = stored_meta.get("done_count", 0)
+        # Rebuild ranker from existing positive hits only.
         for entry in iter_result_lines(results_path):
-            skip_first += 1
             pred = entry.get("prediction", {})
             if pred.get("label") == 1:
                 total_binding += 1
@@ -86,10 +88,12 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
         file_handle = open(results_path, "a", encoding="utf-8")
     else:
         file_handle = open(results_path, "w", encoding="utf-8")
+        run_meta["done_count"] = 0
         file_handle.write(json.dumps({"meta": run_meta}, ensure_ascii=False) + "\n")
 
     adapter_summary: dict[str, Any] = {}
     cmd_file = persistence.job_cmd_file(state.run_id, "candidate_enumeration")
+    latest_done = skip_first
 
     with CancelContext(cmd_file) as cancel_ctx:
         cancel_event = cancel_ctx.cancel_event
@@ -99,6 +103,8 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
                 raise RuntimeError("Prediction adapter does not support predict_mutation_batch")
 
             def _on_progress(done: int, total: int, info: dict) -> None:
+                nonlocal latest_done
+                latest_done = done
                 writer.write_progress(done=done, total=total, extra={"binding": total_binding})
 
             def _on_result(result: dict) -> None:
@@ -148,6 +154,9 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
             file_handle.close()
 
     if cancel_ctx.cancelled or adapter_summary.get("cancelled"):
+        # Persist done_count into the JSONL header so the next resume
+        # knows the real enumeration progress (not just the hit count).
+        _update_meta_done_count(results_path, latest_done)
         writer.write_done(summary={"cancelled": True, "hits": total_binding})
         return
 
@@ -255,3 +264,19 @@ def _diff_mutations(original: str, mutant: str, sites: list[int]) -> list[Any]:
         if pos < len(mutant) and original[pos] != mutant[pos]:
             muts.append(Mutation(position=pos, original=original[pos], mutated=mutant[pos]))
     return muts
+
+
+def _update_meta_done_count(path: Path, done_count: int) -> None:
+    """Rewrite the JSONL header with an updated ``done_count``."""
+    try:
+        header = read_jsonl_header(path)
+        if header is None:
+            return
+        meta = header.get("meta", {})
+        meta["done_count"] = done_count
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        if lines:
+            lines[0] = json.dumps({"meta": meta}, ensure_ascii=False) + "\n"
+            path.write_text("".join(lines), encoding="utf-8")
+    except OSError:
+        _log.warning("Failed to persist done_count checkpoint", exc_info=True)

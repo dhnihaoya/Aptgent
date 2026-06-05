@@ -11,11 +11,13 @@ from aptgent.domain.models import SecondaryStructure
 
 def _find_param_file(name: str) -> str | None:
     """Locate a ViennaRNA parameter file via ``$CONDA_PREFIX`` or common paths."""
+    import sys
     candidates: list[Path] = []
     prefix = os.environ.get("CONDA_PREFIX")
     if prefix:
         candidates.append(Path(prefix) / "share" / "ViennaRNA" / name)
-    candidates.append(Path.home() / ".conda" / "envs" / "aptgent" / "share" / "ViennaRNA" / name)
+    # Try sys.prefix (works for any virtualenv/conda env name)
+    candidates.append(Path(sys.prefix) / "share" / "ViennaRNA" / name)
     for c in candidates:
         if c.is_file():
             return str(c)

@@ -30,7 +30,7 @@ def _write_heartbeat_loop(writer: EventWriter, stop: threading.Event) -> None:
             try:
                 writer.write_heartbeat()
             except Exception:
-                pass
+                _log.warning("Heartbeat write failed", exc_info=True)
 
 
 def _run_with_heartbeat(
@@ -87,7 +87,7 @@ def _run_with_heartbeat(
         try:
             writer.write_error(message=str(exc))
         except Exception:
-            pass
+            _log.warning("Failed to write error event", exc_info=True)
         if state is not None:
             try:
                 engine = WorkflowEngine(persistence)

@@ -338,13 +338,16 @@ class EnsembleAdapter:
                     if "total" in obj:
                         summary["total"] = obj["total"]
 
-            rc, stderr_output, _timed_out = self._run_streaming_subprocess(
+            rc, stderr_output, timed_out = self._run_streaming_subprocess(
                 cmd,
                 on_line=_on_line,
                 cancel_event=cancel_event,
                 timeout_seconds=timeout_seconds,
             )
 
+            if timed_out:
+                summary["cancelled"] = True
+                summary["timed_out"] = True
             if cancel_event is not None and cancel_event.is_set():
                 summary["cancelled"] = True
 
