@@ -42,7 +42,7 @@ class _BaseStructuredPanel(Vertical):
 
     DEFAULT_CSS = """
     _BaseStructuredPanel {
-        background: $surface-darken-2;
+        background: $panel;
         border: round $primary;
         padding: 1 2;
         margin: 1 0;
