@@ -10,6 +10,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.events import Key
 from textual.message import Message
 from textual.widgets import Button, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
@@ -445,6 +446,25 @@ class ChatInput(TextArea):
     def action_submit(self) -> None:
         self.post_message(self.Submitted())
 
+    def _on_key(self, event: Key) -> None:
+        if event.key in ("up", "down"):
+            try:
+                parent = self.query_ancestor(InputBar)
+            except NoMatches:
+                return
+            if parent.command_palette_open():
+                event.stop()
+                event.prevent_default()
+                try:
+                    option_list = parent.query_one("#command-list", OptionList)
+                except NoMatches:
+                    return
+                if event.key == "down":
+                    option_list.action_cursor_down()
+                else:
+                    option_list.action_cursor_up()
+            return
+
 
 class InputBar(Vertical):
     """Bottom input bar with text field and send button."""
@@ -581,7 +601,15 @@ class InputBar(Vertical):
                 self.clear_input()
             return
         if self.command_palette_open() and text.startswith("/") and self._filtered_commands:
-            self._submit_command(self._filtered_commands[0].name)
+            try:
+                option_list = self.query_one("#command-list", OptionList)
+                idx = option_list.highlighted
+                if idx is not None and idx < len(self._filtered_commands):
+                    self._submit_command(self._filtered_commands[idx].name)
+                else:
+                    self._submit_command(self._filtered_commands[0].name)
+            except NoMatches:
+                self._submit_command(self._filtered_commands[0].name)
             return
         self.close_command_palette()
         if text:
