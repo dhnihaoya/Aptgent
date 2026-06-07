@@ -438,3 +438,39 @@ aptgent run-job <run_id> <step>
 Before pushing to remote, always review and update CLAUDE.md and AGENTS.md to ensure they reflect the current codebase state (directory layout, entry points, workflow steps, new features, config changes).
 
 如果文档与代码冲突，以代码为准，并在修改代码后同步更新此文件。
+
+## Cursor Cloud specific instructions
+
+### Conda 环境
+
+Cloud VM 使用 Miniconda（`~/miniconda3`）和 `aptgent` conda 环境（由 `aptgent/environment.yml` 创建）。**每次打开 shell 后先激活：**
+
+```bash
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate aptgent
+```
+
+所有 `aptgent`、`pytest`、`RNAfold`、`vina` 命令均应在激活后的 shell 中运行。工作目录通常为 `/workspace/aptgent`（`environment.yml` 与 `pyproject.toml` 所在目录）。
+
+### 验证命令
+
+| 目的 | 命令 |
+|---|---|
+| 环境诊断 | `aptgent doctor`（缺 `GLM_API_KEY` 时 LLM 检查为 warning，其余工具应 OK） |
+| 测试 | `pytest`（见下方已知问题） |
+| 启动 TUI | `aptgent` 或 `python -m aptgent`（需真实终端，非 dev server） |
+| 预测器冒烟 | `python -m aptgent.predictor_runtime.runner predict -i input.csv -o out.csv` |
+
+仓库**未配置** ruff/mypy/pre-commit；验证以 `pytest` + `aptgent doctor` 为准。
+
+### LLM 与完整交互流程
+
+完整 intake / site proposal 等步骤需要 `GLM_API_KEY` 或项目根目录的 `aptgent.local.toml`（见 `aptgent.local.toml.example`）。无密钥时 TUI 欢迎页与确定性步骤（RNAfold、predictor 子进程）仍可验证；`aptgent doctor` 会以非零退出码提示 LLM 未配置。
+
+### 已知测试问题
+
+`tests/test_workflow_engine.py` 从 `aptgent.workflow.engine` 导入 `_STEP_ORDER`，但该符号已移至 `aptgent/tui/widgets/common.py`，会导致**单个测试文件收集失败**。临时绕过：`pytest --ignore=tests/test_workflow_engine.py`（其余 414+ 项应通过）。
+
+### TUI 自动化演示
+
+Textual 的 `app.run_test()` 可在无显示服务器时驱动 UI（见 `aptgent/tests/test_tui_app_navigation.py`）。headless 截图可用 `app.save_screenshot(path)`。
