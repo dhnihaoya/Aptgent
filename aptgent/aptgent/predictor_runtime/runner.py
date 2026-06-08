@@ -135,12 +135,15 @@ def cmd_mutation_batch(args: argparse.Namespace) -> int:
         emitter.emit({"type": "progress", "done": done, "total": total})
 
     def _on_result(result: dict) -> None:
-        emitter.emit({
+        hit = {
             "type": "hit",
             "sequence": result["sequence"],
             "mean_probability": result["mean_probability"],
             "model_probabilities": result["model_probabilities"],
-        })
+        }
+        if "rank_probabilities" in result:
+            hit["rank_probabilities"] = result["rank_probabilities"]
+        emitter.emit(hit)
 
     total = 4 ** len(sites)
     hits = 0

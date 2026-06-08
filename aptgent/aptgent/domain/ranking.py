@@ -1,46 +1,48 @@
 """Memory-bounded cumulative ranking via probability histograms.
 
-Each ensemble model produces probabilities quantized to 6 decimal places
-(`round(p, 6)`).  A 10^6-bucket histogram per model captures the full
-distribution with zero loss, enabling exact dense ranks without
-storing the full N×9 matrix in memory.
+Maintains per-model counts keyed by exact float probability values.
+Dense rank = (number of distinct probability values strictly greater) + 1.
 
-Memory: ``num_models × 10^6 × 8 B`` (~72 MB for 9 models), independent of
-the number of candidates.
+Memory scales with the number of distinct probability values per model,
+not the number of candidates.  For tree-based ensemble models the number
+of distinct outputs is bounded by the number of leaf nodes, typically
+orders of magnitude smaller than the candidate count.
 """
 from __future__ import annotations
+
+from collections import defaultdict
 
 import numpy as np
 
 
 class ProbHistogramRanker:
-    """Maintains per-model probability histograms and computes rank-sums.
+    """Maintains per-model probability counts and computes rank-sums.
 
     Usage::
 
         ranker = ProbHistogramRanker(num_models=9)
         for candidate in stream:
-            ranker.add(candidate.model_probabilities)
+            ranker.add(candidate.rank_probabilities)
         ranker.finalize()
-        rs = ranker.rank_sum(candidate.model_probabilities)
+        rs = ranker.rank_sum(candidate.rank_probabilities)
     """
 
-    def __init__(self, num_models: int, bins: int = 1_000_000) -> None:
+    def __init__(self, num_models: int) -> None:
         self._num_models = num_models
-        self._bins = bins
-        # One histogram per model (int64 to avoid overflow at ~10^9 candidates).
-        self._histograms = np.zeros((num_models, bins), dtype=np.int64)
+        self._counts: list[dict[float, int]] = [
+            defaultdict(int) for _ in range(num_models)
+        ]
         self._finalized = False
-        # greater_counts[m][b] = number of candidates with prob > b/bins in model m.
-        # distinct_greater[m][b] = number of distinct probability values strictly > b/bins in model m.
-        self._distinct_greater: np.ndarray | None = None
+        # _distinct_greater[m][p] = number of distinct probability values
+        # strictly greater than p in model m.
+        self._distinct_greater: list[dict[float, int]] | None = None
 
     @property
     def num_models(self) -> int:
         return self._num_models
 
     def add(self, model_probs: list[float] | tuple[float, ...]) -> None:
-        """Increment histograms for one candidate's model probabilities."""
+        """Increment counts for one candidate's model probabilities."""
         if self._finalized:
             raise RuntimeError("Cannot add samples after finalize()")
         if len(model_probs) != self._num_models:
@@ -48,19 +50,19 @@ class ProbHistogramRanker:
                 f"Expected {self._num_models} probabilities, got {len(model_probs)}"
             )
         for m, p in enumerate(model_probs):
-            idx = min(int(round(p, 6) * self._bins), self._bins - 1)
-            self._histograms[m, idx] += 1
+            self._counts[m][p] += 1
 
     def finalize(self) -> None:
-        """Compute suffix sums of distinct occupied bins for all models."""
+        """Build lookup tables for dense rank computation."""
         if self._finalized:
             return
-        # Mark bins that have at least one candidate (distinct probability values).
-        distinct_mask = (self._histograms > 0).astype(np.int64)
-        # Reverse cumulative sum of distinct bins.
-        self._distinct_greater = np.cumsum(distinct_mask[:, ::-1], axis=1)[:, ::-1]
-        # Exclude the bin itself (strictly greater).
-        self._distinct_greater -= distinct_mask
+        self._distinct_greater = []
+        for m in range(self._num_models):
+            sorted_vals = sorted(self._counts[m].keys(), reverse=True)
+            dg: dict[float, int] = {}
+            for i, v in enumerate(sorted_vals):
+                dg[v] = i
+            self._distinct_greater.append(dg)
         self._finalized = True
 
     def dense_rank(self, model_probs: list[float] | tuple[float, ...]) -> list[int]:
@@ -78,9 +80,7 @@ class ProbHistogramRanker:
             )
         ranks = []
         for m, p in enumerate(model_probs):
-            idx = min(int(round(p, 6) * self._bins), self._bins - 1)
-            distinct_greater = int(self._distinct_greater[m, idx])
-            ranks.append(distinct_greater + 1)
+            ranks.append(self._distinct_greater[m][p] + 1)
         return ranks
 
     def rank_sum(self, model_probs: list[float] | tuple[float, ...]) -> int:

@@ -69,7 +69,7 @@ class ScoringHandler(StepHandler):
             state.predictions = results
             self.screen.app.save_state()
 
-            ens_preds = [p for p in results if p.model_name == "ensemble"]
+            ens_preds = [p for p in results if p.model_name == "ensemble" and p.label == 1]
 
             # Collect per-model probabilities for rank_sum computation.
             per_candidate_probs: list[list[float]] = []
@@ -94,10 +94,16 @@ class ScoringHandler(StepHandler):
 
             sorted_preds = sorted(ens_preds, key=_sort_key)
 
-            # Assign cumulative_rank (1-based position by rank_sum order).
-            for rank_idx, pred in enumerate(sorted_preds, start=1):
+            # Assign cumulative_rank using dense ranking on rank_sum.
+            prev_rs: int | None = None
+            cumulative_rank = 0
+            for pred in sorted_preds:
                 if "rank_sum" in pred.raw_outputs:
-                    pred.raw_outputs["cumulative_rank"] = rank_idx
+                    rs = pred.raw_outputs["rank_sum"]
+                    if prev_rs is None or rs != prev_rs:
+                        cumulative_rank += 1
+                        prev_rs = rs
+                    pred.raw_outputs["cumulative_rank"] = cumulative_rank
 
             self.screen.app.save_state()
 

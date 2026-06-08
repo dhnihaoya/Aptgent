@@ -52,6 +52,7 @@ class FakePopen:
                     "sequence": "ATGCTAGC",
                     "mean_probability": 0.95,
                     "model_probabilities": [0.92, 0.98],
+                    "rank_probabilities": [0.9200000001, 0.9800000001],
                 }
             ),
             json.dumps({"type": "progress", "done": 256, "total": 256}),

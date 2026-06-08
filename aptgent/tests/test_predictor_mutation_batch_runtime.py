@@ -55,3 +55,5 @@ def test_predict_mutation_batch_filters_to_strict_ensemble_hits(monkeypatch):
     assert [item["sequence"] for item in results] == ["AG"]
     assert results[0]["ensemble_label"] == 1
     assert results[0]["mean_probability"] == pytest.approx(0.85)
+    assert results[0]["model_probabilities"] == [0.9, 0.8]
+    assert results[0]["rank_probabilities"] == [0.9, 0.8]

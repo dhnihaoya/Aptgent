@@ -58,12 +58,11 @@ class TestProbHistogramRanker:
         assert ranker.rank_sum([0.7, 0.7, 0.9]) == 6
 
     def test_rank_sum_matches_brute_force(self):
-        """Verify histogram ranks match brute-force argsort-based dense ranks."""
+        """Verify ranker ranks match brute-force argsort-based dense ranks."""
         rng = np.random.RandomState(42)
         n_candidates = 500
         num_models = 9
         probs = rng.uniform(0.0, 1.0, (n_candidates, num_models))
-        probs = np.round(probs, 6)  # match quantization
 
         ranker = ProbHistogramRanker(num_models=num_models)
         for i in range(n_candidates):
@@ -88,9 +87,9 @@ class TestProbHistogramRanker:
                 i = j
 
             for c in range(n_candidates):
-                hist_rank = ranker.dense_rank(probs[c].tolist())[m]
-                assert hist_rank == ranks[c], (
-                    f"Model {m}, candidate {c}: hist_rank={hist_rank}, brute_force={ranks[c]}"
+                dense_rank = ranker.dense_rank(probs[c].tolist())[m]
+                assert dense_rank == ranks[c], (
+                    f"Model {m}, candidate {c}: dense_rank={dense_rank}, brute_force={ranks[c]}"
                 )
 
     def test_rank_sum_ordering_differs_from_mean_prob(self):
@@ -136,14 +135,15 @@ class TestProbHistogramRanker:
         with pytest.raises(ValueError, match="Expected 3"):
             ranker.add([0.5, 0.6])
 
-    def test_quantized_probabilities_exact_bins(self):
-        """Probabilities rounded to 6 decimal places map to exact bins."""
+    def test_close_probabilities_are_not_quantized(self):
+        """Full-precision probabilities that display the same still rank separately."""
         ranker = ProbHistogramRanker(num_models=1)
-        ranker.add([0.123456])
-        ranker.add([0.123457])  # adjacent bin
+        values = [[0.90000049], [0.90000041], [0.90000039], [0.89999951]]
+        for value in values:
+            ranker.add(value)
         ranker.finalize()
-        assert ranker.dense_rank([0.123457]) == [1]
-        assert ranker.dense_rank([0.123456]) == [2]
+        assert [round(value[0], 6) for value in values] == [0.9, 0.9, 0.9, 0.9]
+        assert [ranker.rank_sum(value) for value in values] == [1, 2, 3, 4]
 
     def test_zero_probabilities(self):
         ranker = ProbHistogramRanker(num_models=2)
@@ -190,7 +190,6 @@ class TestRankSumsFromModelProbs:
         n_candidates = 200
         num_models = 9
         probs = rng.uniform(0.0, 1.0, (n_candidates, num_models))
-        probs = np.round(probs, 6)
 
         ranker = ProbHistogramRanker(num_models=num_models)
         for i in range(n_candidates):

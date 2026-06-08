@@ -50,7 +50,7 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
     artifact_dir.mkdir(parents=True, exist_ok=True)
     results_path = artifact_dir / "scored_candidates.jsonl"
 
-    # --- Resume: rebuild histograms from existing results ---
+    # --- Resume: rebuild ranker from existing results ---
     skip_first = 0
     total_binding = 0
     ranker = ProbHistogramRanker(num_models=num_models)
@@ -61,14 +61,14 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
     if stored_meta and stored_meta.get("base_sequence") == seq and stored_meta.get("sites") == sites:
         # Read actual enumeration progress from meta checkpoint.
         skip_first = stored_meta.get("done_count", 0)
-        # Rebuild ranker from existing positive hits only.
+        # Rebuild ranker from existing positive hits.
         for entry in iter_result_lines(results_path):
             pred = entry.get("prediction", {})
             if pred.get("label") == 1:
                 total_binding += 1
-                model_probs = pred.get("model_probabilities", [])
-                if len(model_probs) == num_models:
-                    ranker.add(model_probs)
+                rank_probs = pred.get("rank_probabilities") or pred.get("model_probabilities", [])
+                if len(rank_probs) == num_models:
+                    ranker.add(rank_probs)
 
     if skip_first >= total_space:
         writer.write_progress(done=total_space, total=total_space, extra={"binding": total_binding})
@@ -113,18 +113,20 @@ def _run_enumeration(writer: EventWriter, state: Any, persistence: Persistence) 
 
                 prob = result.get("probability", 0.0)
                 model_probs = result.get("model_probabilities", [])
+                rank_probs = result.get("rank_probabilities") or model_probs
                 entry = {
                     "candidate": {"sequence": result["sequence"]},
                     "prediction": {
                         "label": 1,
                         "probability": prob,
                         "model_probabilities": model_probs,
+                        "rank_probabilities": rank_probs,
                     },
                 }
                 file_handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-                if len(model_probs) == num_models:
-                    ranker.add(model_probs)
+                if len(rank_probs) == num_models:
+                    ranker.add(rank_probs)
 
                 if total_binding <= 20 or total_binding % 200 == 0:
                     writer.write_hit(
@@ -186,9 +188,9 @@ def _finalize_enumeration(
     ranker.finalize()
 
     # Rescan jsonl to compute rank_sum for each candidate and keep top-K.
-    # Max-heap by rank_sum (negate for max-heap via heapq min-heap).
-    # Tiebreak: average probability descending (negate for consistent ordering).
-    top_heap: list[tuple[int, float, str, list[float]]] = []  # (rank_sum, -avg_prob, seq, model_probs)
+    # Max-heap via negation: root = largest -rs = smallest rs (worst kept item).
+    # Tiebreak: average display probability descending.
+    top_heap: list[tuple[int, float, str, list[float]]] = []
     skipped_count = 0
 
     for entry in iter_result_lines(results_path):
@@ -199,26 +201,33 @@ def _finalize_enumeration(
         if len(model_probs) != num_models:
             skipped_count += 1
             continue
+        rank_probs = pred.get("rank_probabilities") or model_probs
+        if len(rank_probs) != num_models:
+            rank_probs = model_probs
         candidate_seq = entry["candidate"]["sequence"]
-        rs = ranker.rank_sum(model_probs)
+        rs = ranker.rank_sum(rank_probs)
         avg_prob = sum(model_probs) / num_models
 
-        item = (rs, -avg_prob, candidate_seq, model_probs)
+        item = (-rs, avg_prob, candidate_seq, model_probs)
         if len(top_heap) < top_k_keep:
             heapq.heappush(top_heap, item)
-        elif item < top_heap[0]:
+        elif item > top_heap[0]:
             heapq.heapreplace(top_heap, item)
 
     # Sort ascending by rank_sum, then descending by average probability.
-    top_heap.sort()
+    top_heap.sort(key=lambda t: (-t[0], -t[1]))
 
     top_candidates: list[CandidateSequence] = []
     top_predictions: list[PredictionResult] = []
 
-    for rank, (rs, neg_avg, candidate_seq, model_probs) in enumerate(top_heap):
-        avg_prob = -neg_avg
+    prev_rs: int | None = None
+    cumulative_rank = 0
+    for rank, (neg_rs, avg_prob, candidate_seq, model_probs) in enumerate(top_heap):
+        rs = -neg_rs
         muts = _diff_mutations(seq, candidate_seq, sites)
-        cumulative_rank = rank + 1
+        if prev_rs is None or rs != prev_rs:
+            cumulative_rank += 1
+            prev_rs = rs
         cand = CandidateSequence(
             sequence=candidate_seq,
             mutations=muts,

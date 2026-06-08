@@ -281,7 +281,9 @@ class EnsemblePredictor:
 
         from aptgent.predictor_runtime.features import (
             _ENCODE_TABLE,
+            assemble_features_from_cache,
             build_feature_matrix,
+            build_kmer_cache,
             molecular_descriptors,
             rna_to_dna,
         )
@@ -308,6 +310,7 @@ class EnsemblePredictor:
         # Pre-compute molecular descriptors once
         _check_cancelled()
         desc = molecular_descriptors(smiles)
+        desc_arr = np.nan_to_num(np.asarray(desc, dtype=np.float64), nan=0.0)
 
         # Collect per-model configs
         model_configs = []
@@ -315,6 +318,9 @@ class EnsemblePredictor:
             if mer is None or mer not in MER_K_MAP:
                 continue
             model_configs.append((model, mer, fname, MER_K_MAP[mer]))
+
+        # Collect unique k values across all models for k-mer cache
+        all_k_values = sorted({k for _, _, _, kl in model_configs for k in kl})
 
         # Calibrate: determine optimal model order via small sample
         calib_seqs = []
@@ -353,6 +359,11 @@ class EnsemblePredictor:
             encoded_mutants = _ENCODE_TABLE[mutant_bytes]
             B = encoded_mutants.shape[0]
 
+            # Pre-compute all k-mer features once for the whole sub-batch.
+            # Each model extracts its needed columns; cascade filtering only
+            # slices rows — no redundant k-mer index / bincount work.
+            kmer_cache = build_kmer_cache(encoded_mutants, all_k_values)
+
             surviving = np.arange(B)
             all_model_probs = np.zeros((B, len(ordered_models)), dtype=np.float64)
 
@@ -361,7 +372,9 @@ class EnsemblePredictor:
                 if len(surviving) == 0:
                     break
 
-                X = build_feature_matrix(encoded_mutants[surviving], desc, k_list)
+                X = assemble_features_from_cache(
+                    kmer_cache, desc_arr, k_list, surviving,
+                )
                 preds, probs = self._predict_batch(model, X)
 
                 all_model_probs[surviving, m_idx] = probs
@@ -384,6 +397,7 @@ class EnsemblePredictor:
                     "mean_probability": round(mean_prob, 6),
                     "ensemble_label": 1,
                     "model_probabilities": [round(float(p), 6) for p in probs],
+                    "rank_probabilities": [float(p) for p in probs],
                 }
                 if result_callback:
                     result_callback(result)

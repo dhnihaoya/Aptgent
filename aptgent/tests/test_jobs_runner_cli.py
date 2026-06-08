@@ -342,6 +342,67 @@ def test_enumeration_finalize_rank_sum_ordering_differs_from_mean_prob(tmp_path,
     assert [round(p.probability, 3) for p in saved.predictions] == [0.633, 0.5, 0.5]
 
 
+def test_enumeration_finalize_uses_rank_probabilities_for_dense_rank(tmp_path, monkeypatch):
+    """Display probabilities may tie after rounding, but rank probabilities must not."""
+    results = [
+        {
+            "sequence": "AG",
+            "probability": 0.9,
+            "model_probabilities": [0.9],
+            "rank_probabilities": [0.90000041],
+        },
+        {
+            "sequence": "TG",
+            "probability": 0.9,
+            "model_probabilities": [0.9],
+            "rank_probabilities": [0.90000049],
+        },
+        {
+            "sequence": "GG",
+            "probability": 0.9,
+            "model_probabilities": [0.9],
+            "rank_probabilities": [0.89999951],
+        },
+    ]
+    adapter = _FakeMultiModelAdapter(results)
+
+    persistence = Persistence(runs_dir=tmp_path)
+    state = persistence.init_run("rank_precision_test")
+    state.current_step = Step.CANDIDATE_ENUMERATION
+    state.input_payload["initial_sequence"] = "AA"
+    state.target_molecule = TargetMolecule(
+        input_text="test",
+        smiles="C",
+        resolution_status="resolved",
+    )
+    state.confirmed_mutation_sites = [1]
+    persistence.save(state)
+
+    monkeypatch.setattr("aptgent.jobs.runner.enumeration.load_config", lambda: _multi_model_config(tmp_path, num_models=1))
+    monkeypatch.setattr(
+        "aptgent.bootstrap.container.create_prediction_adapter",
+        lambda _tools_config: adapter,
+    )
+
+    events_path = persistence.job_events_file(state.run_id, "candidate_enumeration")
+    writer = EventWriter(events_path)
+    try:
+        _run_enumeration(writer, state, persistence)
+    finally:
+        writer.close()
+
+    saved = persistence.load(state.run_id)
+
+    assert [c.sequence for c in saved.candidates] == ["TG", "AG", "GG"]
+    assert [p.raw_outputs["rank_sum"] for p in saved.predictions] == [1, 2, 3]
+    assert [p.raw_outputs["cumulative_rank"] for p in saved.predictions] == [1, 2, 3]
+    assert [p.raw_outputs["model_probabilities"] for p in saved.predictions] == [
+        [0.9],
+        [0.9],
+        [0.9],
+    ]
+
+
 def test_enumeration_finalize_skips_mismatched_model_count(tmp_path, monkeypatch):
     """Candidates with wrong model_probabilities length are skipped."""
     results = [

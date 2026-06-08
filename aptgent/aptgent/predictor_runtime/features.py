@@ -191,3 +191,88 @@ def build_feature_matrix(
     desc_matrix = np.tile(desc_arr, (N, 1))
     result = np.hstack([kmer_matrix, desc_matrix])
     return np.nan_to_num(result, nan=0.0)
+
+
+# ---------------------------------------------------------------------------
+# Cached k-mer computation for mutation enumeration cascade
+# ---------------------------------------------------------------------------
+
+def build_kmer_cache(
+    encoded: np.ndarray,
+    k_values: list[int],
+) -> dict[int, np.ndarray]:
+    """Pre-compute normalized k-mer count matrices for each k value.
+
+    *encoded* is an ``(N, L)`` integer array with values in ``{0,1,2,3}``.
+    Returns ``{k: ndarray(N, 4**k)}`` with frequency-normalized counts.
+
+    Computing all k-mer sizes once and reusing across models avoids the
+    redundant k-mer index / ``bincount`` work that occurs when each model
+    independently calls :func:`build_feature_matrix`.
+    """
+    N = encoded.shape[0]
+    L = encoded.shape[1]
+    cache: dict[int, np.ndarray] = {}
+
+    for k in k_values:
+        dim = 4 ** k
+        n_kmers = L - k + 1
+        if n_kmers <= 0:
+            cache[k] = np.zeros((N, dim), dtype=np.float64)
+            continue
+
+        valid = np.ones((N, n_kmers), dtype=bool)
+        for i in range(k):
+            valid &= encoded[:, i : i + n_kmers] >= 0
+
+        indices = np.zeros((N, n_kmers), dtype=np.int32)
+        for i in range(k):
+            indices = indices * 4 + np.where(valid, encoded[:, i : i + n_kmers], 0)
+
+        offsets = np.arange(N, dtype=np.int32)[:, None] * dim
+        flat = (indices + offsets).ravel()
+        weights = valid.ravel().astype(np.float64)
+        counts = (
+            np.bincount(flat, weights=weights, minlength=N * dim)
+            .reshape(N, dim)
+            .astype(np.float64)
+        )
+        counts /= n_kmers
+        cache[k] = counts
+
+    return cache
+
+
+def assemble_features_from_cache(
+    kmer_cache: dict[int, np.ndarray],
+    desc_arr: np.ndarray,
+    k_list: list[int],
+    row_indices: np.ndarray | None = None,
+) -> np.ndarray:
+    """Build a feature matrix from a pre-computed k-mer cache.
+
+    Selects the requested k-mer columns from *kmer_cache*, optionally slices
+    only *row_indices* (for cascade-filtered survivors), and tiles the
+    descriptor vector.  Equivalent to :func:`build_feature_matrix` but skips
+    redundant k-mer index computation.
+
+    Uses pre-allocated output and broadcasting instead of ``np.hstack`` /
+    ``np.tile`` to minimise memory copies.
+    """
+    if row_indices is not None:
+        kmer_parts = [kmer_cache[k][row_indices] for k in k_list]
+    else:
+        kmer_parts = [kmer_cache[k] for k in k_list]
+
+    N = kmer_parts[0].shape[0]
+    kmer_dim = sum(p.shape[1] for p in kmer_parts)
+    desc_dim = len(desc_arr)
+    out = np.empty((N, kmer_dim + desc_dim), dtype=np.float64)
+
+    col = 0
+    for part in kmer_parts:
+        d = part.shape[1]
+        out[:, col : col + d] = part
+        col += d
+    out[:, col:] = desc_arr  # broadcasting fills all rows
+    return out

@@ -35,9 +35,9 @@ Emitted at intervals determined by `--progress-every`.
 
 ### hit
 ```json
-{"type": "hit", "sequence": "ATGCTAGC", "mean_probability": 0.93, "model_probabilities": [0.92, 0.94, ...]}
+{"type": "hit", "sequence": "ATGCTAGC", "mean_probability": 0.93, "model_probabilities": [0.92, 0.94, ...], "rank_probabilities": [0.9200000001, 0.9400000001, ...]}
 ```
-Emitted for each positive hit (all 9 models predict binding).
+Emitted for each positive hit (all 9 models predict binding). `model_probabilities` are rounded display values; `rank_probabilities` preserve full precision for per-model dense-rank ordering.
 
 ### done
 ```json

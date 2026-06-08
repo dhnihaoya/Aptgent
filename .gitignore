@@ -36,11 +36,13 @@ aptgent.local.toml
 
 # Claude Code / local tools
 .claude/
+.codex/
 .superpowers/
 docs/
 
 # Local scratch / export notes
 glm-export-*.md
+finalcheck/
 plan
 *.jpg
 *.png

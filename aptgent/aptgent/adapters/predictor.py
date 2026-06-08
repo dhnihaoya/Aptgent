@@ -420,12 +420,15 @@ class EnsembleAdapter:
             if msg_type == "progress" and progress_callback:
                 progress_callback(obj["done"], obj["total"], {})
             elif msg_type == "hit" and result_callback:
-                result_callback({
+                hit = {
                     "sequence": obj["sequence"],
                     "ensemble_label": 1,
                     "probability": obj["mean_probability"],
                     "model_probabilities": obj.get("model_probabilities", []),
-                })
+                }
+                if "rank_probabilities" in obj:
+                    hit["rank_probabilities"] = obj["rank_probabilities"]
+                result_callback(hit)
             elif msg_type == "done":
                 summary["total"] = obj.get("total", 0)
                 summary["hits"] = obj.get("hits", 0)

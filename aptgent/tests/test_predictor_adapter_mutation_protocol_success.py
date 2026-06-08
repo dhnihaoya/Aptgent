@@ -39,6 +39,8 @@ def test_adapter_predict_mutation_batch_parses_protocol():
     assert hit["sequence"] == "ATGCTAGC"
     assert hit["ensemble_label"] == 1
     assert abs(hit["probability"] - 0.95) < 1e-6
+    assert hit["model_probabilities"] == [0.92, 0.98]
+    assert hit["rank_probabilities"] == [0.9200000001, 0.9800000001]
 
     assert summary["total"] == 256
     assert summary["hits"] == 1
