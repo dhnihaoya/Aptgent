@@ -379,7 +379,10 @@ async def test_rnacomposer_pipeline_partial_failure(tmp_path):
         plan = app.current_state.docking_plan
         assert plan is not None
         assert set(plan.receptor_paths.keys()) == {"cand-0", "cand-2"}
-        assert len(rna.calls) == 3
+        # cand-0 and cand-2 succeed on the first attempt (1 call each); cand-1
+        # always fails and is retried once (2 calls) to absorb transient
+        # RNAComposer server flakiness, so 4 total fetch attempts.
+        assert len(rna.calls) == 4
 
 
 @pytest.mark.anyio

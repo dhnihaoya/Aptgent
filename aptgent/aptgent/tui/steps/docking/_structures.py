@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import time
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,52 @@ from ._helpers import (
 
 class _StructuresMixin:
     """Phase 3: manual upload or RNAComposer auto-mode."""
+
+    # RNAComposer is a public scraper whose individual jobs fail intermittently
+    # (server load / one-off 5xx / slow queue). A second attempt absorbs most
+    # transient hiccups so a single failure does not permanently drop a
+    # candidate. Each job already spends minutes polling, so an immediate
+    # retry adds negligible extra load; the delay stays at 0 by default.
+    _RNACOMPOSER_RETRY_ATTEMPTS = 2
+    _RNACOMPOSER_RETRY_DELAY_SECONDS = 0.0
+
+    def _predict_rnacomposer_with_retry(
+        self,
+        adapter: Any,
+        rna_seq: str,
+        structures_dir: Path,
+        cand_id: str,
+        on_poll: Any,
+    ) -> str:
+        """Call ``predict_to_path`` with a small retry on transient failures.
+
+        Re-raises the last exception once attempts are exhausted so callers can
+        log/record the failure exactly as before. Cancellation short-circuits
+        immediately without further retries.
+        """
+        last_exc: Exception | None = None
+        for attempt in range(self._RNACOMPOSER_RETRY_ATTEMPTS):
+            if self._rnacomposer_cancel.is_set():
+                raise RuntimeError("cancelled")
+            try:
+                return adapter.predict_to_path(
+                    rna_seq,
+                    secondary_structure="",
+                    output_dir=structures_dir,
+                    candidate_id=cand_id,
+                    on_poll=on_poll,
+                )
+            except Exception as exc:  # noqa: BLE001 — retried below
+                if self._rnacomposer_cancel.is_set():
+                    raise
+                last_exc = exc
+                if (
+                    attempt + 1 < self._RNACOMPOSER_RETRY_ATTEMPTS
+                    and self._RNACOMPOSER_RETRY_DELAY_SECONDS > 0
+                ):
+                    time.sleep(self._RNACOMPOSER_RETRY_DELAY_SECONDS)
+        assert last_exc is not None
+        raise last_exc
 
     def _show_manual_upload_panel(self) -> None:
         state = self.screen.app.current_state
@@ -157,6 +204,60 @@ class _StructuresMixin:
         candidates: list[tuple[str, str]],
         structures_dir: Path,
     ) -> None:
+        """RNAComposer fetch + Open Babel post-processing (pipelined)."""
+        prep = self._receptor_prep_adapter()
+        state = self.screen.app.current_state
+
+        def _postprocess_openbabel(cand_id: str) -> tuple[str, dict[str, list[float]]]:
+            source_pdb = structures_dir / f"{cand_id}.pdb"
+            target_pdb = structures_dir / f"{cand_id}.dna.pdb"
+            pdb_text = prep.revert_ribose_to_deoxyribose(
+                source_pdb.read_text(encoding="utf-8")
+            )
+            target_pdb.write_text(pdb_text, encoding="utf-8")
+            minimized_pdb = structures_dir / f"{cand_id}.min.pdb"
+            prep.energy_minimize(target_pdb, minimized_pdb)
+            pdbqt_path = structures_dir / f"{cand_id}.pdbqt"
+            prep.prepare_pdbqt(minimized_pdb, pdbqt_path, treat_as_dna=False)
+            box = prep.compute_box(pdbqt_path, padding=(
+                state.docking_plan.grid_padding_angstrom
+                if state.docking_plan is not None
+                else DEFAULT_GRID_PADDING_ANGSTROM
+            ))
+            return str(pdbqt_path), box.as_dict()
+
+        self._run_rnacomposer_pipeline(
+            candidates,
+            structures_dir,
+            postprocess_one=_postprocess_openbabel,
+            source="rnacomposer",
+            provider="rnacomposer",
+            completed_message=(
+                "RNAComposer prepared {done}/{total} per-candidate PDBQTs in "
+                + str(structures_dir) + "."
+            ),
+        )
+
+    def _run_rnacomposer_pipeline(
+        self,
+        candidates: list[tuple[str, str]],
+        structures_dir: Path,
+        *,
+        postprocess_one: Any,
+        source: str,
+        provider: str,
+        completed_message: str,
+    ) -> None:
+        """Shared RNAComposer fetch→post-process pipeline.
+
+        Fetches each candidate from RNAComposer while post-processing the
+        previous one in the foreground (and prefetching the next in a
+        background thread), so the slow network fetch overlaps with local
+        structure preparation.  ``postprocess_one(cand_id)`` converts one
+        fetched RNA PDB into a docking-ready receptor and returns
+        ``(pdbqt_path, grid_box_dict)``; it is the only part that differs
+        between the Open Babel and MOE strategies.
+        """
         state = self.screen.app.current_state
         receptor_paths: dict[str, str] = {}
         grid_boxes: dict[str, dict[str, list[float]]] = {}
@@ -200,12 +301,8 @@ class _StructuresMixin:
                 )
 
             try:
-                adapter.predict_to_path(
-                    rna_seq,
-                    secondary_structure="",
-                    output_dir=structures_dir,
-                    candidate_id=cand_id,
-                    on_poll=_on_poll,
+                self._predict_rnacomposer_with_retry(
+                    adapter, rna_seq, structures_dir, cand_id, _on_poll,
                 )
             except Exception as exc:
                 if self._rnacomposer_cancel.is_set():
@@ -217,35 +314,20 @@ class _StructuresMixin:
                 )
                 record_tertiary_structure_context(
                     state,
-                    provider="rnacomposer",
-                    receptor_source="rnacomposer",
+                    provider=provider,
+                    receptor_source=source,
                     receptor_status="failed",
                     error=str(exc),
                 )
                 return None
             return cand_id
 
-        def _postprocess_one(cand_id: str) -> None:
+        def _postprocess(cand_id: str) -> None:
             nonlocal postprocessed_count
-            source_pdb = structures_dir / f"{cand_id}.pdb"
-            target_pdb = structures_dir / f"{cand_id}.dna.pdb"
-            pdb_text = prep.revert_ribose_to_deoxyribose(
-                source_pdb.read_text(encoding="utf-8")
-            )
-            target_pdb.write_text(pdb_text, encoding="utf-8")
-            minimized_pdb = structures_dir / f"{cand_id}.min.pdb"
-            prep.energy_minimize(target_pdb, minimized_pdb)
-            target_pdb = minimized_pdb
-            pdbqt_path = structures_dir / f"{cand_id}.pdbqt"
-            prep.prepare_pdbqt(target_pdb, pdbqt_path, treat_as_dna=False)
-            box = prep.compute_box(pdbqt_path, padding=(
-                state.docking_plan.grid_padding_angstrom
-                if state.docking_plan is not None
-                else DEFAULT_GRID_PADDING_ANGSTROM
-            ))
+            pdbqt_path, box = postprocess_one(cand_id)
             # Commit only after all steps succeed
-            receptor_paths[cand_id] = str(pdbqt_path)
-            grid_boxes[cand_id] = box.as_dict()
+            receptor_paths[cand_id] = pdbqt_path
+            grid_boxes[cand_id] = box
             postprocessed_count += 1
 
         # -- pipeline loop -------------------------------------------------
@@ -289,7 +371,7 @@ class _StructuresMixin:
                             postprocessing_candidate=cand_id,
                         )
                         try:
-                            _postprocess_one(cand_id)
+                            _postprocess(cand_id)
                         except Exception as exc:
                             candidate_ready[i] = False
                             self._threadsafe(
@@ -299,8 +381,8 @@ class _StructuresMixin:
                             )
                             record_tertiary_structure_context(
                                 state,
-                                provider="rnacomposer",
-                                receptor_source="rnacomposer",
+                                provider=provider,
+                                receptor_source=source,
                                 receptor_status="failed",
                                 error=str(exc),
                             )
@@ -360,13 +442,13 @@ class _StructuresMixin:
             state,
             receptor_paths=receptor_paths,
             grid_boxes=grid_boxes,
-            source="rnacomposer",
+            source=source,
             top_k=postprocessed_count,
         )
         record_tertiary_structure_context(
             state,
-            provider="rnacomposer",
-            receptor_source="rnacomposer",
+            provider=provider,
+            receptor_source=source,
             receptor_status="completed",
             result_path=str(structures_dir),
             error="",
@@ -374,7 +456,7 @@ class _StructuresMixin:
         self._threadsafe(self.screen.app.save_state)
         self._threadsafe(
             self.screen.add_system_message,
-            f"RNAComposer prepared {postprocessed_count}/{total} per-candidate PDBQTs in {structures_dir}.",
+            completed_message.format(done=postprocessed_count, total=total),
         )
         self._threadsafe(self._show_param_panel)
 
@@ -399,6 +481,14 @@ class _StructuresMixin:
                     fetching_elapsed=fetching_elapsed,
                     postprocessing_candidate=postprocessing_candidate,
                 )
+
+        self._threadsafe(_update)
+
+    def _update_moe_progress(self, *, done: int, total: int) -> None:
+        def _update() -> None:
+            widget = getattr(self.screen, "_active_structured_widget", None)
+            if isinstance(widget, DockingMOEProgressPanel):
+                widget.update_progress(done=done, total=total)
 
         self._threadsafe(_update)
 
@@ -455,133 +545,48 @@ class _StructuresMixin:
         candidates: list[tuple[str, str]],
         structures_dir: Path,
     ) -> None:
-        """RNAComposer fetch followed by MOE RNA->DNA+minimize batch processing."""
+        """RNAComposer fetch + MOE RNA->DNA+minimize, pipelined per candidate.
+
+        MOE used to require every structure on disk before its single batch
+        run; now that MOE is invoked per file we process each structure as
+        soon as it is fetched, overlapping the slow RNAComposer network fetch
+        of the next candidate with the local MOE run of the current one.
+        """
         from aptgent.adapters.moe_prep import MoePreparationAdapter
 
-        state = self.screen.app.current_state
         moe_adapter: MoePreparationAdapter = self.screen.app.moe_prep_adapter
-        receptor_paths: dict[str, str] = {}
-        grid_boxes: dict[str, dict[str, list[float]]] = {}
-        prep = self._receptor_prep_adapter()
-        adapter = getattr(self.screen.app, "tertiary_structure_adapter", None)
-        if adapter is None:
-            self._report_error("RNAComposer adapter is not configured.")
-            return
+        state = self.screen.app.current_state
+        moe_output_dir = structures_dir / "moe_output"
 
-        total = len(candidates)
-        fetched_ids: list[str] = []
-
-        # Stage 1: Fetch all RNA PDBs from RNAComposer sequentially.
-        # Unlike _rnacomposer_worker, we don't pipeline fetch+postprocess
-        # because MOE needs all files available before its batch run.
-        for cand_id, sequence in candidates:
-            if self._rnacomposer_cancel.is_set():
-                break
-            rna_seq = prep.dna_to_rna(sequence)
-
-            def _on_poll(poll_count: int, elapsed: float) -> None:
-                if self._rnacomposer_cancel.is_set():
-                    raise RuntimeError("cancelled")
-
-            try:
-                adapter.predict_to_path(
-                    rna_seq,
-                    secondary_structure="",
-                    output_dir=structures_dir,
-                    candidate_id=cand_id,
-                    on_poll=_on_poll,
-                )
-                fetched_ids.append(cand_id)
-            except Exception as exc:
-                if self._rnacomposer_cancel.is_set():
-                    break
-                self._threadsafe(
-                    self.screen.add_system_message,
-                    f"RNAComposer failed for {cand_id}: {exc}",
-                    "error-text",
-                )
-
-        if self._rnacomposer_cancel.is_set():
-            self._threadsafe(
-                self.screen.add_system_message,
-                f"Cancelled after fetching {len(fetched_ids)}/{total} structures.",
-                "warning-text",
-            )
-            self._threadsafe(self._show_strategy_panel)
-            return
-
-        if not fetched_ids:
-            self._threadsafe(
-                self.screen.add_system_message,
-                "All RNAComposer predictions failed.",
-                "error-text",
-            )
-            self._threadsafe(self._show_strategy_panel)
-            return
-
-        # Stage 2: MOE batch processing
-        try:
+        def _postprocess_moe(cand_id: str) -> tuple[str, dict[str, list[float]]]:
+            # One isolated moebatch run for this single fetched structure.
+            # Progress is shown via the panel's post-processing bar, so no
+            # per-file chat messages here (would be one line per candidate).
             moe_results = moe_adapter.convert_rna_to_dna_minimize(
                 input_dir=structures_dir,
-                output_dir=structures_dir / "moe_output",
-                candidate_ids=fetched_ids,
-                on_progress=lambda msg: self._threadsafe(
-                    self.screen.add_system_message, msg
-                ),
+                output_dir=moe_output_dir,
+                candidate_ids=[cand_id],
             )
-        except Exception as exc:
-            self._threadsafe(
-                self.screen.add_system_message,
-                f"MOE processing failed: {exc}",
-                "error-text",
-            )
-            self._threadsafe(self._show_strategy_panel)
-            return
+            moe_pdb = moe_results[cand_id]
+            pdbqt_path = structures_dir / f"{cand_id}.pdbqt"
+            moe_adapter.prepare_pdbqt(moe_pdb, pdbqt_path)
+            box = moe_adapter.compute_box(pdbqt_path, padding=(
+                state.docking_plan.grid_padding_angstrom
+                if state.docking_plan is not None
+                else DEFAULT_GRID_PADDING_ANGSTROM
+            ))
+            return str(pdbqt_path), box.as_dict()
 
-        if self._rnacomposer_cancel.is_set():
-            self._threadsafe(
-                self.screen.add_system_message,
-                "MOE cancelled; returning to strategy panel.",
-                "warning-text",
-            )
-            self._threadsafe(self._show_strategy_panel)
-            return
-
-        # Stage 3: Convert to PDBQT + compute boxes
-        receptor_paths, grid_boxes, postprocessed_count = (
-            self._convert_moe_results_to_pdbqt(moe_results, structures_dir, state)
-        )
-
-        if postprocessed_count == 0:
-            self._threadsafe(
-                self.screen.add_system_message,
-                "All PDBQT conversions failed.",
-                "error-text",
-            )
-            self._threadsafe(self._show_strategy_panel)
-            return
-
-        _apply_docking_plan(
-            state,
-            receptor_paths=receptor_paths,
-            grid_boxes=grid_boxes,
+        self._run_rnacomposer_pipeline(
+            candidates,
+            structures_dir,
+            postprocess_one=_postprocess_moe,
             source="rnacomposer-moe",
-            top_k=postprocessed_count,
-        )
-        record_tertiary_structure_context(
-            state,
             provider="rnacomposer+moe",
-            receptor_source="rnacomposer-moe",
-            receptor_status="completed",
-            result_path=str(structures_dir),
-            error="",
+            completed_message=(
+                "RNAComposer + MOE prepared {done}/{total} receptor PDBQTs."
+            ),
         )
-        self._threadsafe(self.screen.app.save_state)
-        self._threadsafe(
-            self.screen.add_system_message,
-            f"RNAComposer + MOE prepared {postprocessed_count}/{total} receptor PDBQTs.",
-        )
-        self._threadsafe(self._show_param_panel)
 
     # ------------------------------------------------------------------
     # MOE manual (user-provided RNA PDBs)
@@ -601,6 +606,9 @@ class _StructuresMixin:
 
         total = len(candidate_ids)
 
+        def _moe_file_done(done: int, moe_total: int) -> None:
+            self._update_moe_progress(done=done, total=moe_total)
+
         try:
             moe_results = moe_adapter.convert_rna_to_dna_minimize(
                 input_dir=rna_dir,
@@ -609,6 +617,7 @@ class _StructuresMixin:
                 on_progress=lambda msg: self._threadsafe(
                     self.screen.add_system_message, msg
                 ),
+                on_file_done=_moe_file_done,
             )
         except Exception as exc:
             self._threadsafe(
