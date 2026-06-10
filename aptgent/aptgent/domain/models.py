@@ -10,6 +10,7 @@ class TargetMolecule(BaseModel):
     resolved_name: Optional[str] = None
     smiles: Optional[str] = None
     resolution_status: str = "pending"  # pending, resolved, failed, needs_confirmation
+    error_detail: Optional[str] = None  # "network" | "not_found" | None
 
 
 class Mutation(BaseModel):

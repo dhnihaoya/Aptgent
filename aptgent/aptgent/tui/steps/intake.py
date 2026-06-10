@@ -24,6 +24,41 @@ from aptgent.workflow.context import (
 )
 
 
+def _resolution_error_message(
+    target_text: str,
+    resolved: TargetMolecule | None,
+    *,
+    source: str = "direct",
+) -> str:
+    """Build a context-appropriate retry message based on failure type."""
+    detail = getattr(resolved, "error_detail", None) if resolved else None
+    if detail == "network":
+        msg = (
+            f"PubChem lookup for `{target_text}` failed due to a network error "
+            "after multiple retries. "
+        )
+        if source == "intake":
+            msg += (
+                "Please try again, paste a full intake brief to rerun extraction, "
+                "or provide the SMILES string directly."
+            )
+        else:
+            msg += (
+                "Please try again, or provide the SMILES string directly."
+            )
+        return msg
+    # Default: name not found or unknown failure
+    if source == "intake":
+        return (
+            f"Could not resolve `{target_text}` from the current intake. "
+            "Enter a corrected molecule name or SMILES, or paste a full intake brief to rerun extraction."
+        )
+    return (
+        f"Could not resolve `{target_text}`. "
+        "Please correct the molecule name or provide a valid SMILES string."
+    )
+
+
 class IntakeHandler(StepHandler):
     _INITIAL_PLACEHOLDER = INITIAL_INTAKE_PLACEHOLDER
     _TARGET_RETRY_PLACEHOLDER = (
@@ -388,10 +423,10 @@ class IntakeHandler(StepHandler):
     def _resolve_molecule_direct(self, text: str) -> None:
         state = self.screen.app.current_state
         resolved_text, resolved = self._resolve_target_text(text)
-        if resolved is None:
+        if resolved is None or resolved.resolution_status != "resolved":
             self._activate_target_retry(
                 text,
-                f"Could not resolve `{text}`. Please correct the molecule name or provide a valid SMILES string.",
+                _resolution_error_message(text, resolved),
             )
             return
 
@@ -428,13 +463,10 @@ class IntakeHandler(StepHandler):
     ) -> None:
         state = self.screen.app.current_state
         resolved_text, resolved = self._resolve_target_text(target_text)
-        if resolved is None:
+        if resolved is None or resolved.resolution_status != "resolved":
             self._activate_target_retry(
                 target_text,
-                (
-                    f"Could not resolve `{target_text}` from the current intake. "
-                    "Enter a corrected molecule name or SMILES, or paste a full intake brief to rerun extraction."
-                ),
+                _resolution_error_message(target_text, resolved, source="intake"),
                 user_brief=user_brief,
                 sequence=sequence,
                 modification_region=modification_region,

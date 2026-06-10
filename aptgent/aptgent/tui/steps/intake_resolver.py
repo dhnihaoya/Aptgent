@@ -57,10 +57,16 @@ def resolve_target_text(
     Returns ``(effective_text, resolved)`` where ``effective_text`` is
     the string that produced the successful resolution (possibly a
     translation) and ``resolved`` is ``None`` when resolution failed.
+
+    When resolution fails, the last failed ``TargetMolecule`` is still
+    returned (with ``resolution_status="failed"``) so callers can
+    inspect ``error_detail`` for a tailored message.
     """
     resolved = molecule_resolver.resolve(target_text)
     if resolved.resolution_status == "resolved":
         return target_text, resolved
+
+    last_failed = resolved
 
     if _contains_chinese(target_text):
         english_name = _translate_molecule_name(target_text, intake_skill_factory)
@@ -68,5 +74,6 @@ def resolve_target_text(
             resolved = molecule_resolver.resolve(english_name)
             if resolved.resolution_status == "resolved":
                 return english_name, resolved
+            last_failed = resolved
 
-    return target_text, None
+    return target_text, last_failed

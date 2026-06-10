@@ -35,6 +35,7 @@ class SimpleMoleculeResolver:
         self.has_rdkit = _check_rdkit()
         if self.has_rdkit:
             _silence_rdkit()
+        self._last_lookup_error: str | None = None
 
     def _validate_smiles(self, smiles: str) -> bool:
         if not self.has_rdkit:
@@ -59,6 +60,7 @@ class SimpleMoleculeResolver:
     def _pubchem_name_to_smiles(self, name: str, retries: int = 2) -> str | None:
         encoded = urllib.parse.quote(name)
         url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{encoded}/property/IsomericSMILES/JSON"
+        self._last_lookup_error = None
         for attempt in range(retries + 1):
             try:
                 with urllib.request.urlopen(url, timeout=15) as resp:
@@ -67,12 +69,14 @@ class SimpleMoleculeResolver:
                 if props:
                     return props[0].get("IsomericSMILES") or props[0].get("SMILES")
                 _log.warning("PubChem returned no properties for '%s'", name)
+                self._last_lookup_error = "not_found"
                 return None
             except Exception as exc:
                 _log.warning(
                     "PubChem lookup failed for '%s' (attempt %d/%d): %s",
                     name, attempt + 1, retries + 1, exc,
                 )
+                self._last_lookup_error = "network"
                 if attempt < retries:
                     time.sleep(1 + attempt)
         return None
@@ -98,4 +102,5 @@ class SimpleMoleculeResolver:
 
         # 3. Fallback: needs confirmation / manual input
         candidate.resolution_status = "failed"
+        candidate.error_detail = self._last_lookup_error
         return candidate
