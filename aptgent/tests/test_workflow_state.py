@@ -66,3 +66,31 @@ def test_json_roundtrip_preserves_version():
     restored = RunState.model_validate_json(json_str)
     assert restored.schema_version == "1.0"
     assert restored.run_id == "test"
+
+
+def test_docking_phase_accepts_filtering_and_awaiting_moe_structures():
+    state = RunState(run_id="test")
+    # "filtering" phase (Phase 1.5)
+    state.context.docking_recommendation.phase = "filtering"
+    assert state.context.docking_recommendation.phase == "filtering"
+    # "awaiting_moe_structures" phase (MOE-only path)
+    state.context.docking_recommendation.phase = "awaiting_moe_structures"
+    assert state.context.docking_recommendation.phase == "awaiting_moe_structures"
+
+
+def test_intake_context_accepts_mutation_ratio():
+    state = RunState(run_id="test")
+    state.context.intake.mutation_ratio = 0.8
+    assert state.context.intake.mutation_ratio == 0.8
+    # Default is None
+    state2 = RunState(run_id="test2")
+    assert state2.context.intake.mutation_ratio is None
+
+
+def test_docking_recommendation_accepts_mutation_ratio():
+    state = RunState(run_id="test")
+    state.context.docking_recommendation.mutation_ratio = 0.75
+    assert state.context.docking_recommendation.mutation_ratio == 0.75
+    # Default is None
+    state2 = RunState(run_id="test2")
+    assert state2.context.docking_recommendation.mutation_ratio is None

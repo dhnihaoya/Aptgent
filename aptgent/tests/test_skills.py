@@ -162,3 +162,12 @@ def test_docking_params_parse_output_rejects_bad_action():
 def test_docking_params_parse_skill_metadata_is_nlu_only():
     assert DockingParamsParseSkill.metadata.trust_level == "nlu_only"
     assert DockingParamsParseSkill.metadata.id == "docking_params_parse"
+
+
+def test_intake_output_accepts_mutation_ratio():
+    from aptgent.llm.skills.intake.schema import IntakeOutput
+    output = IntakeOutput.model_validate({"mutation_ratio": 0.8})
+    assert output.mutation_ratio == 0.8
+    # Default is None
+    output2 = IntakeOutput.model_validate({})
+    assert output2.mutation_ratio is None

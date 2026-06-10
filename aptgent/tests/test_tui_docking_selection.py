@@ -706,3 +706,152 @@ async def test_strategy_panel_apply_overrides_helper(tmp_path):
         assert panel.query_one("#dock-plan-exhaustiveness", Input).value == "16"
         assert panel.query_one("#dock-plan-seed", Input).value == "7"
         assert panel.query_one("#dock-plan-energy-range", Input).value == "4.5"
+
+
+# ---------------------------------------------------------------------------
+# Mutation ratio filter integration tests
+# ---------------------------------------------------------------------------
+
+from aptgent.domain.models import Mutation
+from aptgent.tui.widgets.structured_input import MutationRatioPanel
+
+
+def _make_candidates_with_mutations() -> list[CandidateSequence]:
+    """4 candidates with varying mutation coverage over sites [2, 5, 8]."""
+    return [
+        CandidateSequence(
+            sequence="ACGTACGTAC",
+            candidate_id="full",
+            mutations=[
+                Mutation(position=2, original="G", mutated="A"),
+                Mutation(position=5, original="T", mutated="C"),
+                Mutation(position=8, original="A", mutated="G"),
+            ],
+        ),
+        CandidateSequence(
+            sequence="ACGTACGTAC",
+            candidate_id="partial",
+            mutations=[
+                Mutation(position=2, original="G", mutated="A"),
+                Mutation(position=5, original="T", mutated="C"),
+            ],
+        ),
+        CandidateSequence(
+            sequence="ACGTACGTAC",
+            candidate_id="one",
+            mutations=[
+                Mutation(position=2, original="G", mutated="A"),
+            ],
+        ),
+        CandidateSequence(
+            sequence="ACGTACGTAC",
+            candidate_id="none",
+            mutations=[],
+        ),
+    ]
+
+
+@pytest.mark.anyio
+async def test_strategy_continue_shows_filter_panel(tmp_path):
+    """After strategy submit with confirmed sites, filter panel appears."""
+    app = make_app(tmp_path)
+    state = app.engine.create_run("filter_appear")
+    state.current_step = Step.DOCKING_SELECTION
+    state.candidates = _make_candidates_with_mutations()
+    state.confirmed_mutation_sites = [2, 5, 8]
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        _attach_fake_adapters(app)
+        app.set_run_id("filter_appear")
+        app.push_screen("chat")
+        await pilot.pause()
+        await pilot.pause()
+
+        # Submit strategy form → should advance to filter panel
+        strategy = app.screen.query_one(DockingStrategyPanel)
+        strategy.query_one("#btn-dock-plan-continue", Button).focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+
+        # Filter panel should be visible (not source panel)
+        filter_panel = app.screen.query_one(MutationRatioPanel)
+        assert filter_panel.total_count == 4
+
+
+@pytest.mark.anyio
+async def test_filter_skip_shows_source_panel(tmp_path):
+    """Skip on filter panel routes to source panel."""
+    app = make_app(tmp_path)
+    state = app.engine.create_run("filter_skip")
+    state.current_step = Step.DOCKING_SELECTION
+    state.candidates = _make_candidates_with_mutations()
+    state.confirmed_mutation_sites = [2, 5, 8]
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        _attach_fake_adapters(app)
+        app.set_run_id("filter_skip")
+        app.push_screen("chat")
+        await pilot.pause()
+        await pilot.pause()
+
+        # Submit strategy
+        strategy = app.screen.query_one(DockingStrategyPanel)
+        strategy.query_one("#btn-dock-plan-continue", Button).focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+
+        # Now on filter panel — click Skip
+        filter_panel = app.screen.query_one(MutationRatioPanel)
+        filter_panel.query_one("#btn-mutation-ratio-skip", Button).focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        # Should now be on source panel with all 4 candidates
+        source = app.screen.query_one(DockingSourcePanel)
+        assert source.top_k == 4
+
+
+@pytest.mark.anyio
+async def test_filter_skipped_when_no_confirmed_sites(tmp_path):
+    """Auto-skips filter when no confirmed_mutation_sites."""
+    app = make_app(tmp_path)
+    state = app.engine.create_run("filter_no_sites")
+    state.current_step = Step.DOCKING_SELECTION
+    state.candidates = [
+        CandidateSequence(sequence="ACGTACGT", candidate_id=f"c{i}")
+        for i in range(5)
+    ]
+    # No confirmed_mutation_sites → filter should be skipped
+    app.persistence.save(state)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        _attach_fake_adapters(app)
+        app.set_run_id("filter_no_sites")
+        app.push_screen("chat")
+        await pilot.pause()
+        await pilot.pause()
+
+        strategy = app.screen.query_one(DockingStrategyPanel)
+        strategy.query_one("#btn-dock-plan-continue", Button).focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+
+        # Should go straight to source panel (no filter panel)
+        source = app.screen.query_one(DockingSourcePanel)
+        assert source.top_k == 5
