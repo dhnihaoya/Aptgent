@@ -67,26 +67,31 @@ class MoePreparationAdapter:
         candidate_ids: list[str],
         *,
         on_progress: Callable[[str], None] | None = None,
+        on_file_done: Callable[[int, int], None] | None = None,
     ) -> dict[str, Path]:
         """Run ``moebatch`` on RNA PDBs to produce minimized DNA PDBs.
 
-        Creates an isolated temporary directory containing only symlinks to the
-        requested candidate files, so the SVL script cannot see stale or
-        unrelated ``.pdb`` files.  Also passes ``APT_CANDIDATES`` for
-        server-side filtering (defense in depth).
+        Each candidate is processed with its **own** ``moebatch`` invocation
+        over an isolated temporary directory that contains only that one
+        structure.  RNAComposer (a public scraper) inevitably produces a few
+        malformed structures; running per-file means one bad PDB only fails its
+        own conversion instead of aborting the whole batch.  Successful
+        conversions are always returned even when some candidates fail.
 
         Args:
             input_dir: Directory containing ``{cand_id}.pdb`` RNA files.
             output_dir: Directory for MOE-processed DNA PDB output.
             candidate_ids: IDs to process (must have corresponding ``.pdb`` in input_dir).
             on_progress: Optional callback for progress messages.
+            on_file_done: Optional callback invoked after each candidate with
+                ``(completed_count, total)`` so callers can drive a progress bar.
 
         Returns:
             Mapping ``{cand_id: output_pdb_path}`` for successfully processed files.
 
         Raises:
             FileNotFoundError: If ``moebatch`` is not available.
-            RuntimeError: If ``moebatch`` fails or output files are missing.
+            RuntimeError: Only if *every* candidate failed (no output produced).
         """
         if not self.is_available(self.moebatch_command):
             raise FileNotFoundError(
@@ -100,30 +105,72 @@ class MoePreparationAdapter:
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        total_timeout = self.timeout_per_file * max(len(candidate_ids), 1)
+        total = len(candidate_ids)
+        results: dict[str, Path] = {}
+        failures: list[tuple[str, str]] = []
+        resolved_input = input_dir.resolve()
+        resolved_output = output_dir.resolve()
+
+        for index, cand_id in enumerate(candidate_ids, start=1):
+            src = resolved_input / f"{cand_id}.pdb"
+            if not src.exists():
+                failures.append((cand_id, "input RNA PDB missing"))
+                if on_file_done:
+                    on_file_done(index, total)
+                continue
+
+            if on_progress:
+                on_progress(f"MOE processing {index}/{total}: {cand_id}")
+
+            try:
+                out_path = self._run_one(script, src, cand_id, resolved_output)
+            except Exception as exc:  # noqa: BLE001 — isolate per-file failures
+                failures.append((cand_id, str(exc)))
+                if on_progress:
+                    on_progress(f"MOE failed for {cand_id}: {exc}")
+                if on_file_done:
+                    on_file_done(index, total)
+                continue
+
+            results[cand_id] = out_path
+            if on_file_done:
+                on_file_done(index, total)
+
+        if not results:
+            detail = "; ".join(f"{cid}: {msg}" for cid, msg in failures[:5])
+            raise RuntimeError(
+                f"moebatch failed for all {total} structures. {detail}"
+            )
 
         if on_progress:
-            on_progress(f"Running MOE on {len(candidate_ids)} structures...")
+            on_progress(f"MOE processed {len(results)}/{total} structures.")
 
-        candidate_files = ",".join(f"{cid}.pdb" for cid in candidate_ids)
+        return results
 
+    def _run_one(
+        self,
+        script: Path,
+        src: Path,
+        cand_id: str,
+        output_dir: Path,
+    ) -> Path:
+        """Run ``moebatch`` for a single structure in an isolated input dir.
+
+        Raises ``RuntimeError`` on failure (non-zero exit with no output, a
+        timeout, or a missing/empty output file).
+        """
         with tempfile.TemporaryDirectory(prefix="aptgent_moe_") as tmp:
             tmp_dir = Path(tmp)
-            for cid in candidate_ids:
-                src = input_dir / f"{cid}.pdb"
-                if src.exists():
-                    (tmp_dir / f"{cid}.pdb").symlink_to(src)
+            # Absolute target: moebatch may run with a different cwd, so a
+            # relative symlink would point at a non-existent path and MOE would
+            # exit 0 without writing any output.
+            (tmp_dir / f"{cand_id}.pdb").symlink_to(src.resolve())
 
-            cmd = [
-                self.moebatch_command,
-                "-licwait",
-                "-run", str(script),
-            ]
+            cmd = [self.moebatch_command, "-licwait", "-run", str(script)]
             env = {
                 **os.environ,
-                "APT_IN": str(tmp_dir),
-                "APT_OUT": str(output_dir),
-                "APT_CANDIDATES": candidate_files,
+                "APT_IN": str(tmp_dir.resolve()),
+                "APT_OUT": str(output_dir.resolve()),
             }
 
             try:
@@ -132,40 +179,22 @@ class MoePreparationAdapter:
                     capture_output=True,
                     text=True,
                     check=False,
-                    timeout=total_timeout,
+                    timeout=self.timeout_per_file,
                     env=env,
                 )
             except subprocess.TimeoutExpired as exc:
                 raise RuntimeError(
-                    f"moebatch timed out after {total_timeout}s"
+                    f"moebatch timed out after {self.timeout_per_file}s"
                 ) from exc
 
-        if proc.returncode != 0 and not any(
-            (output_dir / f"{cid}.pdb").exists() for cid in candidate_ids
-        ):
+        out_path = output_dir / f"{cand_id}.pdb"
+        if not (out_path.exists() and out_path.stat().st_size > 0):
+            detail = proc.stderr.strip() or proc.stdout.strip() or "no output file produced"
             raise RuntimeError(
                 f"moebatch failed (exit {proc.returncode}): "
-                f"{proc.stderr.strip()[:500]}"
+                f"{detail[:500]}"
             )
-
-        results: dict[str, Path] = {}
-        for cand_id in candidate_ids:
-            out_path = output_dir / f"{cand_id}.pdb"
-            if out_path.exists() and out_path.stat().st_size > 0:
-                results[cand_id] = out_path
-
-        if not results:
-            raise RuntimeError(
-                f"moebatch produced no output files. "
-                f"stderr: {proc.stderr.strip()[:500]}"
-            )
-
-        if on_progress:
-            on_progress(
-                f"MOE processed {len(results)}/{len(candidate_ids)} structures."
-            )
-
-        return results
+        return out_path
 
     def prepare_pdbqt(
         self,

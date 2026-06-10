@@ -6,10 +6,9 @@
 //
 // Usage:
 //   moebatch -licwait -run moe_rna2dna_min.svl
-//   (reads APT_IN / APT_OUT environment variables)
-//
-//   Per-file entry point (for standalone testing):
-//   moebatch -licwait -run moe_rna2dna_min.svl -i <in.pdb> -o <out.pdb>
+//   (reads APT_IN / APT_OUT environment variables; processes every *.pdb in
+//    APT_IN.  The Python adapter runs one structure per invocation so that a
+//    single malformed PDB cannot abort the whole batch.)
 
 function dna_LibraryOpen, dna_LibraryClose;
 function dna_ConvertToDNA, dna_LibraryConvert;
@@ -60,23 +59,13 @@ global function main []
         exit [];
     endif
 
-    // Optional: filter by APT_CANDIDATES (comma-separated filenames).
-    // When set, only listed files are processed; others are skipped.
-    local wanted_raw = getenv 'APT_CANDIDATES';
-    local wanted = [];
-    if !isnull wanted_raw then
-        wanted = split [wanted_raw, ','];
-    endif
-    local has_wanted = length wanted > 0;
-
+    // Process every *.pdb in APT_IN. The Python adapter invokes moebatch
+    // once per candidate with an isolated input directory containing a
+    // single structure, so one malformed PDB cannot abort the whole batch.
     local files = flist [indir, '*.pdb'];
     local f;
     for f in files loop
         local base = ftail f;
-        if has_wanted and !ismember [base, wanted] then
-            write ['--- skipping {} (not in APT_CANDIDATES) ---\n', base];
-            continue;
-        endif
         local outfile = twrite ['{}/{}', outdir, base];
         write ['=== processing {} ===\n', base];
         ReproOne [f, outfile];

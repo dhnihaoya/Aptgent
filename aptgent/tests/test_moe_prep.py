@@ -168,3 +168,77 @@ def test_progress_callback(tmp_path):
 
     assert len(progress_messages) >= 1
     assert any("1" in msg for msg in progress_messages)
+
+
+def test_on_file_done_called_per_candidate(tmp_path):
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+
+    for cid in ["cand_0", "cand_1", "cand_2"]:
+        (input_dir / f"{cid}.pdb").write_text("fake pdb\n")
+
+    adapter = MoePreparationAdapter(moebatch_command="moebatch")
+    done_events: list[tuple[int, int]] = []
+
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        out_dir = Path(kwargs["env"]["APT_OUT"])
+        # Each per-file invocation isolates one candidate in APT_IN.
+        for src in Path(kwargs["env"]["APT_IN"]).glob("*.pdb"):
+            (out_dir / src.name).write_text("minimized\n")
+        return mock_proc
+
+    with patch("aptgent.adapters.moe_prep.shutil.which", return_value="/usr/bin/moebatch"), \
+         patch("aptgent.adapters.moe_prep.subprocess.run", side_effect=fake_run):
+        adapter.convert_rna_to_dna_minimize(
+            input_dir, output_dir, ["cand_0", "cand_1", "cand_2"],
+            on_file_done=lambda done, total: done_events.append((done, total)),
+        )
+
+    assert done_events == [(1, 3), (2, 3), (3, 3)]
+
+
+def test_run_one_symlink_uses_absolute_target(tmp_path):
+    """moebatch may run with a different cwd; input symlinks must be absolute."""
+    input_dir = tmp_path / "structures"
+    output_dir = tmp_path / "out"
+    input_dir.mkdir()
+    (input_dir / "cand_0.pdb").write_text("fake pdb\n")
+
+    adapter = MoePreparationAdapter(moebatch_command="moebatch")
+    link_targets: list[Path] = []
+    real_symlink_to = Path.symlink_to
+
+    def capture_symlink(self, target, *args, **kwargs):
+        link_targets.append(Path(target))
+        return real_symlink_to(self, target, *args, **kwargs)
+
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.stderr = ""
+    mock_proc.stdout = ""
+
+    def fake_run(cmd, **kwargs):
+        apt_in = Path(kwargs["env"]["APT_IN"])
+        out_dir = Path(kwargs["env"]["APT_OUT"])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for src in apt_in.glob("*.pdb"):
+            if not src.resolve().exists():
+                return mock_proc
+            (out_dir / src.name).write_text("minimized\n")
+        return mock_proc
+
+    with patch("aptgent.adapters.moe_prep.shutil.which", return_value="/usr/bin/moebatch"), \
+         patch("aptgent.adapters.moe_prep.subprocess.run", side_effect=fake_run), \
+         patch.object(Path, "symlink_to", capture_symlink):
+        result = adapter.convert_rna_to_dna_minimize(
+            input_dir, output_dir, ["cand_0"],
+        )
+
+    assert link_targets
+    assert link_targets[0].is_absolute()
+    assert result["cand_0"].exists()
