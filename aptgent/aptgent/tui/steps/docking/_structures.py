@@ -17,7 +17,7 @@ from aptgent.workflow.context import record_tertiary_structure_context
 from ._helpers import (
     _apply_docking_plan,
     _candidate_id,
-    _top_k_bundle,
+    _filtered_top_k_bundle,
 )
 
 
@@ -27,7 +27,9 @@ class _StructuresMixin:
     def _show_manual_upload_panel(self) -> None:
         state = self.screen.app.current_state
         recommendation = state.context.docking_recommendation
-        top_k, top_candidates = _top_k_bundle(state)
+        top_k, top_candidates = _filtered_top_k_bundle(
+            state, mutation_ratio=recommendation.mutation_ratio,
+        )
         candidate_ids = [
             _candidate_id(cand, i)
             for i, cand in enumerate(top_candidates)
@@ -72,7 +74,9 @@ class _StructuresMixin:
 
         recommendation = state.context.docking_recommendation
         recommendation.structures_dir = str(directory)
-        top_k, top_candidates = _top_k_bundle(state)
+        top_k, top_candidates = _filtered_top_k_bundle(
+            state, mutation_ratio=recommendation.mutation_ratio,
+        )
         candidate_ids = [
             _candidate_id(cand, i)
             for i, cand in enumerate(top_candidates)
@@ -670,7 +674,9 @@ class _StructuresMixin:
             self.screen.app.persistence.run_dir(state.run_id)
             / "docking" / "rna_structures"
         )
-        _, top_candidates = _top_k_bundle(state)
+        _, top_candidates = _filtered_top_k_bundle(
+            state, mutation_ratio=state.context.docking_recommendation.mutation_ratio,
+        )
         candidate_ids = [
             _candidate_id(cand, i)
             for i, cand in enumerate(top_candidates)
@@ -706,7 +712,9 @@ class _StructuresMixin:
             self._show_moe_manual_upload_panel()
             return
 
-        _, top_candidates = _top_k_bundle(state)
+        _, top_candidates = _filtered_top_k_bundle(
+            state, mutation_ratio=state.context.docking_recommendation.mutation_ratio,
+        )
         candidate_ids = [
             _candidate_id(cand, i)
             for i, cand in enumerate(top_candidates)

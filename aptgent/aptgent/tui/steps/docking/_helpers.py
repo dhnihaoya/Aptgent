@@ -90,3 +90,37 @@ def _apply_docking_plan(
     plan.recommended_top_k = top_k
     state.docking_plan = plan
     recommendation.phase = "structures_ready"
+
+
+def _compute_mutation_ratio(candidate: Any, confirmed_sites: list[int]) -> float:
+    """Fraction of confirmed_sites that have a mutation in candidate.
+
+    Both Mutation.position and confirmed_sites must be 0-based.
+    """
+    if not confirmed_sites:
+        return 1.0
+    mutated_positions = {m.position for m in candidate.mutations}
+    return sum(1 for s in confirmed_sites if s in mutated_positions) / len(confirmed_sites)
+
+
+def _filtered_top_k_bundle(
+    state: Any,
+    *,
+    mutation_ratio: float | None = None,
+) -> tuple[int, list[Any]]:
+    """Top-k candidates filtered by mutation ratio.
+
+    Returns (filtered_count, filtered_list).
+    If mutation_ratio is None or <= 0 or no confirmed sites, returns unfiltered bundle.
+    """
+    top_k, top_candidates = _top_k_bundle(state)
+    if mutation_ratio is None or mutation_ratio <= 0:
+        return top_k, top_candidates
+    confirmed_sites = state.confirmed_mutation_sites or []
+    if not confirmed_sites:
+        return top_k, top_candidates
+    filtered = [
+        c for c in top_candidates
+        if _compute_mutation_ratio(c, confirmed_sites) >= mutation_ratio
+    ]
+    return len(filtered), filtered

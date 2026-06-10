@@ -227,7 +227,7 @@ class _StrategyMixin:
         recommendation.recommended_seed = plan.seed
         recommendation.phase = "topk_selected"
         self.screen.app.save_state()
-        self._show_source_panel()
+        self._show_filter_panel()
 
     def _current_form_seed(self) -> int | None:
         """Snapshot the seed from the active DockingStrategyPanel, if any."""

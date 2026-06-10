@@ -8,7 +8,7 @@ from aptgent.tui.widgets.structured_input import (
     DockingSourcePanel,
 )
 
-from ._helpers import _candidate_id, _top_k_bundle
+from ._helpers import _candidate_id, _filtered_top_k_bundle, _top_k_bundle
 
 
 class _SourceMixin:
@@ -16,7 +16,10 @@ class _SourceMixin:
 
     def _show_source_panel(self) -> None:
         state = self.screen.app.current_state
-        top_k, _ = _top_k_bundle(state)
+        recommendation = state.context.docking_recommendation
+        top_k, _ = _filtered_top_k_bundle(
+            state, mutation_ratio=recommendation.mutation_ratio,
+        )
         moe_available = self._is_moe_available()
         self.screen.add_structured_widget(
             DockingSourcePanel(top_k=top_k, moe_available=moe_available)
@@ -27,8 +30,10 @@ class _SourceMixin:
 
     def _on_source_selected(self, source: str) -> None:
         state = self.screen.app.current_state
-        top_k, top_candidates = _top_k_bundle(state)
         recommendation = state.context.docking_recommendation
+        top_k, top_candidates = _filtered_top_k_bundle(
+            state, mutation_ratio=recommendation.mutation_ratio,
+        )
 
         export_dir = (
             self.screen.app.persistence.run_dir(state.run_id)

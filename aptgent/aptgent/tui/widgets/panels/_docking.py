@@ -898,3 +898,150 @@ class DockingParamPanel(_BaseStructuredPanel):
             "uses_recommendation": self.mode == "llm",
             "accepted_recommendation": self.accepted_recommendation,
         }
+
+
+class MutationRatioPanel(_BaseStructuredPanel):
+    """Phase 1.5: mutation ratio filter between strategy and source.
+
+    Lets the user set a minimum fraction of confirmed mutation sites that
+    must differ in a candidate. Uses a percentage Input (0-100) with a
+    reactive remaining-count label.
+
+    CRITICAL: Textual 8.2.7 does NOT have Slider. Use Input with
+    restrict=r"[0-9]*" for percentage integer input.
+    """
+
+    DEFAULT_CSS = """
+    MutationRatioPanel > .panel-help {
+        margin: 1 0;
+    }
+    MutationRatioPanel > .panel-note {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    MutationRatioPanel Horizontal {
+        height: auto;
+    }
+    MutationRatioPanel Horizontal > Button {
+        margin-right: 1;
+    }
+    MutationRatioPanel > Input {
+        margin: 0 0 1 0;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        candidate_ratios: list[tuple[str, float]],
+        total_count: int,
+        affinity_top_k: int = 1,
+        default_ratio: float = 1.0,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.candidate_ratios = candidate_ratios
+        self.total_count = total_count
+        self.affinity_top_k = affinity_top_k
+        self.default_ratio = default_ratio
+
+    def compose(self) -> ComposeResult:
+        yield Static("Mutation Ratio Filter", classes="panel-title")
+        yield Static(
+            "Set the minimum fraction of confirmed mutation sites that must "
+            "differ in each candidate. Candidates below the threshold will "
+            "be excluded before docking.",
+            classes="panel-help",
+        )
+        default_pct = int(self.default_ratio * 100)
+        yield Static("Minimum mutation ratio (%):")
+        pct_input = Input(
+            id="dock-mutation-ratio",
+            placeholder="100",
+            restrict=r"[0-9]*",
+            max_length=3,
+        )
+        pct_input.value = str(default_pct)
+        yield pct_input
+        remaining = self._count_remaining(default_pct)
+        yield Static(
+            self._remaining_text(remaining, self.total_count),
+            id="dock-mutation-ratio-remaining",
+        )
+        yield Static(
+            f"(must be >= affinity_top_k = {self.affinity_top_k})",
+            id="dock-mutation-ratio-hint",
+            classes="panel-note",
+        )
+        with Horizontal():
+            yield Button(
+                "Apply Filter",
+                id="btn-mutation-ratio-apply",
+                variant="primary",
+                disabled=(remaining < self.affinity_top_k),
+            )
+            yield Button("Skip", id="btn-mutation-ratio-skip")
+
+    def _count_remaining(self, pct_value: int) -> int:
+        """Count candidates whose ratio >= pct_value/100."""
+        if pct_value <= 0:
+            return self.total_count
+        threshold = pct_value / 100.0
+        return sum(1 for _, r in self.candidate_ratios if r >= threshold)
+
+    @staticmethod
+    def _remaining_text(remaining: int, total: int) -> str:
+        return f"Remaining: {remaining} / {total} candidates"
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "dock-mutation-ratio":
+            return
+        raw = event.value.strip()
+        try:
+            pct_value = int(raw) if raw else 100
+        except ValueError:
+            pct_value = 100
+        pct_value = max(0, min(100, pct_value))
+        remaining = self._count_remaining(pct_value)
+        try:
+            self.query_one("#dock-mutation-ratio-remaining", Static).update(
+                self._remaining_text(remaining, self.total_count)
+            )
+            apply_btn = self.query_one("#btn-mutation-ratio-apply", Button)
+            apply_btn.disabled = remaining < self.affinity_top_k
+        except NoMatches:
+            _log.debug("Mutation ratio labels missing during update", exc_info=True)
+
+    def on_mount(self) -> None:
+        try:
+            self.query_one("#dock-mutation-ratio", Input).focus()
+        except NoMatches:
+            _log.debug("Focus target missing during on_mount", exc_info=True)
+
+    def _collect_payload(self) -> dict:
+        try:
+            raw = self.query_one("#dock-mutation-ratio", Input).value.strip()
+            pct_value = int(raw) if raw else 100
+        except (ValueError, NoMatches):
+            pct_value = 100
+        pct_value = max(0, min(100, pct_value))
+        return {
+            "phase": "filter_submitted",
+            "mutation_ratio": pct_value / 100.0,
+        }
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-mutation-ratio-apply":
+            self.post_message(
+                StructuredInputSubmitted(
+                    Step.DOCKING_SELECTION,
+                    self._collect_payload(),
+                )
+            )
+        elif event.button.id == "btn-mutation-ratio-skip":
+            self.post_message(
+                StructuredActionRequested(
+                    Step.DOCKING_SELECTION,
+                    "filter:skip",
+                )
+            )

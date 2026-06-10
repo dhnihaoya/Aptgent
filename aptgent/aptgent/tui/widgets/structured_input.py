@@ -19,6 +19,7 @@ from aptgent.tui.widgets.panels import (  # noqa: F401
     DockingRNAComposerProgressPanel,
     DockingMOEProgressPanel,
     DockingParamPanel,
+    MutationRatioPanel,
 )
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "DockingRNAComposerProgressPanel",
     "DockingMOEProgressPanel",
     "DockingParamPanel",
+    "MutationRatioPanel",
 ]

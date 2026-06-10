@@ -13,6 +13,7 @@ from ._docking import (
     DockingRNAComposerProgressPanel,
     DockingMOEProgressPanel,
     DockingParamPanel,
+    MutationRatioPanel,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "DockingRNAComposerProgressPanel",
     "DockingMOEProgressPanel",
     "DockingParamPanel",
+    "MutationRatioPanel",
 ]

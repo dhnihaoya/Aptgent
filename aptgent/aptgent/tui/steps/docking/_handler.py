@@ -12,6 +12,7 @@ from aptgent.workflow.context import record_tertiary_structure_context
 from aptgent.workflow.engine import step_display_number
 
 from ._confirm import _ConfirmMixin
+from ._filter import _FilterMixin
 from ._source import _SourceMixin
 from ._strategy import _StrategyMixin
 from ._structures import _StructuresMixin
@@ -20,6 +21,7 @@ from ._structures import _StructuresMixin
 class DockingSelectionHandler(
     StepHandler,
     _StrategyMixin,
+    _FilterMixin,
     _SourceMixin,
     _StructuresMixin,
     _ConfirmMixin,
@@ -54,8 +56,10 @@ class DockingSelectionHandler(
             self._show_param_panel()
         elif phase == "awaiting_structures":
             self._show_manual_upload_panel()
-        elif phase == "topk_selected":
-            self._show_source_panel()
+        elif phase == "awaiting_moe_structures":
+            self._show_moe_manual_upload_panel()
+        elif phase in ("topk_selected", "filtering"):
+            self._show_filter_panel()
         else:
             self._show_strategy_panel()
 
@@ -72,7 +76,7 @@ class DockingSelectionHandler(
 
         state = self.screen.app.current_state
         phase = state.context.docking_recommendation.phase or "initial"
-        if phase not in ("initial", "topk_selected"):
+        if phase not in ("initial", "topk_selected", "filtering"):
             self.screen.add_system_message(
                 "Natural language overrides only apply to the strategy form. "
                 "Use the panel actions or jump back to Phase 1.",
@@ -83,6 +87,12 @@ class DockingSelectionHandler(
         if not isinstance(
             self.screen._active_structured_widget, DockingStrategyPanel
         ):
+            if phase == "filtering":
+                self.screen.add_system_message(
+                    "Switching to strategy form for NL input. "
+                    "Unsaved filter settings will be lost — use the panel buttons to apply first.",
+                    "warning-text",
+                )
             self._show_strategy_panel()
 
         plan = state.docking_plan
@@ -110,6 +120,9 @@ class DockingSelectionHandler(
         if phase in ("strategy_submitted", "topk_selected"):
             self._on_strategy_submitted(data)
             return
+        if phase == "filter_submitted":
+            self._on_filter_submitted(data)
+            return
         if phase == "manual_upload":
             self._on_manual_upload_submitted(data)
             return
@@ -130,6 +143,9 @@ class DockingSelectionHandler(
     def handle_action(self, action: str) -> None:
         if action == "llm-hint" or action.startswith("llm-hint:"):
             self._on_llm_hint()
+            return
+        if action == "filter:skip":
+            self._on_filter_skipped()
             return
         if action == "source:manual":
             self._on_source_selected("manual")
