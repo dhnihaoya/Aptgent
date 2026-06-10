@@ -39,6 +39,15 @@ padding_angstrom = 4.0
 minimize = true
 minimize_steps = 500
 
+[moe]
+# MOE (Molecular Operating Environment) receptor preparation.
+# When available, replaces the obminimize+revert post-processing with
+# AmberEHT force field minimization via moebatch.
+# Set APTGENT_MOEBATCH to the full path if not in PATH.
+moebatch = "${APTGENT_MOEBATCH:-moebatch}"
+# Timeout per PDB file during moebatch processing (seconds).
+timeout_per_file = 600
+
 [rnacomposer]
 # RNAComposer auto-mode for generating per-candidate 3D structures.
 # Leave defaults to use the public server; override with APTGENT_RNACOMPOSER_URL

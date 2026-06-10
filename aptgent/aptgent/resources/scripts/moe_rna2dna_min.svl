@@ -1,0 +1,84 @@
+#svl
+// Headless reproduction of the manual MOE step:
+//   RNAComposer RNA model -> DNA (Convert to DNA + U/DU -> DT) -> energy
+//   minimize with an all-heavy-atom tether restraint (GUI Energy Minimize
+//   defaults: gtest 0.1, tether sdev 0.5 A, rigid water).
+//
+// Usage:
+//   moebatch -licwait -run moe_rna2dna_min.svl
+//   (reads APT_IN / APT_OUT environment variables)
+//
+//   Per-file entry point (for standalone testing):
+//   moebatch -licwait -run moe_rna2dna_min.svl -i <in.pdb> -o <out.pdb>
+
+function dna_LibraryOpen, dna_LibraryClose;
+function dna_ConvertToDNA, dna_LibraryConvert;
+function MM;
+
+// GUI Energy Minimize tether: K = (3/2) kB T / sdev^2, sdev = 0.5 A, T = 300 K.
+const KBOLTZ = 0.0019872065;       // kcal/mol/K
+const TETHER_SDEV = 0.5;           // Angstrom (MOE GUI default)
+
+global function ReproOne [infile, outfile]
+    Close [force:1];
+
+    pot_Load '$MOE/lib/AmberEHT.ff';
+    pot_SetCharges 0;
+
+    ReadPDB infile;
+
+    // ----- RNA -> DNA (mirror probuild.svl res_convert) -----
+    local lib = dna_LibraryOpen [];
+    dna_ConvertToDNA Residues[];
+    dna_LibraryConvert [lib, Residues[], ['U','DU'], ['DT','DT'], []];
+    dna_LibraryClose lib;
+
+    // ----- tether all heavy atoms, then minimize -----
+    local atoms = Atoms[];
+    local heavy = aElement atoms <> 'H';
+    local K = (3.0/2.0) * KBOLTZ * 300.0 / (TETHER_SDEV * TETHER_SDEV);
+    local tw = K * heavy;          // per-atom force constant: K on heavy, 0 on H
+
+    MM [
+        gtest        : 0.1
+    ,   tetherWeight : tw
+    ,   rigidHOH     : 1
+    ,   pot_charge   : 1
+    ,   pot_finalize : 1
+    ];
+
+    WritePDB [outfile, []];
+    write ['REPRO_DONE {} -> {}\n', infile, outfile];
+    Close [force:1];
+endfunction
+
+global function main []
+    local indir  = getenv 'APT_IN';
+    local outdir = getenv 'APT_OUT';
+    if isnull indir or isnull outdir then
+        write 'set APT_IN and APT_OUT env vars\n';
+        exit [];
+    endif
+
+    // Optional: filter by APT_CANDIDATES (comma-separated filenames).
+    // When set, only listed files are processed; others are skipped.
+    local wanted_raw = getenv 'APT_CANDIDATES';
+    local wanted = [];
+    if !isnull wanted_raw then
+        wanted = split [wanted_raw, ','];
+    endif
+    local has_wanted = length wanted > 0;
+
+    local files = flist [indir, '*.pdb'];
+    local f;
+    for f in files loop
+        local base = ftail f;
+        if has_wanted and !ismember [base, wanted] then
+            write ['--- skipping {} (not in APT_CANDIDATES) ---\n', base];
+            continue;
+        endif
+        local outfile = twrite ['{}/{}', outdir, base];
+        write ['=== processing {} ===\n', base];
+        ReproOne [f, outfile];
+    endloop
+endfunction

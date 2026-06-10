@@ -22,6 +22,7 @@ class AppRuntime:
     spatial_rank_adapter: Any
     pdb_analysis_adapter: Any
     receptor_prep_adapter: Any = None
+    moe_prep_adapter: Any = None
     structure_lookup_adapter: Any = None
     structure_fetch_adapter: Any = None
     tertiary_structure_adapter: Any = None
@@ -139,6 +140,22 @@ def create_rnacomposer_adapter(tools_config: dict[str, Any]) -> Any:
     )
 
 
+def create_moe_prep_adapter(tools_config: dict[str, Any]) -> Any | None:
+    from aptgent.adapters.moe_prep import MoePreparationAdapter
+
+    cfg = tools_config.get("moe", {})
+    cmd = cfg.get("moebatch", "moebatch")
+    if not MoePreparationAdapter.is_available(cmd):
+        return None
+    rec_cfg = tools_config.get("receptor_prep", {})
+    return MoePreparationAdapter(
+        moebatch_command=cmd,
+        obabel_command=rec_cfg.get("obabel", "obabel"),
+        default_padding=float(rec_cfg.get("padding_angstrom", 4.0)),
+        timeout_per_file=int(cfg.get("timeout_per_file", 600)),
+    )
+
+
 def _create_llm_client(llm_config: dict[str, Any]) -> Any:
     from aptgent.llm.client import LLMClient
 
@@ -174,6 +191,7 @@ def build_runtime(config_bundle: AppConfigBundle | None = None) -> AppRuntime:
         spatial_rank_adapter=create_spatial_rank_adapter(),
         pdb_analysis_adapter=create_pdb_analysis_adapter(tools_config),
         receptor_prep_adapter=create_receptor_prep_adapter(tools_config),
+        moe_prep_adapter=create_moe_prep_adapter(tools_config),
         structure_lookup_adapter=NoopStructureLookupAdapter(),
         structure_fetch_adapter=NoopStructureFetchAdapter(),
         tertiary_structure_adapter=create_rnacomposer_adapter(tools_config),

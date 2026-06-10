@@ -43,6 +43,7 @@ include = ["aptgent*"]
 [tool.setuptools.package-data]
 aptgent = [
     "resources/predictor_models/*.pkl",
+    "resources/scripts/*.svl",
     "config/*.toml",
     "config/*.csv",
     "llm/skills/**/*.md",

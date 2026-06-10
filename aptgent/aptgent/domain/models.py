@@ -126,7 +126,7 @@ class DockingPlan(BaseModel):
     affinity_top_k: int = 0
     reason: str = ""
 
-    receptor_source: str = "manual"  # "manual" | "rnacomposer"
+    receptor_source: str = "manual"  # "manual" | "rnacomposer" | "rnacomposer-moe" | "moe-manual"
     receptor_paths: dict[str, str] = Field(default_factory=dict)
     receptor_pdb_paths: dict[str, str] = Field(default_factory=dict)
     grid_boxes: dict[str, GridBox] = Field(default_factory=dict)

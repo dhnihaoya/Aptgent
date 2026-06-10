@@ -363,7 +363,8 @@ class AptgentApp(App):
     _ADAPTER_KEYS = frozenset({
         "rna_fold_adapter", "vina_adapter", "prediction_adapter",
         "molecule_resolver", "spatial_rank_adapter", "pdb_analysis_adapter",
-        "receptor_prep_adapter", "structure_lookup_adapter",
+        "receptor_prep_adapter", "moe_prep_adapter",
+        "structure_lookup_adapter",
         "structure_fetch_adapter", "tertiary_structure_adapter",
         "intake_skill_factory", "pdb_review_skill_factory",
     })

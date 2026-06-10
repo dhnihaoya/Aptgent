@@ -225,6 +225,7 @@ def _check_env_vars() -> dict[str, str | None]:
         "APTGENT_MODEL_DIR",
         "APTGENT_RNAFOLD",
         "APTGENT_VINA",
+        "APTGENT_MOEBATCH",
         "APTGENT_CONDA_ENV",
         "APTGENT_CONDA_PYTHON",
     ]
@@ -267,6 +268,21 @@ def run_doctor() -> int:
         "base_url", "https://rnacomposer.cs.put.poznan.pl"
     )
     checks.append(("RNAComposer", _check_url(rnacomposer_url)))
+
+    # MOE (optional receptor preparation)
+    moe_cfg = tools.get("moe", {})
+    moebatch_cmd = moe_cfg.get("moebatch", "moebatch")
+    moe_result = _check_binary(moebatch_cmd)
+    if moe_result["status"] == "ok":
+        moe_result["hint"] = "MOE available for receptor preparation (AmberEHT minimization)"
+    else:
+        # MOE is optional — report as informational, not an error
+        moe_result["status"] = "not_configured"
+        moe_result["hint"] = (
+            "MOE not found (optional). Install MOE and set APTGENT_MOEBATCH "
+            "to enable AmberEHT receptor preparation."
+        )
+    checks.append(("MOE (optional)", moe_result))
 
     # Predictor models
     model_dir = tools.get("predictor", {}).get("model_dir")
