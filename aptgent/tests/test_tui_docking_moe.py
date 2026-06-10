@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aptgent.adapters.moe_prep import MoePreparationAdapter
+from tui_helpers import anyio_backend  # noqa: F401  (anyio fixture)
 
 
 def test_moe_prep_adapter_not_in_runtime_when_unavailable():
@@ -96,9 +97,11 @@ def test_models_accept_moe_receptor_source():
         assert plan.receptor_source == source
 
 
-def test_moe_manual_upload_panel_posts_correct_phase():
+@pytest.mark.anyio
+async def test_moe_manual_upload_panel_posts_correct_phase():
     """DockingManualUploadPanel with phase='moe_manual_upload' should post that phase."""
     from textual.app import App, ComposeResult
+    from textual.widgets import Input
 
     from aptgent.tui.widgets.panels._docking import DockingManualUploadPanel
     from aptgent.tui.widgets.panels._core import StructuredInputSubmitted
@@ -117,21 +120,15 @@ def test_moe_manual_upload_panel_posts_correct_phase():
         def on_structured_input_submitted(self, event: StructuredInputSubmitted) -> None:
             collected.append(event)
 
-    async def _run():
-        app = _TestApp()
-        async with app.run_test() as pilot:
-            dir_input = app.query_one("#dock-structures-dir", Input)
-            dir_input.value = "/some/rna_dir"
-            await pilot.click("#btn-load-structures")
-        return collected
+    app = _TestApp()
+    async with app.run_test() as pilot:
+        dir_input = app.query_one("#dock-structures-dir", Input)
+        dir_input.value = "/some/rna_dir"
+        await pilot.click("#btn-load-structures")
 
-    import asyncio
-    from textual.widgets import Input
-
-    events = asyncio.get_event_loop().run_until_complete(_run())
-    assert len(events) == 1
-    assert events[0].data["phase"] == "moe_manual_upload"
-    assert events[0].data["structures_dir"] == "/some/rna_dir"
+    assert len(collected) == 1
+    assert collected[0].data["phase"] == "moe_manual_upload"
+    assert collected[0].data["structures_dir"] == "/some/rna_dir"
 
 
 def test_handler_routes_moe_manual_upload_phase():
