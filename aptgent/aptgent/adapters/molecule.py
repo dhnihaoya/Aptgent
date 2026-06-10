@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import urllib.parse
 import urllib.request
 
@@ -72,6 +73,8 @@ class SimpleMoleculeResolver:
                     "PubChem lookup failed for '%s' (attempt %d/%d): %s",
                     name, attempt + 1, retries + 1, exc,
                 )
+                if attempt < retries:
+                    time.sleep(1 + attempt)
         return None
 
     def resolve(self, input_text: str) -> TargetMolecule:
