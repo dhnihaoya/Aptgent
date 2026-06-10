@@ -76,7 +76,7 @@ class DockingSelectionHandler(
 
         state = self.screen.app.current_state
         phase = state.context.docking_recommendation.phase or "initial"
-        if phase not in ("initial", "topk_selected", "filtering"):
+        if phase not in ("initial", "topk_selected"):
             self.screen.add_system_message(
                 "Natural language overrides only apply to the strategy form. "
                 "Use the panel actions or jump back to Phase 1.",
@@ -87,12 +87,6 @@ class DockingSelectionHandler(
         if not isinstance(
             self.screen._active_structured_widget, DockingStrategyPanel
         ):
-            if phase == "filtering":
-                self.screen.add_system_message(
-                    "Switching to strategy form for NL input. "
-                    "Unsaved filter settings will be lost — use the panel buttons to apply first.",
-                    "warning-text",
-                )
             self._show_strategy_panel()
 
         plan = state.docking_plan
