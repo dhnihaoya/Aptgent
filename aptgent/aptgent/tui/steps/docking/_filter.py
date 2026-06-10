@@ -59,9 +59,7 @@ class _FilterMixin:
                 default_ratio=default_ratio,
             )
         )
-        self.screen.set_input_placeholder(
-            "Adjust the mutation ratio filter, or type docking parameter changes."
-        )
+        self.screen.set_input_enabled(False)
 
     def _on_filter_submitted(self, data: dict) -> None:
         state = self.screen.app.current_state
