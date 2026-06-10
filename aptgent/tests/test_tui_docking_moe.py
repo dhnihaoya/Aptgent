@@ -43,12 +43,86 @@ def test_source_panel_accepts_moe_available_kwarg():
     assert panel_no_moe.moe_available is False
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("moe_available", [True, False])
+async def test_source_panel_always_two_buttons(moe_available):
+    """Regardless of MOE availability, only RNAComposer + manual upload show."""
+    from textual.app import App, ComposeResult
+    from textual.widgets import Button
+
+    from aptgent.tui.widgets.panels._docking import DockingSourcePanel
+
+    class _TestApp(App):
+        def compose(self) -> ComposeResult:
+            yield DockingSourcePanel(top_k=5, moe_available=moe_available)
+
+    app = _TestApp()
+    async with app.run_test():
+        button_ids = {b.id for b in app.query(Button)}
+
+    assert button_ids == {"btn-source-rnacomposer", "btn-source-manual"}
+
+
+@pytest.mark.parametrize(
+    "moe_available, expected_worker",
+    [(True, "_moe_combined_worker"), (False, "_rnacomposer_worker")],
+)
+def test_rnacomposer_routes_by_moe_availability(moe_available, expected_worker):
+    """RNAComposer choice runs the combined worker only when MOE is available."""
+    from aptgent.tui.steps.docking._handler import DockingSelectionHandler
+
+    handler = DockingSelectionHandler(MagicMock())
+    handler._is_moe_available = MagicMock(return_value=moe_available)
+    handler._moe_combined_worker = MagicMock()
+    handler._rnacomposer_worker = MagicMock()
+
+    def fake_run_worker(fn, *args, **kwargs):
+        fn()  # invoke the lambda so the routed worker is called synchronously
+
+    handler.run_worker = fake_run_worker
+
+    with patch(
+        "aptgent.tui.steps.docking._source._filtered_top_k_bundle",
+        return_value=(0, []),
+    ), patch(
+        "aptgent.adapters.receptor_prep.export_top_k_sequences",
+    ):
+        handler._on_source_selected("rnacomposer")
+
+    other_worker = (
+        "_rnacomposer_worker" if expected_worker == "_moe_combined_worker"
+        else "_moe_combined_worker"
+    )
+    getattr(handler, expected_worker).assert_called_once()
+    getattr(handler, other_worker).assert_not_called()
+
+
 def test_moe_progress_panel_initialization():
     """DockingMOEProgressPanel should initialize with total."""
     from aptgent.tui.widgets.panels._docking import DockingMOEProgressPanel
 
     panel = DockingMOEProgressPanel(total=5)
     assert panel.total == 5
+    assert panel.done == 0
+
+
+@pytest.mark.anyio
+async def test_moe_progress_panel_update_progress():
+    """DockingMOEProgressPanel.update_progress should reflect new counts."""
+    from textual.app import App, ComposeResult
+
+    from aptgent.tui.widgets.panels._docking import DockingMOEProgressPanel
+
+    class _TestApp(App):
+        def compose(self) -> ComposeResult:
+            yield DockingMOEProgressPanel(total=4)
+
+    app = _TestApp()
+    async with app.run_test():
+        panel = app.query_one(DockingMOEProgressPanel)
+        panel.update_progress(done=3, total=4)
+        assert panel.done == 3
+        assert panel.total == 4
 
 
 def test_handler_recognizes_moe_actions():

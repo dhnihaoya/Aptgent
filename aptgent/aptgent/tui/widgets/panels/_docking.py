@@ -380,53 +380,37 @@ class DockingSourcePanel(_BaseStructuredPanel):
         yield Static("How will the receptor PDBQTs be prepared?", classes="panel-title")
         if self.moe_available:
             yield Static(
-                "✓ [bold green]MOE available[/] — AmberEHT minimization enabled",
+                "✓ [bold green]MOE available[/] — RNAComposer structures are "
+                "automatically converted to DNA and minimized with AmberEHT.",
                 classes="moe-status",
-            )
-            help_text = (
-                "Each of the top candidates needs its own 3D structure. "
-                "Each candidate is predicted via RNAComposer and hydrogens "
-                "are added in AutoDockTools. MOE-based processing is also "
-                "available."
             )
         else:
             yield Static(
                 "✗ [dim]MOE not available[/] — using RNAComposer + Open Babel fallback",
                 classes="moe-status",
             )
-            help_text = (
-                "Each of the top candidates needs its own 3D structure. "
-                "Each candidate is predicted via RNAComposer and hydrogens "
-                "are added in AutoDockTools."
-            )
+        help_text = (
+            "Each of the top candidates needs its own 3D structure. Choose "
+            "[bold]RNAComposer[/bold] to predict and prepare every structure "
+            "automatically, or [bold]upload your own PDB[/bold] files."
+        )
         yield Static(help_text, classes="panel-help")
         yield Static(f"Top candidates to prepare: [bold]{self.top_k}[/bold]")
         with Horizontal():
-            yield Button(
-                "Manual upload",
-                id="btn-source-manual",
-                variant="primary",
-            )
             yield Button(
                 "RNAComposer (auto)",
                 id="btn-source-rnacomposer",
                 variant="warning",
             )
-            if self.moe_available:
-                yield Button(
-                    "RNAComposer + MOE (auto)",
-                    id="btn-source-rnacomposer-moe",
-                    variant="success",
-                )
-                yield Button(
-                    "MOE only (upload RNA PDB)",
-                    id="btn-source-moe-manual",
-                    variant="primary",
-                )
+            yield Button(
+                "Upload my own PDB",
+                id="btn-source-manual",
+                variant="primary",
+            )
 
     def on_mount(self) -> None:
         try:
-            self.query_one("#btn-source-manual", Button).focus()
+            self.query_one("#btn-source-rnacomposer", Button).focus()
         except NoMatches:
             _log.debug("Focus target missing during on_mount", exc_info=True)
 
@@ -438,14 +422,6 @@ class DockingSourcePanel(_BaseStructuredPanel):
         elif event.button.id == "btn-source-rnacomposer":
             self.post_message(
                 StructuredActionRequested(Step.DOCKING_SELECTION, "source:rnacomposer")
-            )
-        elif event.button.id == "btn-source-rnacomposer-moe":
-            self.post_message(
-                StructuredActionRequested(Step.DOCKING_SELECTION, "source:rnacomposer-moe")
-            )
-        elif event.button.id == "btn-source-moe-manual":
-            self.post_message(
-                StructuredActionRequested(Step.DOCKING_SELECTION, "source:moe-manual")
             )
 
 
@@ -694,14 +670,33 @@ class DockingMOEProgressPanel(_BaseStructuredPanel):
     }
     """
 
+    DEFAULT_CSS = """
+    DockingMOEProgressPanel > .panel-help {
+        margin: 1 0;
+    }
+    DockingMOEProgressPanel > .panel-note {
+        color: $text-muted;
+        margin-bottom: 0;
+    }
+    DockingMOEProgressPanel > .progress-bar {
+        color: $primary;
+        margin-bottom: 1;
+    }
+    DockingMOEProgressPanel Horizontal {
+        height: auto;
+    }
+    """
+
     def __init__(
         self,
         *,
         total: int = 0,
+        done: int = 0,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.total = total
+        self.done = done
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -709,14 +704,33 @@ class DockingMOEProgressPanel(_BaseStructuredPanel):
             classes="panel-title",
         )
         yield Static(
-            f"Running MOE batch processing on {self.total} candidate(s). "
-            "MOE processes all structures in a single batch — progress "
-            "updates will appear in the chat above. "
-            "Cancel takes effect after the current batch completes.",
+            "Running MOE on each structure (RNA \u2192 DNA + AmberEHT minimize). "
+            "Cancel takes effect after the current structure completes.",
             classes="panel-help",
+        )
+        yield Static(
+            f"Processed: {self.done} / {self.total} structures",
+            classes="panel-note",
+            id="dock-moe-progress",
+        )
+        yield Static(
+            _bar_markup(self.done, self.total),
+            classes="progress-bar",
+            id="dock-moe-bar",
         )
         with Horizontal():
             yield Button("Cancel", id="btn-moe-cancel", variant="warning")
+
+    def update_progress(self, *, done: int, total: int) -> None:
+        self.done = done
+        self.total = total
+        try:
+            self.query_one("#dock-moe-progress", Static).update(
+                f"Processed: {done} / {total} structures"
+            )
+            self.query_one("#dock-moe-bar", Static).update(_bar_markup(done, total))
+        except NoMatches:
+            _log.debug("MOE progress label missing during update", exc_info=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-moe-cancel":

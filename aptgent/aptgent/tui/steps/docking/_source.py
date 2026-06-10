@@ -118,29 +118,41 @@ class _SourceMixin:
             return
 
         if source == "rnacomposer":
+            # When MOE is available the "RNAComposer" choice automatically
+            # routes through RNAComposer + MOE (RNA→DNA + AmberEHT minimize);
+            # otherwise it falls back to RNAComposer + Open Babel.
+            use_moe = self._is_moe_available()
             recommendation.phase = "preparing"
-            recommendation.strategy = "rnacomposer"
+            recommendation.strategy = "rnacomposer-moe" if use_moe else "rnacomposer"
+            state.docking_plan.receptor_source = recommendation.strategy
             structures_dir.mkdir(parents=True, exist_ok=True)
             self.screen.app.save_state()
             self.screen.add_system_message(
                 _docking_param_summary(state.docking_plan),
             )
             self._rnacomposer_cancel.clear()
-            self.run_worker(
-                lambda: self._rnacomposer_worker(
-                    [
-                        (_candidate_id(cand, i), cand.sequence)
-                        for i, cand in enumerate(top_candidates)
-                    ],
-                    structures_dir,
-                ),
-                activity="Submitting candidates to RNAComposer...",
-            )
-            self.screen.add_structured_widget(
-                DockingRNAComposerProgressPanel(
-                    total=len(top_candidates),
+            seq_pairs = [
+                (_candidate_id(cand, i), cand.sequence)
+                for i, cand in enumerate(top_candidates)
+            ]
+            if use_moe:
+                self.run_worker(
+                    lambda: self._moe_combined_worker(seq_pairs, structures_dir),
+                    activity="Submitting candidates to RNAComposer + MOE...",
                 )
-            )
+                self.screen.add_structured_widget(
+                    DockingRNAComposerProgressPanel(total=len(top_candidates))
+                )
+            else:
+                self.run_worker(
+                    lambda: self._rnacomposer_worker(seq_pairs, structures_dir),
+                    activity="Submitting candidates to RNAComposer...",
+                )
+                self.screen.add_structured_widget(
+                    DockingRNAComposerProgressPanel(
+                        total=len(top_candidates),
+                    )
+                )
             return
 
         if source == "rnacomposer-moe":
