@@ -51,7 +51,7 @@
 - `ResumePickerScreen`：从 chat screen 内恢复已保存的 run。
 - `ThemePickerScreen`：主题切换 UI。
 
-主工作流由 `ChatScreen` 驱动，每一步的行为实现位于 `tui/steps/` 目录，每个 step 一个模块（如 `intake.py`、`structure.py`、`scoring.py` 等），由 `tui/steps/factory.py` 中的 `create_handler()` 按 `Step` 枚举分发。
+主工作流由 `ChatScreen` 驱动，每一步的行为实现位于 `tui/steps/` 目录，每个 step 一个模块（如 `intake.py`、`structure.py`、`scoring.py` 等），由 `tui/steps/factory.py` 中的 `create_handler()` 按 `Step` 枚举分发。`factory.py` 同时导出 `detached_job_step_name(step)`，通过读取 handler 的 `JOB_STEP` 类属性返回对应的 detached job runner 步骤名，供 cancel/resume 流程使用。
 
 排查或修改主流程时，应直接沿 `ChatScreen` → `factory.py` → 对应 step 模块这条路径工作。
 
@@ -63,14 +63,14 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme`、`/
 
 负责用户交互、展示、输入收集和 step 触发：
 
-- `aptgent/aptgent/tui/screens/`：chat、welcome、quit_confirm、resume、theme_picker。
-- `aptgent/aptgent/tui/steps/`：每个 workflow step 一个模块（`intake.py`、`pdb_intake.py`、`structure.py`、`site_proposal.py`、`enumeration.py`、`scoring.py`、`specificity.py`、`docking_selection.py`（re-export shim，实现在 `docking/` 子包）、`docking_run.py`、`spatial_rank.py`、`report.py`），由 `factory.py` 分发。辅助模块：`intake_heuristics.py`（intake 输入启发式规则）、`intake_resolver.py`（intake 输入解析）、`state_reset.py`（状态重置辅助）。
+- `aptgent/aptgent/tui/screens/`：chat、welcome、quit_confirm、resume、theme_picker、`chat_commands.py`（`ChatCommandController`，从 chat.py 提取）、`chat_resume.py`（`detect_resume_target()` 通过遍历 `STEP_ORDER` + `detached_job_step_name()` 动态推导 resume 目标，新增 detached-job 步骤无需手动维护元组）。
+- `aptgent/aptgent/tui/steps/`：每个 workflow step 一个模块（`intake.py`、`pdb_intake.py`、`structure.py`、`site_proposal.py`、`enumeration.py`、`scoring.py`、`specificity.py`（mixin 组合：`SpecificityAnalogMixin` + `SpecificityPanelMixin` + `SpecificityProgressMixin` + `JobAttachMixin`）、`docking_selection.py`（re-export shim，实现在 `docking/` 子包）、`docking_run.py`、`spatial_rank.py`、`report.py`），由 `factory.py` 分发。辅助模块：`intake_heuristics.py`（intake 输入启发式规则）、`intake_resolver.py`（intake 输入解析）、`state_reset.py`（状态重置辅助）、`job_progress.py`（`JobProgressTracker` dataclass，集中管理 detached job 进度状态）、`specificity_analogs.py`（`SpecificityAnalogMixin`，类似物处理）、`specificity_panels.py`（`SpecificityPanelMixin`，类似物 UI 面板）、`specificity_progress.py`（`SpecificityProgressMixin`，detached job 进度 mixin）。
 - `aptgent/aptgent/tui/steps/common/`：跨 step 共用工具（`__init__.py` 重新导出所有公共符号，保持 `from aptgent.tui.steps.common import X` 兼容）。子模块：`coercion.py`（类型转换）、`docking_plan.py`（对接参数校验）、`formatting.py`（候选排名展示格式化）、`intake_format.py`（intake 输出格式化）、`llm_ui.py`（LLM UI 辅助 + `capture_streaming_result` 流式结果捕获）、`site_proposal_validate.py`（位点方案校验）、`specificity_format.py`（特异性结果格式化）。
 - `aptgent/aptgent/tui/steps/empty_candidates.py`：空候选统一处理（`is_empty_enumeration_result`、`prepare_empty_candidate_recovery`、`clear_site_selection_retry_feedback`、`apply_empty_candidate_recovery_ui`），被 enumeration、scoring、chat back-handler 共用。
 - `aptgent/aptgent/tui/steps/base.py`：`StepHandler` 基类（含 `allow_empty_input` 属性控制是否接受空输入提交、`_report_error()` 统一错误报告（线程安全：主线程直调，worker 线程走 `call_from_thread`）、`reload_run_state()` 从持久化重载并返回最新状态）。
 - `aptgent/aptgent/tui/steps/job_mixin.py`：可分离后台任务 mixin（attach/spawn detached subprocess）。
-- `aptgent/aptgent/tui/widgets/`：通用 widget（`StatusPanel`、`StepProgressBar`、`StructuredInput`、chat bubble 系列）。子包 `panels/`（`_core.py`、`_intake.py`、`_specificity.py`、`_docking.py`）和 `common.py` 提供步骤专用面板组件。
-- `aptgent/aptgent/tui/commands.py`：斜杠命令注册、主题预设。
+- `aptgent/aptgent/tui/widgets/`：通用 widget（`StatusPanel`、`StepProgressBar`、`StructuredInput`、chat bubble 系列（`SystemBubble`、`StreamingBubble`、`ThinkingBubble`、`UserBubble`、`ProgressBubble`、`ActivityBubble`））。子包 `panels/`（`_core.py`、`_intake.py`、`_specificity.py`、`_docking.py`）和 `common.py` 提供步骤专用面板组件。
+- `aptgent/aptgent/tui/commands.py`：斜杠命令注册、主题预设（当前 6 个：clear-lanes、clean-minimal-light、warm-industrial、QTY、ZYX、QJX）。
 
 ### Workflow 层
 
@@ -82,7 +82,7 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme`、`/
 - `aptgent/aptgent/workflow/context.py`：context 读写辅助函数（`record_intake_context()`、`build_site_proposal_llm_context()` 等）。
 - `aptgent/aptgent/workflow/run_card.py`：工作流完成时自动生成 `run_card.json`（版本、模型哈希、工具版本、LLM 配置、步骤时间）。
 
-`workflow/engine.py` 中的 `TRANSITIONS` 是当前流程图的真实来源。改流程顺序时先改这里，再检查对应 handler 和测试。
+`workflow/engine.py` 中的 `TRANSITIONS` 是当前流程图的真实来源。改流程顺序时先改这里，再检查对应 handler 和测试。`STEP_ORDER` 是公开的步骤顺序常量，被 resume 逻辑（`chat_resume.py`）和步骤显示编号使用；新增 detached-job 步骤时只需在 handler 上定义 `JOB_STEP`，resume 会自动发现。
 
 完成（`engine.complete()`）时会自动调用 `write_run_card()` 写入可复现性记录。
 
@@ -93,7 +93,7 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme`、`/
 - `aptgent/aptgent/domain/models.py`
 - `aptgent/aptgent/domain/enums.py`
 - `aptgent/aptgent/domain/text_utils.py`：文本规范化（`clean_text`：strip + 折叠内部空白）。
-- `aptgent/aptgent/domain/ranking.py`：概率直方图排名（`ProbHistogramRanker`）、通用 `competition_ranks` / `dense_ranks` 函数、`select_top_y_by_affinity`。
+- `aptgent/aptgent/domain/ranking.py`：基于精确概率值的 dense ranking（`ProbHistogramRanker`：以精确浮点概率值为 dict key 累计计数，dense rank = 严格大于的不同概率值个数 + 1）、`rank_sums_from_model_probs`、通用 `competition_ranks` / `dense_ranks` 函数、`select_top_y_by_affinity`。
 - `aptgent/aptgent/domain/sequence.py`：标准序列转换（`rna_to_dna`、`dna_to_rna`）和残基→碱基映射（`NUCLEOTIDE_TO_BASE`）。adapter 层和 predictor_runtime 均从此导入，避免各处重复定义。
 
 涉及跨层数据传递时，优先复用这里的模型，不要在 UI 或 adapter 层重新发明结构。
@@ -123,6 +123,7 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme`、`/
 - `VinaAdapter`：AutoDock Vina 对接（`docking.py`）。
 - `ReceptorPreparationAdapter`：受体 PDBQT 准备（`receptor_prep.py`）。
 - `RNAComposerAdapter`：RNAComposer 三级结构预测（`rnacomposer.py`）。
+- `MoePreparationAdapter`（可选）：MOE 受体准备（`moe_prep.py`）。当 `moebatch` 可用时，替代 `revert_ribose_to_deoxyribose` + `obminimize`，使用 AmberEHT 力场 RNA→DNA 转换和能量最小化。内含 SVL 脚本 `resources/scripts/moe_rna2dna_min.svl`（sdev 0.5 Å, gtest 0.1 的全重原子 tether 约束最小化）。通过 `APTGENT_MOEBATCH` 或 `tools.toml` `[moe]` 配置；不可用时自动隐藏 MOE 选项。
 - `PdbAnalysisAdapter`：PDB 文件下载、解析、链/配体提取（`pdb_analysis.py`）。
 - `StructureLookupAdapter`（协议）：3D 结构数据库查询（`structure_services.py`）。
 - `StructureFetchAdapter`（协议）：3D 结构文件下载（`structure_services.py`）。
@@ -195,6 +196,8 @@ intake step 内部包含 PDB 输入子流程（`tui/steps/pdb_intake.py`），�
 
 当 docking 不可用（Vina 未安装或配置禁用）时，`docking_selection` step 可直接跳转到 `specificity_filter`，跳过 `docking_run`。`DOCKING_SELECTION → SPECIFICITY_FILTER` 转换已在 `TRANSITIONS` 中注册。TUI 层通过 `_is_docking_enabled()` 检测可用性，`_skip()` 执行跳转。跳过后 specificity filter 会对全部候选运行（无亲和力筛选）。
 
+当 MOE 可用时，docking source 面板额外显示两个选项：RNAComposer + MOE（自动获取 RNA 结构后 MOE 处理）和 MOE only（用户上传 RNA PDB 后 MOE 处理）。MOE 处理完成后走与现有路径相同的 Vina docking、spatial_rank 等后续步骤。
+
 ### Pose-based spatial ranking（论文 Section 3.4.3）
 
 `docking_run` 在每个成功的 `DockingResult.raw_outputs` 中写入 `output_pdbqt` / `receptor_pdbqt` / `ligand_pdbqt` 路径（断点续跑结果同样补 `output_pdbqt` / `receptor_pdbqt`）。`spatial_rank` step 把这些 `docking_results` 传给 `SpatialRankAdapter.rank_batch`：
@@ -219,6 +222,7 @@ intake step 内部包含 PDB 输入子流程（`tui/steps/pdb_intake.py`），�
 - `aptgent/aptgent/predictor_runtime/features.py`
 - `aptgent/aptgent/predictor_runtime/cuda.py`
 - `aptgent/aptgent/predictor_runtime/paths.py`（模型目录默认路径解析）
+- `aptgent/aptgent/predictor_runtime/descriptor_schema.py`（规范化 RDKit 描述子名称列表，保证特征维度与训练模型一致）
 - `aptgent/aptgent/resources/predictor_models/`
 
 当前 predictor runtime 中的 ensemble 规则是严格规则：只有所有模型都预测为 `1`，ensemble label 才为 `1`。不要把旧文档或历史措辞当作真实实现来源，真实行为以代码为准。
@@ -236,6 +240,7 @@ intake step 内部包含 PDB 输入子流程（`tui/steps/pdb_intake.py`），�
 - 级联早退过滤（每个模型只处理上一模型的幸存者）
 - 分块枚举（65536 为块，纯 NumPy 字节操作生成 mutant）
 - CUDA 加速（PyTorch RNN/biRNN `.to("cuda")`，XGBoost `DMatrix(device="cuda")`）
+- k-mer 缓存（`build_kmer_cache` 预计算所有 k 值的归一化 k-mer 计数矩阵，`assemble_features_from_cache` 按模型需要的 k 值列选取并拼接描述子，避免每个模型独立重复 k-mer index / bincount 计算）
 
 `EnumerationHandler`（`tui/steps/enumeration.py`）自动检测 adapter 是否有 `predict_mutation_batch` 方法来决定走加速路径还是慢速回退路径。只保留阳性命中（positives-only）写入 `scored_candidates.jsonl`。配置见 `workflow.toml` 的 `[enumeration]` 下 `sub_batch_size` 和 `progress_every`。
 
@@ -257,7 +262,7 @@ TUI 层（`enumeration.py`）在检测到取消时，显示警告信息并回退
 - `done` / `error`：终止事件。
 - stdin 接受 `cancel\n` 软取消信号。
 
-`SpecificityHandler`（`tui/steps/specificity.py`）继承 `JobAttachMixin`，`JOB_STEP="specificity_filter"`；analog 选择完成后通过 `attach_or_spawn_job()` 启动 detached job runner（`_run_specificity` in `jobs/runner/specificity.py`）。runner 持续维护 `runs/<id>/artifacts/specificity_results.jsonl`（首行为 meta，其余按 candidate 写入 kept/removed/failed_analogs），断点续跑时通过 meta 匹配 + `skip_pairs` 把已完成的 `(target_idx, candidate_id)` 让子进程跳过。
+`SpecificityHandler`（`tui/steps/specificity.py`）通过 mixin 组合（`SpecificityAnalogMixin`、`SpecificityPanelMixin`、`SpecificityProgressMixin` + `JobAttachMixin`），`JOB_STEP="specificity_filter"`；analog 选择完成后通过 `attach_or_spawn_job()` 启动 detached job runner（`_run_specificity` in `jobs/runner/specificity.py`）。runner 持续维护 `runs/<id>/artifacts/specificity_results.jsonl`（首行为 meta，其余按 candidate 写入 kept/removed/failed_analogs），断点续跑时通过 meta 匹配 + `skip_pairs` 把已完成的 `(target_idx, candidate_id)` 让子进程跳过。
 
 UI 上 `ProgressBubble` 与 candidate enumeration 完全一致，信息行格式为 `Progress: X/Y | Kept: K | Removed: R | Target: <name>`。
 
@@ -337,7 +342,8 @@ aptgent run-job <run_id> <step>
 - `test_predictor_adapter.py`：预测器 adapter 测试
 - `test_jobs_events.py`、`test_jobs_persistence_paths.py`、`test_jobs_pid.py`、`test_jobs_runner_cli.py`、`test_jobs_specificity_runner.py`：jobs 层事件、路径、PID、CLI 与 specificity runner 测试
 - `test_tui_job_mixin.py`：TUI detached job attach/spawn 行为测试
-- `test_tui_app_navigation.py`、`test_tui_chat_widgets.py`、`test_tui_docking_selection.py`、`test_tui_intake_pdb.py`、`test_tui_scoring_retry.py`、`test_tui_secondary_structure.py`、`test_tui_site_proposal.py`、`test_tui_specificity.py`：TUI 行为测试
+- `test_tui_job_progress.py`：TUI detached job 进度追踪测试
+- `test_tui_app_navigation.py`、`test_tui_chat_widgets.py`、`test_tui_docking_selection.py`、`test_tui_docking_run.py`、`test_tui_intake_pdb.py`、`test_tui_scoring_retry.py`、`test_tui_secondary_structure.py`、`test_tui_site_proposal.py`、`test_tui_specificity.py`：TUI 行为测试
 - `test_tui_markdown_theme.py`：chat markdown 主题测试
 - `test_enumeration_ui.py`：枚举步骤 UI 测试
 - `test_pdb_analysis.py`：PDB 分析 adapter 测试
@@ -348,24 +354,27 @@ aptgent run-job <run_id> <step>
 - `test_protocol_cancel.py`、`test_protocol_line_json.py`、`test_protocol_subprocess_stream.py`：protocol 层取消、JSONL、子进程流测试
 - `test_domain_text_utils.py`：domain 文本工具测试
 - `test_docking_skip_path.py`：docking skip 路径测试
+- `test_moe_prep.py`：MOE 受体准备 adapter 测试
+- `test_tui_docking_moe.py`：MOE 源选择与 worker 测试
 
 修改以下内容后，至少应重新检查对应测试：
 
 - 配置加载 / 环境变量展开 → `test_bootstrap_config.py`
 - 依赖装配 / AppRuntime → `test_bootstrap_container.py`
 - 环境诊断命令 → `test_cli_doctor.py`
-- domain 数据模型 → `test_domain_models.py`、`test_domain_ranking.py`
+- domain 数据模型 → `test_domain_models.py`、`test_domain_ranking.py`（含 exact-float dense ranking）
 - skill 基类 / 注册表 → `test_skill_base.py`
 - workflow 状态模型 → `test_workflow_state.py`
-- workflow step / 状态流转 → `test_workflow_engine.py`、`test_persistence.py`
+- workflow step / 状态流转 → `test_workflow_engine.py`、`test_persistence.py`（含 `STEP_ORDER` 公开常量）
 - LLM skill 行为 / 输出校验 → `test_skills.py`、`test_llm_client_retry.py`、`test_llm_client_payloads.py`、`test_llm_result_validation.py`、`test_workflow_context_helpers.py`
-- predictor / 特征提取 → `test_predictor_adapter_mutation_protocol_*.py`、`test_predictor_feature_matrix_batch.py`、`test_predictor_mutation_batch_runtime.py`、`test_predictor_specificity_batch_protocol.py`、`test_tui_enumeration_acceleration.py`、`test_feature_matrix.py`、`test_predictor_adapter.py`
+- predictor / 特征提取 → `test_predictor_adapter_mutation_protocol_*.py`、`test_predictor_feature_matrix_batch.py`、`test_predictor_mutation_batch_runtime.py`、`test_predictor_specificity_batch_protocol.py`、`test_tui_enumeration_acceleration.py`、`test_feature_matrix.py`、`test_predictor_adapter.py`（含 k-mer cache `build_kmer_cache` / `assemble_features_from_cache`）
 - TUI step handler / UI → `test_tui_*.py`、`test_enumeration_ui.py`、`test_tui_markdown_theme.py`
 - PDB / 结构分析 → `test_pdb_analysis.py`
 - 受体准备 → `test_receptor_prep.py`
 - RNAComposer → `test_rnacomposer_adapter.py`
 - 空间排序 → `test_spatial_rank.py`
-- detached job 系统 → `test_jobs_*.py`、`test_tui_job_mixin.py`
+- detached job 系统 → `test_jobs_*.py`、`test_tui_job_mixin.py`、`test_tui_job_progress.py`（含 `JobProgressTracker` dataclass）
+- resume / STEP_ORDER 动态推导 → `test_tui_app_navigation.py`
 - protocol 层子进程通信 → `test_protocol_*.py`
 - domain 文本工具 → `test_domain_text_utils.py`
 - docking skip 路径 → `test_docking_skip_path.py`
