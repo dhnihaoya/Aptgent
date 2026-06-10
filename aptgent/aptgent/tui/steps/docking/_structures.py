@@ -9,6 +9,7 @@ from aptgent.adapters.receptor_prep import scan_structure_directory
 from aptgent.tui.steps.common import DEFAULT_GRID_PADDING_ANGSTROM
 from aptgent.tui.widgets.structured_input import (
     DockingManualUploadPanel,
+    DockingMOEProgressPanel,
     DockingRNAComposerProgressPanel,
 )
 from aptgent.workflow.context import record_tertiary_structure_context
@@ -396,3 +397,344 @@ class _StructuresMixin:
                 )
 
         self._threadsafe(_update)
+
+    # ------------------------------------------------------------------
+    # MOE helpers
+    # ------------------------------------------------------------------
+
+    def _convert_moe_results_to_pdbqt(
+        self,
+        moe_results: dict[str, Path],
+        structures_dir: Path,
+        state: Any,
+    ) -> tuple[dict[str, str], dict[str, dict[str, list[float]]], int]:
+        """Convert MOE-output DNA PDBs to PDBQT + compute grid boxes.
+
+        Returns (receptor_paths, grid_boxes, postprocessed_count).
+        Partial failures are logged individually; only successful conversions
+        are included in the results.
+        """
+        from aptgent.adapters.moe_prep import MoePreparationAdapter
+
+        moe_adapter: MoePreparationAdapter = self.screen.app.moe_prep_adapter
+        receptor_paths: dict[str, str] = {}
+        grid_boxes: dict[str, dict[str, list[float]]] = {}
+        postprocessed_count = 0
+
+        for cand_id, moe_pdb in moe_results.items():
+            try:
+                pdbqt_path = structures_dir / f"{cand_id}.pdbqt"
+                moe_adapter.prepare_pdbqt(moe_pdb, pdbqt_path)
+                box = moe_adapter.compute_box(pdbqt_path, padding=(
+                    state.docking_plan.grid_padding_angstrom
+                    if state.docking_plan is not None
+                    else DEFAULT_GRID_PADDING_ANGSTROM
+                ))
+                receptor_paths[cand_id] = str(pdbqt_path)
+                grid_boxes[cand_id] = box.as_dict()
+                postprocessed_count += 1
+            except Exception as exc:
+                self._threadsafe(
+                    self.screen.add_system_message,
+                    f"PDBQT conversion failed for {cand_id}: {exc}",
+                    "error-text",
+                )
+
+        return receptor_paths, grid_boxes, postprocessed_count
+
+    # ------------------------------------------------------------------
+    # MOE combined (RNAComposer + MOE)
+    # ------------------------------------------------------------------
+
+    def _moe_combined_worker(
+        self,
+        candidates: list[tuple[str, str]],
+        structures_dir: Path,
+    ) -> None:
+        """RNAComposer fetch followed by MOE RNA->DNA+minimize batch processing."""
+        from aptgent.adapters.moe_prep import MoePreparationAdapter
+
+        state = self.screen.app.current_state
+        moe_adapter: MoePreparationAdapter = self.screen.app.moe_prep_adapter
+        receptor_paths: dict[str, str] = {}
+        grid_boxes: dict[str, dict[str, list[float]]] = {}
+        prep = self._receptor_prep_adapter()
+        adapter = getattr(self.screen.app, "tertiary_structure_adapter", None)
+        if adapter is None:
+            self._report_error("RNAComposer adapter is not configured.")
+            return
+
+        total = len(candidates)
+        fetched_ids: list[str] = []
+
+        # Stage 1: Fetch all RNA PDBs from RNAComposer sequentially.
+        # Unlike _rnacomposer_worker, we don't pipeline fetch+postprocess
+        # because MOE needs all files available before its batch run.
+        for cand_id, sequence in candidates:
+            if self._rnacomposer_cancel.is_set():
+                break
+            rna_seq = prep.dna_to_rna(sequence)
+
+            def _on_poll(poll_count: int, elapsed: float) -> None:
+                if self._rnacomposer_cancel.is_set():
+                    raise RuntimeError("cancelled")
+
+            try:
+                adapter.predict_to_path(
+                    rna_seq,
+                    secondary_structure="",
+                    output_dir=structures_dir,
+                    candidate_id=cand_id,
+                    on_poll=_on_poll,
+                )
+                fetched_ids.append(cand_id)
+            except Exception as exc:
+                if self._rnacomposer_cancel.is_set():
+                    break
+                self._threadsafe(
+                    self.screen.add_system_message,
+                    f"RNAComposer failed for {cand_id}: {exc}",
+                    "error-text",
+                )
+
+        if self._rnacomposer_cancel.is_set():
+            self._threadsafe(
+                self.screen.add_system_message,
+                f"Cancelled after fetching {len(fetched_ids)}/{total} structures.",
+                "warning-text",
+            )
+            self._threadsafe(self._show_strategy_panel)
+            return
+
+        if not fetched_ids:
+            self._threadsafe(
+                self.screen.add_system_message,
+                "All RNAComposer predictions failed.",
+                "error-text",
+            )
+            self._threadsafe(self._show_strategy_panel)
+            return
+
+        # Stage 2: MOE batch processing
+        try:
+            moe_results = moe_adapter.convert_rna_to_dna_minimize(
+                input_dir=structures_dir,
+                output_dir=structures_dir / "moe_output",
+                candidate_ids=fetched_ids,
+                on_progress=lambda msg: self._threadsafe(
+                    self.screen.add_system_message, msg
+                ),
+            )
+        except Exception as exc:
+            self._threadsafe(
+                self.screen.add_system_message,
+                f"MOE processing failed: {exc}",
+                "error-text",
+            )
+            self._threadsafe(self._show_strategy_panel)
+            return
+
+        if self._rnacomposer_cancel.is_set():
+            self._threadsafe(
+                self.screen.add_system_message,
+                "MOE cancelled; returning to strategy panel.",
+                "warning-text",
+            )
+            self._threadsafe(self._show_strategy_panel)
+            return
+
+        # Stage 3: Convert to PDBQT + compute boxes
+        receptor_paths, grid_boxes, postprocessed_count = (
+            self._convert_moe_results_to_pdbqt(moe_results, structures_dir, state)
+        )
+
+        if postprocessed_count == 0:
+            self._threadsafe(
+                self.screen.add_system_message,
+                "All PDBQT conversions failed.",
+                "error-text",
+            )
+            self._threadsafe(self._show_strategy_panel)
+            return
+
+        _apply_docking_plan(
+            state,
+            receptor_paths=receptor_paths,
+            grid_boxes=grid_boxes,
+            source="rnacomposer-moe",
+            top_k=postprocessed_count,
+        )
+        record_tertiary_structure_context(
+            state,
+            provider="rnacomposer+moe",
+            receptor_source="rnacomposer-moe",
+            receptor_status="completed",
+            result_path=str(structures_dir),
+            error="",
+        )
+        self._threadsafe(self.screen.app.save_state)
+        self._threadsafe(
+            self.screen.add_system_message,
+            f"RNAComposer + MOE prepared {postprocessed_count}/{total} receptor PDBQTs.",
+        )
+        self._threadsafe(self._show_param_panel)
+
+    # ------------------------------------------------------------------
+    # MOE manual (user-provided RNA PDBs)
+    # ------------------------------------------------------------------
+
+    def _moe_manual_worker(
+        self,
+        rna_dir: Path,
+        structures_dir: Path,
+        candidate_ids: list[str],
+    ) -> None:
+        """MOE batch processing of user-provided RNA PDB files."""
+        from aptgent.adapters.moe_prep import MoePreparationAdapter
+
+        state = self.screen.app.current_state
+        moe_adapter: MoePreparationAdapter = self.screen.app.moe_prep_adapter
+
+        total = len(candidate_ids)
+
+        try:
+            moe_results = moe_adapter.convert_rna_to_dna_minimize(
+                input_dir=rna_dir,
+                output_dir=structures_dir / "moe_output",
+                candidate_ids=candidate_ids,
+                on_progress=lambda msg: self._threadsafe(
+                    self.screen.add_system_message, msg
+                ),
+            )
+        except Exception as exc:
+            self._threadsafe(
+                self.screen.add_system_message,
+                f"MOE processing failed: {exc}",
+                "error-text",
+            )
+            self._threadsafe(self._show_strategy_panel)
+            return
+
+        if self._rnacomposer_cancel.is_set():
+            self._threadsafe(
+                self.screen.add_system_message,
+                "MOE cancelled; returning to strategy panel.",
+                "warning-text",
+            )
+            self._threadsafe(self._show_strategy_panel)
+            return
+
+        receptor_paths, grid_boxes, postprocessed_count = (
+            self._convert_moe_results_to_pdbqt(moe_results, structures_dir, state)
+        )
+
+        if postprocessed_count == 0:
+            self._threadsafe(
+                self.screen.add_system_message,
+                "All PDBQT conversions failed.",
+                "error-text",
+            )
+            self._threadsafe(self._show_strategy_panel)
+            return
+
+        _apply_docking_plan(
+            state,
+            receptor_paths=receptor_paths,
+            grid_boxes=grid_boxes,
+            source="moe-manual",
+            top_k=postprocessed_count,
+        )
+        record_tertiary_structure_context(
+            state,
+            provider="moe",
+            receptor_source="moe-manual",
+            receptor_status="completed",
+            result_path=str(rna_dir),
+            error="",
+        )
+        self._threadsafe(self.screen.app.save_state)
+        self._threadsafe(
+            self.screen.add_system_message,
+            f"MOE prepared {postprocessed_count}/{total} receptor PDBQTs.",
+        )
+        self._threadsafe(self._show_param_panel)
+
+    # ------------------------------------------------------------------
+    # MOE manual upload panel
+    # ------------------------------------------------------------------
+
+    def _show_moe_manual_upload_panel(self) -> None:
+        state = self.screen.app.current_state
+        recommendation = state.context.docking_recommendation
+        default_dir = recommendation.structures_dir or str(
+            self.screen.app.persistence.run_dir(state.run_id)
+            / "docking" / "rna_structures"
+        )
+        _, top_candidates = _top_k_bundle(state)
+        candidate_ids = [
+            _candidate_id(cand, i)
+            for i, cand in enumerate(top_candidates)
+        ]
+        self.screen.add_structured_widget(
+            DockingManualUploadPanel(
+                export_dir="",
+                candidate_ids=candidate_ids,
+                default_structures_dir=default_dir,
+                phase="moe_manual_upload",
+            )
+        )
+        self.screen.set_input_placeholder(
+            "Enter the path to your directory containing RNA PDB files."
+        )
+
+    def _on_moe_manual_upload_submitted(self, data: dict) -> None:
+        state = self.screen.app.current_state
+        directory_str = (data.get("structures_dir") or "").strip()
+        if not directory_str:
+            self.screen.add_system_message(
+                "Please provide a directory path containing RNA PDB files.",
+                "warning-text",
+            )
+            self._show_moe_manual_upload_panel()
+            return
+
+        directory = Path(directory_str).expanduser().resolve()
+        if not directory.is_dir():
+            self.screen.add_system_message(
+                f"Not a directory: {directory}", "error-text"
+            )
+            self._show_moe_manual_upload_panel()
+            return
+
+        _, top_candidates = _top_k_bundle(state)
+        candidate_ids = [
+            _candidate_id(cand, i)
+            for i, cand in enumerate(top_candidates)
+        ]
+
+        # Check for RNA PDB files
+        found = [cid for cid in candidate_ids if (directory / f"{cid}.pdb").exists()]
+        if not found:
+            expected = f" (e.g. {candidate_ids[0]}.pdb)" if candidate_ids else ""
+            self.screen.add_system_message(
+                f"No matching PDB files found in {directory}. "
+                f"Expected files named <candidate_id>.pdb{expected}.",
+                "error-text",
+            )
+            self._show_moe_manual_upload_panel()
+            return
+
+        structures_dir = Path(
+            state.context.docking_recommendation.structures_dir
+            or str(self.screen.app.persistence.run_dir(state.run_id) / "docking" / "structures")
+        )
+        structures_dir.mkdir(parents=True, exist_ok=True)
+
+        self._rnacomposer_cancel.clear()
+        self.run_worker(
+            lambda: self._moe_manual_worker(directory, structures_dir, found),
+            activity="Running MOE on uploaded RNA structures...",
+        )
+        self.screen.add_structured_widget(
+            DockingMOEProgressPanel(total=len(found))
+        )

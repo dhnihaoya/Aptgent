@@ -113,6 +113,9 @@ class DockingSelectionHandler(
         if phase == "manual_upload":
             self._on_manual_upload_submitted(data)
             return
+        if phase == "moe_manual_upload":
+            self._on_moe_manual_upload_submitted(data)
+            return
         if phase == "param_submitted":
             self._on_param_submitted(data)
             return
@@ -133,6 +136,21 @@ class DockingSelectionHandler(
             return
         if action == "source:rnacomposer":
             self._on_source_selected("rnacomposer")
+            return
+        if action == "source:rnacomposer-moe":
+            self._on_source_selected("rnacomposer-moe")
+            return
+        if action == "source:moe-manual":
+            self._on_source_selected("moe-manual")
+            return
+        if action == "moe:cancel":
+            self._rnacomposer_cancel.set()
+            self.screen.add_system_message(
+                "Cancelling MOE job; returning to strategy panel.",
+                "warning-text",
+            )
+            self._show_strategy_panel()
+            self.screen.set_input_enabled(True)
             return
         if action == "source:back":
             self._show_strategy_panel()

@@ -368,18 +368,27 @@ class DockingSourcePanel(_BaseStructuredPanel):
     }
     """
 
-    def __init__(self, *, top_k: int = 100, **kwargs) -> None:
+    def __init__(self, *, top_k: int = 100, moe_available: bool = False, **kwargs) -> None:
         super().__init__(**kwargs)
         self.top_k = top_k
+        self.moe_available = moe_available
 
     def compose(self) -> ComposeResult:
         yield Static("How will the receptor PDBQTs be prepared?", classes="panel-title")
-        yield Static(
-            "Each of the top candidates needs its own 3D structure. "
-            "Each candidate is predicted via RNAComposer and hydrogens "
-            "are added in AutoDockTools.",
-            classes="panel-help",
-        )
+        if self.moe_available:
+            help_text = (
+                "Each of the top candidates needs its own 3D structure. "
+                "Each candidate is predicted via RNAComposer and hydrogens "
+                "are added in AutoDockTools. MOE-based processing is also "
+                "available."
+            )
+        else:
+            help_text = (
+                "Each of the top candidates needs its own 3D structure. "
+                "Each candidate is predicted via RNAComposer and hydrogens "
+                "are added in AutoDockTools."
+            )
+        yield Static(help_text, classes="panel-help")
         yield Static(f"Top candidates to prepare: [bold]{self.top_k}[/bold]")
         with Horizontal():
             yield Button(
@@ -392,6 +401,17 @@ class DockingSourcePanel(_BaseStructuredPanel):
                 id="btn-source-rnacomposer",
                 variant="warning",
             )
+            if self.moe_available:
+                yield Button(
+                    "RNAComposer + MOE (auto)",
+                    id="btn-source-rnacomposer-moe",
+                    variant="success",
+                )
+                yield Button(
+                    "MOE only (upload RNA PDB)",
+                    id="btn-source-moe-manual",
+                    variant="primary",
+                )
 
     def on_mount(self) -> None:
         try:
@@ -407,6 +427,14 @@ class DockingSourcePanel(_BaseStructuredPanel):
         elif event.button.id == "btn-source-rnacomposer":
             self.post_message(
                 StructuredActionRequested(Step.DOCKING_SELECTION, "source:rnacomposer")
+            )
+        elif event.button.id == "btn-source-rnacomposer-moe":
+            self.post_message(
+                StructuredActionRequested(Step.DOCKING_SELECTION, "source:rnacomposer-moe")
+            )
+        elif event.button.id == "btn-source-moe-manual":
+            self.post_message(
+                StructuredActionRequested(Step.DOCKING_SELECTION, "source:moe-manual")
             )
 
 
@@ -438,24 +466,39 @@ class DockingManualUploadPanel(_BaseStructuredPanel):
         export_dir: str,
         candidate_ids: list[str],
         default_structures_dir: str = "",
+        phase: str = "manual_upload",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.export_dir = export_dir
         self.candidate_ids = candidate_ids
         self.default_structures_dir = default_structures_dir
+        self._phase = phase
 
     def compose(self) -> ComposeResult:
-        yield Static("Manual receptor upload", classes="panel-title")
+        is_moe = self._phase == "moe_manual_upload"
         yield Static(
-            "The selected candidate sequences have been written to disk. "
-            "Predict each one's 3D structure (e.g. RNAComposer + ADT), then "
-            "drop the resulting files into a single directory named after each "
-            f"candidate id ({len(self.candidate_ids)} files total) using the "
-            "convention [bold]<candidate_id>.pdb[/bold] or "
-            "[bold]<candidate_id>.pdbqt[/bold].",
-            classes="panel-help",
+            "MOE RNA structure upload" if is_moe else "Manual receptor upload",
+            classes="panel-title",
         )
+        if is_moe:
+            yield Static(
+                "Place your RNA PDB files into a directory named after each "
+                f"candidate id ({len(self.candidate_ids)} files total) using "
+                "the convention [bold]<candidate_id>.pdb[/bold]. "
+                "MOE will convert RNA to DNA and minimize with AmberEHT.",
+                classes="panel-help",
+            )
+        else:
+            yield Static(
+                "The selected candidate sequences have been written to disk. "
+                "Predict each one's 3D structure (e.g. RNAComposer + ADT), then "
+                "drop the resulting files into a single directory named after each "
+                f"candidate id ({len(self.candidate_ids)} files total) using the "
+                "convention [bold]<candidate_id>.pdb[/bold] or "
+                "[bold]<candidate_id>.pdbqt[/bold].",
+                classes="panel-help",
+            )
         if self.candidate_ids:
             preview = ", ".join(f"{cid}.pdb" for cid in self.candidate_ids[:5])
             extra = "" if len(self.candidate_ids) <= 5 else f", \u2026 ({len(self.candidate_ids)} total)"
@@ -463,8 +506,12 @@ class DockingManualUploadPanel(_BaseStructuredPanel):
                 f"[dim]Expected files: {preview}{extra}[/]",
                 classes="panel-note",
             )
-        yield Static(f"Sequences exported to: [bold]{self.export_dir}[/bold]")
-        yield Static("Path to your prepared structures directory:")
+        if self.export_dir:
+            yield Static(f"Sequences exported to: [bold]{self.export_dir}[/bold]")
+        yield Static(
+            "Path to your RNA structures directory:" if is_moe
+            else "Path to your prepared structures directory:"
+        )
         dir_input = Input(
             id="dock-structures-dir",
             placeholder="/path/to/structures",
@@ -487,7 +534,7 @@ class DockingManualUploadPanel(_BaseStructuredPanel):
             self.post_message(
                 StructuredInputSubmitted(
                     Step.DOCKING_SELECTION,
-                    {"phase": "manual_upload", "structures_dir": path},
+                    {"phase": self._phase, "structures_dir": path},
                 )
             )
         elif event.button.id == "btn-manual-back":
@@ -611,6 +658,59 @@ class DockingRNAComposerProgressPanel(_BaseStructuredPanel):
         if event.button.id == "btn-rnacomposer-cancel":
             self.post_message(
                 StructuredActionRequested(Step.DOCKING_SELECTION, "rnacomposer:cancel")
+            )
+
+
+class DockingMOEProgressPanel(_BaseStructuredPanel):
+    """MOE processing status panel with cancel button.
+
+    moebatch processes all candidates in a single batch subprocess.run call,
+    so per-file progress is not available.  The panel shows a static status
+    message and a cancel button (cancel takes effect after the current batch
+    finishes or during the RNAComposer fetch phase if using the combined path).
+    """
+
+    DEFAULT_CSS = """
+    DockingMOEProgressPanel > .panel-help {
+        margin: 1 0;
+    }
+    DockingMOEProgressPanel > .panel-note {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    DockingMOEProgressPanel Horizontal {
+        height: auto;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        total: int = 0,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.total = total
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            "MOE Processing",
+            classes="panel-title",
+        )
+        yield Static(
+            f"Running MOE batch processing on {self.total} candidate(s). "
+            "MOE processes all structures in a single batch — progress "
+            "updates will appear in the chat above. "
+            "Cancel takes effect after the current batch completes.",
+            classes="panel-help",
+        )
+        with Horizontal():
+            yield Button("Cancel", id="btn-moe-cancel", variant="warning")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-moe-cancel":
+            self.post_message(
+                StructuredActionRequested(Step.DOCKING_SELECTION, "moe:cancel")
             )
 
 

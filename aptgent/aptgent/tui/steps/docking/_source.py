@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from aptgent.domain.models import DockingPlan
 from aptgent.tui.widgets.structured_input import (
+    DockingMOEProgressPanel,
     DockingRNAComposerProgressPanel,
     DockingSourcePanel,
 )
@@ -16,7 +17,10 @@ class _SourceMixin:
     def _show_source_panel(self) -> None:
         state = self.screen.app.current_state
         top_k, _ = _top_k_bundle(state)
-        self.screen.add_structured_widget(DockingSourcePanel(top_k=top_k))
+        moe_available = self._is_moe_available()
+        self.screen.add_structured_widget(
+            DockingSourcePanel(top_k=top_k, moe_available=moe_available)
+        )
         self.screen.set_input_placeholder(
             "Choose how the per-candidate structures will be prepared."
         )
@@ -99,3 +103,35 @@ class _SourceMixin:
                     total=len(top_candidates),
                 )
             )
+            return
+
+        if source == "rnacomposer-moe":
+            recommendation.phase = "preparing"
+            recommendation.strategy = "rnacomposer-moe"
+            structures_dir.mkdir(parents=True, exist_ok=True)
+            self.screen.app.save_state()
+            self._rnacomposer_cancel.clear()
+            self.run_worker(
+                lambda: self._moe_combined_worker(
+                    [
+                        (_candidate_id(cand, i), cand.sequence)
+                        for i, cand in enumerate(top_candidates)
+                    ],
+                    structures_dir,
+                ),
+                activity="Submitting candidates to RNAComposer + MOE...",
+            )
+            self.screen.add_structured_widget(
+                DockingMOEProgressPanel(total=len(top_candidates))
+            )
+            return
+
+        if source == "moe-manual":
+            recommendation.phase = "awaiting_moe_structures"
+            recommendation.strategy = "moe-manual"
+            self.screen.app.save_state()
+            self._show_moe_manual_upload_panel()
+            return
+
+    def _is_moe_available(self) -> bool:
+        return getattr(self.screen.app, "moe_prep_adapter", None) is not None
