@@ -69,7 +69,7 @@ chat screen 支持斜杠命令（`/resume`、`/quit`、`/export`、`/theme`、`/
 - `aptgent/aptgent/tui/steps/empty_candidates.py`：空候选统一处理（`is_empty_enumeration_result`、`prepare_empty_candidate_recovery`、`clear_site_selection_retry_feedback`、`apply_empty_candidate_recovery_ui`），被 enumeration、scoring、chat back-handler 共用。
 - `aptgent/aptgent/tui/steps/base.py`：`StepHandler` 基类（含 `allow_empty_input` 属性控制是否接受空输入提交、`_report_error()` 统一错误报告（线程安全：主线程直调，worker 线程走 `call_from_thread`）、`reload_run_state()` 从持久化重载并返回最新状态）。
 - `aptgent/aptgent/tui/steps/job_mixin.py`：可分离后台任务 mixin（attach/spawn detached subprocess）。
-- `aptgent/aptgent/tui/widgets/`：通用 widget（`StatusPanel`、`StepProgressBar`、`StructuredInput`、chat bubble 系列（`SystemBubble`、`StreamingBubble`、`ThinkingBubble`、`UserBubble`、`ProgressBubble`、`ActivityBubble`））。子包 `panels/`（`_core.py`、`_intake.py`、`_specificity.py`、`_docking.py`）和 `common.py` 提供步骤专用面板组件。
+- `aptgent/aptgent/tui/widgets/`：通用 widget（`StatusPanel`、`StepProgressBar`、`StructuredInput`、chat bubble 系列（`SystemBubble`、`StreamingBubble`、`ThinkingBubble`、`UserBubble`、`ProgressBubble`、`ActivityBubble`））。子包 `panels/`（`_core.py`、`_intake.py`、`_specificity.py`、`_docking.py`（含 `MutationRatioPanel`））和 `common.py` 提供步骤专用面板组件。
 - `aptgent/aptgent/tui/commands.py`：斜杠命令注册、主题预设（当前 6 个：clear-lanes、clean-minimal-light、warm-industrial、QTY、ZYX、QJX）。
 
 ### Workflow 层
@@ -145,7 +145,7 @@ LLM 输出是辅助信息，不应覆盖确定性计算结果。涉及评分、�
 
 当前 LLM skills（全部注册在 `llm/skills/__init__.py` 的 `registry` 中）：
 
-- `intake`：自然语言输入解析，提取序列、靶标分子、修饰区域、类似物列表和时间预算等字段。
+- `intake`：自然语言输入解析，提取序列、靶标分子、修饰区域、类似物列表、时间预算和突变比例（`mutation_ratio`，0.0–1.0）等字段。
 - `pdb_review`：PDB 结构语义审查，7 类分类 + 靶标匹配 + 置信度。输出用于 review gate 机制（不合适的 PDB 会暂停流程等待用户确认）。
 - `site_proposal`：突变位点提议。进入此步骤后，TUI 先展示 intake 阶段提取的已有突变要求（`modification_region`、`proposed_sites`），并邀请用户输入额外偏好（`site_preference`，存入 `SiteProposalContext`）；用户可直接按 Enter 跳过。偏好通过 `build_site_proposal_llm_context()` 的 `user_request.site_preference` 传入 LLM。LLM 先产出区域级风险评估（`region_assessment`），将序列区域分为 `safer_scaffold`、`suspected_binding_core` 或 `uncertain`，解释每个区域的分类依据；再给出恰好 3 个备选 mutation 方案，按保守 → 激进（含保守位点）→ LLM 自选方向排序；每个方案包含独立的位点、推理和置信度，若使用了 suspected binding/core 风险位点需显式说明理由；首选方案会镜像到 legacy 字段保持兼容。UI 层以 `expanded` 模式展示全部选项。支持 retry feedback：当枚举或打分步骤未找到阳性候选时，通过 `extra_context.site_selection_feedback` 回传失败原因、上下文引导（`guidance`）、需保留的方案索引（`preserve_proposal_indexes`）和前一轮方案（`previous_proposals`），LLM 据此只替换失败的方案槽位。
 - `analog_suggestion`：结构类似物建议，用于特异性过滤步骤，LLM 推荐靶标的类似物供交叉预测。
@@ -195,6 +195,15 @@ intake step 内部包含 PDB 输入子流程（`tui/steps/pdb_intake.py`），�
 ### Docking skip 路径
 
 当 docking 不可用（Vina 未安装或配置禁用）时，`docking_selection` step 可直接跳转到 `specificity_filter`，跳过 `docking_run`。`DOCKING_SELECTION → SPECIFICITY_FILTER` 转换已在 `TRANSITIONS` 中注册。TUI 层通过 `_is_docking_enabled()` 检测可用性，`_skip()` 执行跳转。跳过后 specificity filter 会对全部候选运行（无亲和力筛选）。
+
+### Docking selection 阶段流
+
+`DockingSelectionHandler`（`tui/steps/docking/_handler.py`）通过 mixin 组合实现多阶段 UI：
+1. **Phase 1 — 策略表单**（`_StrategyMixin`）：设置 top_k、affinity_top_k、exhaustiveness 等 Vina 参数。
+2. **Phase 1.5 — 突变比例过滤**（`_FilterMixin`，`_filter.py`）：根据 `mutation_ratio`（0.0–1.0）筛选候选，保留突变比例 ≥ 阈值的候选。无 `confirmed_mutation_sites` 时自动跳过。默认值从 intake LLM 提取或 1.0（全部位点必须突变）。
+3. **Phase 2 — 来源选择**（`_SourceMixin`）：手动上传 / RNAComposer / MOE。
+
+`mutation_ratio` 流经 intake LLM → `IntakeContext.mutation_ratio` → `DockingRecommendationContext.mutation_ratio` → `_filtered_top_k_bundle()` 在 source 和 structures 阶段过滤候选。`MutationRatioPanel`（Input-based，无 Slider）实时显示剩余候选数。`affinity_top_k` 在过滤后自动 clamp 到剩余候选数。`Mutation.position` 和 `confirmed_mutation_sites` 均为 0-based。
 
 当 MOE 可用时，docking source 面板额外显示两个选项：RNAComposer + MOE（自动获取 RNA 结构后 MOE 处理）和 MOE only（用户上传 RNA PDB 后 MOE 处理）。MOE 处理完成后走与现有路径相同的 Vina docking、spatial_rank 等后续步骤。
 
@@ -356,6 +365,7 @@ aptgent run-job <run_id> <step>
 - `test_docking_skip_path.py`：docking skip 路径测试
 - `test_moe_prep.py`：MOE 受体准备 adapter 测试
 - `test_tui_docking_moe.py`：MOE 源选择与 worker 测试
+- `test_mutation_ratio_filter.py`：突变比例过滤逻辑与辅助函数测试
 
 修改以下内容后，至少应重新检查对应测试：
 
