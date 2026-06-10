@@ -25,6 +25,7 @@ class IntakeOutput(BaseModel):
     analogs: list[str] = Field(default_factory=list)
     proposed_sites: list[int] = Field(default_factory=list)
     time_budget_hours: int | float | str | None = None
+    mutation_ratio: float | None = None
     mixed_input_detected: bool = False
     missing_fields: list[str] = Field(default_factory=list)
     follow_up_question: str | None = None

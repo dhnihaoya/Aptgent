@@ -285,6 +285,7 @@ class IntakeHandler(StepHandler):
         analogs = result.get("analogs", [])
         time_budget = result.get("time_budget_hours")
         proposed_sites_raw = result.get("proposed_sites", [])
+        mutation_ratio = result.get("mutation_ratio")
         mixed_input_detected = bool(result.get("mixed_input_detected") or (pdb_id and (seq or target_text)))
 
         if mod:
@@ -325,6 +326,7 @@ class IntakeHandler(StepHandler):
             analogs=analogs,
             proposed_sites=proposed_sites_0,
             time_budget_hours=time_budget,
+            mutation_ratio=mutation_ratio,
             phase="initial",
             clear_resolution_error=True,
         )

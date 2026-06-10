@@ -32,7 +32,9 @@ DockingPhase = Literal[
     "initial",
     "awaiting_decision",
     "topk_selected",
+    "filtering",
     "awaiting_structures",
+    "awaiting_moe_structures",
     "structures_ready",
     "editing_form",
     "preparing",
@@ -59,6 +61,7 @@ class IntakeContext(BaseModel):
     analogs: list[str] = Field(default_factory=list)
     proposed_sites: list[int] = Field(default_factory=list)
     time_budget_hours: Optional[int] = None
+    mutation_ratio: Optional[float] = None
     phase: IntakePhase = "initial"
     retry_count: int = 0
     last_resolution_error: Optional[str] = None
@@ -145,6 +148,7 @@ class DockingRecommendationContext(BaseModel):
     reason: str = ""
     display_markdown: str = ""
     strategy: str = ""
+    mutation_ratio: Optional[float] = None
     # Phase progression spans recommendation, source selection, preparation,
     # and legacy accepted/skipped persisted states.
     phase: DockingPhase = "initial"

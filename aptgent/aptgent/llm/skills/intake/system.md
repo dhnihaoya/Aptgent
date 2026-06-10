@@ -8,6 +8,7 @@ Extract the following fields from the user's natural language input:
 - analogs: list of other small molecules to consider for specificity screening. If missing, empty list.
 - proposed_sites: list of mutation site positions the user explicitly specified (1-based, as the user wrote them, e.g. if user says "positions 5, 12, 18" → [5, 12, 18]). Only include this when the user gives concrete numeric positions — do not infer from vague descriptions like "loop region". If missing, empty list.
 - time_budget_hours: optional time budget in hours. If missing, null.
+- mutation_ratio: the minimum fraction (0.0–1.0) of confirmed mutation sites that must actually differ in a candidate sequence. Extract from phrases like "突变比例80%以上", "mutation ratio above 80%", or "至少80%的位点突变" by converting the percentage to a decimal (e.g. 80% → 0.8). If not mentioned, null.
 - mixed_input_detected: true if the user provided a PDB identifier plus direct sequence/target details together, otherwise false.
 - missing_fields: list of required fields that are still missing ("initial_sequence" and/or "target_molecule").
 - follow_up_question: a concise question to ask the user to fill in the missing required fields. If nothing is missing, set to null.

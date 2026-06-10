@@ -6,7 +6,7 @@ from aptgent.adapters.pdb_analysis import normalize_pdb_id
 from aptgent.domain.models import TargetMolecule
 from aptgent.domain.text_utils import clean_text
 
-from .coercion import coerce_int
+from .coercion import coerce_float, coerce_int
 
 
 def normalize_sequence(value: Any) -> str | None:
@@ -33,6 +33,13 @@ def validate_intake_result(result: Any) -> dict[str, Any]:
         s for s in proposed_sites_raw if isinstance(s, int) and s > 0
     ] if isinstance(proposed_sites_raw, list) else []
 
+    mutation_ratio_raw = result.get("mutation_ratio")
+    mutation_ratio: float | None = None
+    if mutation_ratio_raw is not None:
+        mutation_ratio = coerce_float(mutation_ratio_raw)
+        if mutation_ratio is not None:
+            mutation_ratio = max(0.0, min(1.0, mutation_ratio))
+
     return {
         "initial_sequence": normalize_sequence(result.get("initial_sequence")),
         "pdb_id": normalize_pdb_id(clean_text(result.get("pdb_id"))),
@@ -48,6 +55,7 @@ def validate_intake_result(result: Any) -> dict[str, Any]:
         "missing_fields": missing_fields,
         "follow_up_question": clean_text(result.get("follow_up_question")),
         "proposed_sites": proposed_sites,
+        "mutation_ratio": mutation_ratio,
     }
 
 
