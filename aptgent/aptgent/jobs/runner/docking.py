@@ -14,6 +14,39 @@ from aptgent.workflow.persistence import Persistence
 _log = logging.getLogger(__name__)
 
 
+def _dock_candidate_ids(state: Any, plan: Any) -> list[str]:
+    """Return candidate IDs to dock, in ensemble rank order.
+
+    Only IDs present in ``plan.receptor_paths`` are eligible — this matches
+    the structure-preparation step (including mutation-ratio filtering and
+    partial RNAComposer/MOE success).  ``recommended_top_k`` caps how many
+    of those prepared receptors are actually docked.
+    """
+    receptor_paths: dict[str, str] = dict(plan.receptor_paths or {})
+    if not receptor_paths:
+        return []
+
+    ens_preds = [p for p in state.predictions if p.model_name == "ensemble"]
+    sorted_preds = sorted(
+        ens_preds,
+        key=lambda item: item.raw_outputs.get("cumulative_rank", float("inf")),
+    )
+
+    ranked: list[str] = [
+        pred.candidate_id
+        for pred in sorted_preds
+        if pred.candidate_id in receptor_paths
+    ]
+    for cand_id in receptor_paths:
+        if cand_id not in ranked:
+            ranked.append(cand_id)
+
+    top_k = plan.recommended_top_k
+    if top_k > 0:
+        return ranked[:top_k]
+    return ranked
+
+
 def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> None:
     from aptgent.adapters.docking import VinaAdapter
     from aptgent.bootstrap.container import create_vina_adapter
@@ -41,16 +74,16 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
     if not target or not target.smiles:
         raise RuntimeError("Target molecule/SMILES missing")
 
-    ens_preds = [p for p in state.predictions if p.model_name == "ensemble"]
-    sorted_preds = sorted(
-        ens_preds,
-        key=lambda item: item.raw_outputs.get("cumulative_rank", float("inf")),
-    )
-    top_k = plan.recommended_top_k
-    top_cand_ids = {pred.candidate_id for pred in sorted_preds[:top_k]}
-    top_candidates = [
-        c for c in state.candidates if c.candidate_id in top_cand_ids
-    ]
+    receptor_paths: dict[str, str] = dict(plan.receptor_paths or {})
+    if not receptor_paths:
+        state.docking_results = []
+        persistence.save(state)
+        writer.write_done(summary={"skipped": True, "reason": "no receptor_paths"})
+        return
+
+    dock_ids = _dock_candidate_ids(state, plan)
+    id_to_candidate = {c.candidate_id: c for c in state.candidates}
+    top_candidates = [id_to_candidate[cid] for cid in dock_ids if cid in id_to_candidate]
 
     work_dir = persistence.run_dir(state.run_id) / "docking"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -65,7 +98,6 @@ def _run_docking(writer: EventWriter, state: Any, persistence: Persistence) -> N
     per_ligand_timeout = plan_timeout if plan_timeout is not None else config_timeout
     exhaustiveness = plan.exhaustiveness
 
-    receptor_paths: dict[str, str] = dict(plan.receptor_paths or {})
     grid_boxes: dict[str, dict[str, list[float]]] = {}
     for cand_id, box in (plan.grid_boxes or {}).items():
         grid_boxes[cand_id] = {

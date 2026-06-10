@@ -13,6 +13,7 @@ from aptgent.domain.models import (
 )
 from aptgent.jobs.events import EventReader, EventWriter
 from aptgent.jobs.runner import _JOB_RUNNERS, _run_docking, _run_enumeration, build_parser
+from aptgent.jobs.runner.docking import _dock_candidate_ids
 from aptgent.workflow.persistence import Persistence
 
 
@@ -247,6 +248,111 @@ def test_docking_runner_normal_completion_is_not_cancelled(tmp_path, monkeypatch
     assert done["summary"]["cancelled"] is False
     assert saved is not None
     assert len(saved.docking_results) == 1
+
+
+def test_dock_candidate_ids_uses_receptor_paths_not_raw_top_k():
+    """Dock list must follow prepared receptors, not blind ensemble top-k."""
+    candidates = [
+        CandidateSequence(sequence="s0", candidate_id=f"cand_{i}")
+        for i in range(10)
+    ]
+    predictions = [
+        PredictionResult(
+            candidate_id=f"cand_{i}",
+            model_name="ensemble",
+            target="t",
+            score=0.9 - i * 0.01,
+            label=1,
+            probability=0.9 - i * 0.01,
+            raw_outputs={"cumulative_rank": i + 1},
+        )
+        for i in range(10)
+    ]
+    # Structure prep kept mutation-filtered set (skips cand_1, cand_5, cand_8).
+    plan = DockingPlan(
+        recommended_top_k=7,
+        receptor_paths={
+            f"cand_{i}": f"/tmp/cand_{i}.pdbqt"
+            for i in (0, 2, 3, 4, 6, 7, 9)
+        },
+    )
+    state = SimpleNamespace(
+        candidates=candidates,
+        predictions=predictions,
+        docking_plan=plan,
+    )
+
+    dock_ids = _dock_candidate_ids(state, plan)
+
+    assert dock_ids == ["cand_0", "cand_2", "cand_3", "cand_4", "cand_6", "cand_7", "cand_9"]
+    assert "cand_1" not in dock_ids
+    assert "cand_5" not in dock_ids
+
+
+def test_docking_runner_skips_candidates_without_receptors(tmp_path, monkeypatch):
+    """Runner must not emit missing_receptor for unprepared candidates."""
+    persistence = Persistence(runs_dir=tmp_path)
+    state = persistence.init_run("dock_receptor_aligned")
+    state.current_step = Step.DOCKING_RUN
+    state.target_molecule = TargetMolecule(
+        input_text="theophylline",
+        smiles="CN1C2=C(C(=O)N(C1=O)C)NC=N2",
+        resolution_status="resolved",
+    )
+    state.candidates = [
+        CandidateSequence(sequence=f"s{i}", candidate_id=f"cand_{i}")
+        for i in range(7)
+    ]
+    state.predictions = [
+        PredictionResult(
+            candidate_id=f"cand_{i}",
+            model_name="ensemble",
+            target="theophylline",
+            score=0.9,
+            label=1,
+            probability=0.9,
+            raw_outputs={"cumulative_rank": i + 1},
+        )
+        for i in range(7)
+    ]
+    prepared = ("cand_0", "cand_2", "cand_3", "cand_4", "cand_6")
+    state.docking_plan = DockingPlan(
+        recommended_top_k=7,
+        receptor_paths={
+            cid: str(tmp_path / f"{cid}.pdbqt") for cid in prepared
+        },
+        grid_boxes={
+            cid: GridBox(center=[0.0, 0.0, 0.0], size=[10.0, 10.0, 10.0])
+            for cid in prepared
+        },
+    )
+    persistence.save(state)
+
+    docked_ids: list[str] = []
+
+    class _TrackingVinaAdapter(_FakeVinaAdapter):
+        def run_batch(self, *, candidates, **kwargs):
+            docked_ids.append(candidates[0].candidate_id or "")
+            return super().run_batch(candidates=candidates, **kwargs)
+
+    monkeypatch.setattr("aptgent.jobs.runner.docking.load_config", lambda: _fake_config(tmp_path))
+    monkeypatch.setattr(
+        "aptgent.bootstrap.container.create_vina_adapter",
+        lambda _tools_config: _TrackingVinaAdapter(),
+    )
+
+    events_path = persistence.job_events_file(state.run_id, "docking_run")
+    writer = EventWriter(events_path)
+    try:
+        _run_docking(writer, state, persistence)
+    finally:
+        writer.close()
+
+    saved = persistence.load(state.run_id)
+    assert saved is not None
+    assert docked_ids == list(prepared)
+    assert all(r.status != "missing_receptor" for r in saved.docking_results)
+    assert {r.candidate_id for r in saved.docking_results} == set(prepared)
 
 
 class _FakeMultiModelAdapter:
