@@ -34,7 +34,8 @@ base_url = "https://files.rcsb.org/download"
 # Edit -> Hydrogens -> Add.
 obabel = "${APTGENT_OBABEL:-obabel}"
 # Padding (Angstroms) added to every axis of the aptamer-covering search box.
-padding_angstrom = 4.0
+# Set to 0 so the search box tightly covers the aptamer — matching MOE behaviour.
+padding_angstrom = 0.0
 # Energy minimization after RNA->DNA conversion (uses obminimize with UFF).
 minimize = true
 minimize_steps = 500
@@ -44,7 +45,7 @@ minimize_steps = 500
 # When available, replaces the obminimize+revert post-processing with
 # AmberEHT force field minimization via moebatch.
 # Set APTGENT_MOEBATCH to the full path if not in PATH.
-moebatch = "${APTGENT_MOEBATCH:-moebatch}"
+moebatch = "${APTGENT_MOEBATCH:-auto}"
 # Timeout per PDB file during moebatch processing (seconds).
 timeout_per_file = 600
 

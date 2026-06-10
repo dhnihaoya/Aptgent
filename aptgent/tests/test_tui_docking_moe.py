@@ -13,8 +13,8 @@ def test_moe_prep_adapter_not_in_runtime_when_unavailable():
     """When moebatch is not found, create_moe_prep_adapter returns None."""
     from aptgent.bootstrap.container import create_moe_prep_adapter
 
-    with patch("aptgent.adapters.moe_prep.shutil.which", return_value=None):
-        result = create_moe_prep_adapter({"moe": {"moebatch": "moebatch"}})
+    with patch("aptgent.bootstrap.container._resolve_moebatch_command", return_value=None):
+        result = create_moe_prep_adapter({"moe": {"moebatch": "auto"}})
     assert result is None
 
 
@@ -22,10 +22,10 @@ def test_moe_prep_adapter_created_when_available():
     """When moebatch is found, create_moe_prep_adapter returns an adapter."""
     from aptgent.bootstrap.container import create_moe_prep_adapter
 
-    with patch("aptgent.adapters.moe_prep.shutil.which", return_value="/usr/bin/moebatch"):
+    with patch("aptgent.bootstrap.container._resolve_moebatch_command", return_value="/usr/bin/moebatch"):
         result = create_moe_prep_adapter({
-            "moe": {"moebatch": "moebatch", "timeout_per_file": 300},
-            "receptor_prep": {"obabel": "obabel", "padding_angstrom": 4.0},
+            "moe": {"moebatch": "auto", "timeout_per_file": 300},
+            "receptor_prep": {"obabel": "obabel", "padding_angstrom": 0.0},
         })
     assert result is not None
     assert isinstance(result, MoePreparationAdapter)

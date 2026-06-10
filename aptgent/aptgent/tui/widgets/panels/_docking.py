@@ -105,7 +105,7 @@ class DockingStrategyPanel(_BaseStructuredPanel):
         default_exhaustiveness: int = 8,
         default_num_modes: int = 9,
         default_energy_range: float = 3.0,
-        default_grid_padding_angstrom: float = 4.0,
+        default_grid_padding_angstrom: float = 0.0,
         default_per_ligand_timeout_seconds: int | None = None,
         default_time_budget_hours: int | None = None,
         default_seed: int | None = None,
@@ -189,10 +189,10 @@ class DockingStrategyPanel(_BaseStructuredPanel):
                 er_input.value = str(self.default_energy_range)
                 yield er_input
             with VerticalGroup(classes="field-col"):
-                yield Static("Grid padding \u00c5:", classes="field-label")
+                yield Static("Grid padding \u00c5 (0 = tight fit):", classes="field-label")
                 pad_input = Input(
                     id=self._FIELD_IDS["grid_padding_angstrom"],
-                    placeholder="4.0",
+                    placeholder="0.0",
                 )
                 pad_input.value = str(self.default_grid_padding_angstrom)
                 yield pad_input
@@ -360,6 +360,9 @@ class DockingSourcePanel(_BaseStructuredPanel):
     DockingSourcePanel > .panel-help {
         margin: 1 0;
     }
+    DockingSourcePanel > .moe-status {
+        margin: 0 0 1 0;
+    }
     DockingSourcePanel Horizontal {
         height: auto;
     }
@@ -376,6 +379,10 @@ class DockingSourcePanel(_BaseStructuredPanel):
     def compose(self) -> ComposeResult:
         yield Static("How will the receptor PDBQTs be prepared?", classes="panel-title")
         if self.moe_available:
+            yield Static(
+                "✓ [bold green]MOE available[/] — AmberEHT minimization enabled",
+                classes="moe-status",
+            )
             help_text = (
                 "Each of the top candidates needs its own 3D structure. "
                 "Each candidate is predicted via RNAComposer and hydrogens "
@@ -383,6 +390,10 @@ class DockingSourcePanel(_BaseStructuredPanel):
                 "available."
             )
         else:
+            yield Static(
+                "✗ [dim]MOE not available[/] — using RNAComposer + Open Babel fallback",
+                classes="moe-status",
+            )
             help_text = (
                 "Each of the top candidates needs its own 3D structure. "
                 "Each candidate is predicted via RNAComposer and hydrogens "
@@ -764,7 +775,7 @@ class DockingParamPanel(_BaseStructuredPanel):
         accepted_recommendation: bool = False,
         receptor_paths: dict[str, str] | None = None,
         grid_boxes: dict[str, dict[str, list[float]]] | None = None,
-        grid_padding_angstrom: float = 4.0,
+        grid_padding_angstrom: float = 0.0,
         num_modes: int = 9,
         energy_range: float = 3.0,
         per_ligand_timeout_seconds: int | None = None,

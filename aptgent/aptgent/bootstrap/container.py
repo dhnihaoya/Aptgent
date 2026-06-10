@@ -123,7 +123,7 @@ def create_receptor_prep_adapter(tools_config: dict[str, Any]) -> Any:
     cfg = tools_config.get("receptor_prep", {})
     return ReceptorPreparationAdapter(
         obabel_command=cfg.get("obabel", "obabel"),
-        default_padding=float(cfg.get("padding_angstrom", 4.0)),
+        default_padding=float(cfg.get("padding_angstrom", 0.0)),
         minimize_steps=int(cfg.get("minimize_steps", 500)),
     )
 
@@ -140,18 +140,86 @@ def create_rnacomposer_adapter(tools_config: dict[str, Any]) -> Any:
     )
 
 
+def _resolve_moebatch_command(raw_cmd: str) -> str | None:
+    """Resolve the moebatch binary path.
+
+    Resolution order:
+    1. Absolute / relative path that exists on disk → use as-is.
+    2. ``auto`` → ``shutil.which``, then search common install paths
+       across Linux and Windows.
+    3. Anything else → ``shutil.which(raw_cmd)``.
+
+    Returns the resolved path or *None* when nothing is found.
+    """
+    import os
+    import shutil
+    from pathlib import Path
+
+    # --- explicit path (not "auto") ---
+    if raw_cmd not in ("auto", "moebatch"):
+        # Treat as an explicit path the user set in config / env var.
+        if Path(raw_cmd).is_file():
+            return raw_cmd
+        # Maybe it is a bare name that happens to differ from default.
+        found = shutil.which(raw_cmd)
+        return found
+
+    # --- auto-discover ---
+    # 1. Check PATH
+    found = shutil.which("moebatch")
+    if found:
+        return found
+
+    # 2. Search common install locations
+    home = Path.home()
+    candidates: list[Path] = []
+
+    if os.name == "nt":
+        # Windows
+        pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+        pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+        for base in (pf, pf86):
+            for p in Path(base).glob("MOE*"):
+                candidates.append(p / "bin" / "moebatch.exe")
+        # Also check user home and common roots
+        for base in (home, Path("D:\\"), Path("E:\\")):
+            for p in base.glob("moe*"):
+                candidates.extend(p.glob("**/moebatch.exe"))
+    else:
+        # Linux / macOS
+        candidates = [
+            home / "moe2024.0601" / "bin-lnx64" / "moebatch",
+            home / "moe" / "bin-lnx64" / "moebatch",
+            Path("/opt/moe/bin-lnx64/moebatch"),
+            Path("/usr/local/moe/bin-lnx64/moebatch"),
+        ]
+        # Glob for moe<version>/bin-lnx64/moebatch in home and /opt
+        for base in (home, Path("/opt")):
+            for p in base.glob("moe*"):
+                c = p / "bin-lnx64" / "moebatch"
+                if c not in candidates:
+                    candidates.append(c)
+
+    for c in candidates:
+        if c.is_file():
+            return str(c)
+
+    return None
+
+
 def create_moe_prep_adapter(tools_config: dict[str, Any]) -> Any | None:
     from aptgent.adapters.moe_prep import MoePreparationAdapter
 
     cfg = tools_config.get("moe", {})
-    cmd = cfg.get("moebatch", "moebatch")
-    if not MoePreparationAdapter.is_available(cmd):
+    raw_cmd = cfg.get("moebatch", "auto")
+    cmd = _resolve_moebatch_command(raw_cmd)
+    if cmd is None:
         return None
     rec_cfg = tools_config.get("receptor_prep", {})
     return MoePreparationAdapter(
         moebatch_command=cmd,
         obabel_command=rec_cfg.get("obabel", "obabel"),
-        default_padding=float(rec_cfg.get("padding_angstrom", 4.0)),
+        default_padding=float(rec_cfg.get("padding_angstrom", 0.0)),
         timeout_per_file=int(cfg.get("timeout_per_file", 600)),
     )
 

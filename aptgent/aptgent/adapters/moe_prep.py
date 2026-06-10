@@ -37,7 +37,7 @@ class MoePreparationAdapter:
         *,
         moebatch_command: str = "moebatch",
         obabel_command: str = "obabel",
-        default_padding: float = 4.0,
+        default_padding: float = 0.0,
         timeout_per_file: int = 600,
     ) -> None:
         self.moebatch_command = moebatch_command

@@ -11,6 +11,33 @@ from aptgent.tui.widgets.structured_input import (
 from ._helpers import _candidate_id, _filtered_top_k_bundle, _top_k_bundle
 
 
+def _docking_param_summary(plan: DockingPlan) -> str:
+    """Format a brief read-only summary of confirmed docking parameters."""
+    timeout_text = (
+        f"{plan.per_ligand_timeout_seconds} s"
+        if plan.per_ligand_timeout_seconds is not None
+        else "config default"
+    )
+    seed_text = (
+        str(plan.seed) if plan.seed is not None else "unset (Vina random)"
+    )
+    budget_text = (
+        f"{plan.time_budget} h" if plan.time_budget is not None else "not set"
+    )
+    return (
+        f"Docking parameters confirmed:\n"
+        f"• Candidates to dock: [bold]{plan.recommended_top_k}[/]\n"
+        f"• affinity_top_k: [bold]{plan.affinity_top_k}[/]\n"
+        f"• exhaustiveness: [bold]{plan.exhaustiveness}[/]\n"
+        f"• num_modes: [bold]{plan.num_modes}[/]\n"
+        f"• energy_range: [bold]{plan.energy_range}[/] kcal/mol\n"
+        f"• grid padding: [bold]{plan.grid_padding_angstrom}[/] Å\n"
+        f"• per-ligand timeout: [bold]{timeout_text}[/]\n"
+        f"• time budget (advisory): [bold]{budget_text}[/]\n"
+        f"• seed: [bold]{seed_text}[/]"
+    )
+
+
 class _SourceMixin:
     """Phase 2: choose receptor source."""
 
@@ -78,6 +105,9 @@ class _SourceMixin:
             recommendation.strategy = "manual"
             self.screen.app.save_state()
             self.screen.add_system_message(
+                _docking_param_summary(state.docking_plan),
+            )
+            self.screen.add_system_message(
                 f"Top {top_k} sequences exported to:\n  {export_dir}\n"
                 "Predict each candidate's 3D structure (e.g. RNAComposer + ADT) "
                 "and place the resulting files into a directory using the "
@@ -92,6 +122,9 @@ class _SourceMixin:
             recommendation.strategy = "rnacomposer"
             structures_dir.mkdir(parents=True, exist_ok=True)
             self.screen.app.save_state()
+            self.screen.add_system_message(
+                _docking_param_summary(state.docking_plan),
+            )
             self._rnacomposer_cancel.clear()
             self.run_worker(
                 lambda: self._rnacomposer_worker(
@@ -115,6 +148,9 @@ class _SourceMixin:
             recommendation.strategy = "rnacomposer-moe"
             structures_dir.mkdir(parents=True, exist_ok=True)
             self.screen.app.save_state()
+            self.screen.add_system_message(
+                _docking_param_summary(state.docking_plan),
+            )
             self._rnacomposer_cancel.clear()
             self.run_worker(
                 lambda: self._moe_combined_worker(
@@ -135,6 +171,9 @@ class _SourceMixin:
             recommendation.phase = "awaiting_moe_structures"
             recommendation.strategy = "moe-manual"
             self.screen.app.save_state()
+            self.screen.add_system_message(
+                _docking_param_summary(state.docking_plan),
+            )
             self._show_moe_manual_upload_panel()
             return
 

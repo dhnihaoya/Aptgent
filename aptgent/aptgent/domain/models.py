@@ -131,7 +131,7 @@ class DockingPlan(BaseModel):
     receptor_paths: dict[str, str] = Field(default_factory=dict)
     receptor_pdb_paths: dict[str, str] = Field(default_factory=dict)
     grid_boxes: dict[str, GridBox] = Field(default_factory=dict)
-    grid_padding_angstrom: float = 4.0
+    grid_padding_angstrom: float = 0.0
 
     exhaustiveness: int = 8
     num_modes: int = 9

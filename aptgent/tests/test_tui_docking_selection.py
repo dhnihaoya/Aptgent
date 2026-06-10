@@ -68,7 +68,7 @@ class FakeReceptorPrepAdapter:
         self.prepare_calls.append((str(pdb_path), str(out)))
         return out
 
-    def compute_box(self, path: str | Path, *, padding: float = 4.0) -> BoundingBox:
+    def compute_box(self, path: str | Path, *, padding: float = 0.0) -> BoundingBox:
         self.box_calls.append(str(path))
         return BoundingBox(
             center=(1.0, 2.0, 3.0),

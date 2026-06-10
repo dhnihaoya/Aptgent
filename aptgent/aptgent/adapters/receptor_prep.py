@@ -86,7 +86,7 @@ class ReceptorPreparationAdapter:
     - ``obabel_command``: path / name of the Open Babel binary
       (default ``"obabel"``). Required for the PDB -> PDBQT step.
     - ``default_padding``: Angstroms added to every axis of the
-      aptamer-bounding box (default 4.0). The center is always the geometric
+      aptamer-bounding box (default 0.0). The center is always the geometric
       mid-point of all heavy atoms.
     """
 
@@ -94,7 +94,7 @@ class ReceptorPreparationAdapter:
         self,
         *,
         obabel_command: str = "obabel",
-        default_padding: float = 4.0,
+        default_padding: float = 0.0,
         minimize_command: str = "obminimize",
         minimize_steps: int = 500,
     ) -> None:
