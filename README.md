@@ -135,6 +135,7 @@ Available commands depend on the active step:
 - `/resume [run_id]`: resume a saved workflow.
 - `/quit`: open the quit confirmation dialog.
 - `/theme`: choose a TUI theme.
+- `/back`: jump back to an earlier workflow step.
 - `/cancel`: cancel an active detached enumeration, specificity, or docking job.
 - `/export`: export the final report Markdown from the final-report step.
 - `/finish`: mark the workflow completed from the final-report step.

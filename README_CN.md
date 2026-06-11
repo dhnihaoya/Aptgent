@@ -119,6 +119,7 @@ python -m aptgent
 - `/resume [run_id]`：恢复已保存的工作流
 - `/quit`：退出确认
 - `/theme`：切换终端主题
+- `/back`：回退到前面的工作流步骤
 - `/cancel`：取消正在运行的后台任务
 - `/export`：导出最终报告（在报告步骤可用）
 - `/finish`：标记工作流完成（在报告步骤可用）

@@ -201,11 +201,13 @@ intake step 内部包含 PDB 输入子流程（`tui/steps/pdb_intake.py`），�
 `DockingSelectionHandler`（`tui/steps/docking/_handler.py`）通过 mixin 组合实现多阶段 UI：
 1. **Phase 1 — 策略表单**（`_StrategyMixin`）：设置 top_k、affinity_top_k、exhaustiveness 等 Vina 参数。
 2. **Phase 1.5 — 突变比例过滤**（`_FilterMixin`，`_filter.py`）：根据 `mutation_ratio`（0.0–1.0）筛选候选，保留突变比例 ≥ 阈值的候选。无 `confirmed_mutation_sites` 时自动跳过。默认值从 intake LLM 提取或 1.0（全部位点必须突变）。
-3. **Phase 2 — 来源选择**（`_SourceMixin`）：手动上传 / RNAComposer / MOE。
+3. **Phase 2 — 来源选择**（`_SourceMixin`）：手动上传 / RNAComposer。
+4. **Phase 3 — 结构准备**（`_StructuresMixin`，`_structures.py`）：处理手动上传目录或 RNAComposer 自动下载/后处理。
+5. **Phase 4 — 参数确认**（`_ConfirmMixin`，`_confirm.py`）：只读参数汇总，确认后进入 `docking_run`。
 
 `mutation_ratio` 流经 intake LLM → `IntakeContext.mutation_ratio` → `DockingRecommendationContext.mutation_ratio` → `_filtered_top_k_bundle()` 在 source 和 structures 阶段过滤候选。`MutationRatioPanel`（Input-based，无 Slider）实时显示剩余候选数。`affinity_top_k` 在过滤后自动 clamp 到剩余候选数。`Mutation.position` 和 `confirmed_mutation_sites` 均为 0-based。
 
-当 MOE 可用时，docking source 面板额外显示两个选项：RNAComposer + MOE（自动获取 RNA 结构后 MOE 处理）和 MOE only（用户上传 RNA PDB 后 MOE 处理）。MOE 处理完成后走与现有路径相同的 Vina docking、spatial_rank 等后续步骤。
+Source 面板始终只有两个选项：**RNAComposer** 和 **Upload my own PDB**。当 MOE 可用时，RNAComposer 选项会自动走 RNAComposer + MOE 管线（RNA→DNA 转换 + AmberEHT 能量最小化）；MOE 不可用时自动回退到 RNAComposer + Open Babel。用户上传的 PDB 若需 MOE 处理，则在 Phase 3 中通过 `_StructuresMixin` 的 MOE manual-upload 路径触发。MOE 处理完成后走与现有路径相同的 Vina docking、spatial_rank 等后续步骤。
 
 ### Pose-based spatial ranking（论文 Section 3.4.3）
 
