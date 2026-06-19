@@ -51,7 +51,6 @@ def test_chat_json_events_streams_reasoning_and_final_json(tmp_path, monkeypatch
                 'model = "glm-5.1"',
                 'api_key = "test-key"',
                 "temperature = 1",
-                "json_temperature = 0.2",
             ]
         ),
         encoding="utf-8",

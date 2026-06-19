@@ -128,8 +128,10 @@ class LLMClient:
             )
         self.base_url = self.config["base_url"]
         self.model = self.config["model"]
-        self.temperature = self.config.get("temperature", 0.2)
-        self.json_temperature = self.config.get("json_temperature", 0.2)
+        # Sampling temperature. Held at the model's documented default (1.0)
+        # across every call — structured and free-form alike — so quality is
+        # driven by thinking on/off rather than by lowering temperature.
+        self.temperature = self.config.get("temperature", 1.0)
         self.max_tokens = self.config.get("max_tokens", 4096)
         self.max_reasoning_chars = self.config.get(
             "max_reasoning_tokens",
@@ -417,7 +419,7 @@ class LLMClient:
             for event in self._stream_chat(
                 system=system_prompt,
                 user=user_prompt,
-                temperature=self.json_temperature,
+                temperature=self.temperature,
                 response_format={"type": "json_object"},
                 enable_thinking=False,
                 should_cancel=should_cancel,
@@ -454,7 +456,7 @@ class LLMClient:
             for event in self._stream_chat(
                 system=system_prompt,
                 user=user_prompt,
-                temperature=self.json_temperature,
+                temperature=self.temperature,
                 response_format={"type": "json_object"},
                 enable_thinking=enable_thinking,
                 should_cancel=should_cancel,
@@ -500,7 +502,7 @@ class LLMClient:
             for event in self._stream_chat(
                 system=system_prompt,
                 user=user_prompt,
-                temperature=self.json_temperature,
+                temperature=self.temperature,
                 response_format={"type": "json_object"},
                 enable_thinking=False,
                 should_cancel=should_cancel,
