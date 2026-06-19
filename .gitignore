@@ -12,6 +12,9 @@ venv/
 .venv/
 env/
 
+# uv lockfile (project uses conda/environment.yml; uv.lock is local-only)
+uv.lock
+
 # IDE
 .idea/
 .vscode/
